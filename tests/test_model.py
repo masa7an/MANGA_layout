@@ -85,26 +85,49 @@ class TestRoundTrip:
         balloon = next(f for f in restored.pages[0].floating if isinstance(f, BalloonObject))
         assert balloon.tail.tip == (55.0, 45.0)
 
-    def test_縦書き指定を受け入れる(self):
-        # MVP では描画しないが、保存形式としては今から通す必要がある
+    def _text_entry(self, **overrides) -> dict:
+        entry = {
+            "id": "txt_0900",
+            "type": "text",
+            "content": "セリフ",
+            "rect": {"x": 0, "y": 0, "w": 10, "h": 10},
+            "font": {"family": "Yu Gothic UI", "size_px": 21.0, "bold": False},
+            "align": "center",
+            "direction": "vertical",
+            "attached_panel_id": None,
+            "z": 10,
+        }
+        entry.update(overrides)
+        return entry
+
+    def _restore_with(self, entry: dict):
         data = new_project().to_dict()
-        page = data["pages"][0]
-        page["floating"].append(
-            {
-                "id": "txt_0900",
-                "type": "text",
-                "content": "縦書き",
-                "rect": {"x": 0, "y": 0, "w": 10, "h": 10},
-                "font": {"family": "Yu Gothic UI", "size_px": 21.0, "bold": False},
-                "align": "center",
-                "direction": "vertical",
-                "attached_panel_id": None,
-                "z": 10,
-            }
-        )
+        data["pages"][0]["floating"].append(entry)
         data["next_id"] = 901
-        restored = Project.from_dict(data)
-        assert restored.pages[0].floating[0].direction == "vertical"
+        return Project.from_dict(data).pages[0].floating[0]
+
+    def test_縦書き指定を受け入れる(self):
+        assert self._restore_with(self._text_entry()).direction == "vertical"
+
+    def test_横書き指定を受け入れる(self):
+        entry = self._text_entry(direction="horizontal")
+        assert self._restore_with(entry).direction == "horizontal"
+
+    def test_向きの無いファイルは横書きとして読む(self):
+        """**新しく作るときの既定（縦書き）に追随させてはいけない。**
+
+        この項目が無いファイルは、縦書きがまだ無かった頃に書かれたもの。
+        縦書きとして読むと、既にある原稿の見た目が開いた瞬間に変わる。
+        """
+        entry = self._text_entry()
+        del entry["direction"]
+        assert self._restore_with(entry).direction == "horizontal"
+
+    def test_新しく作るセリフは縦書き(self):
+        # マンガのセリフは縦書きが普通なので、横書きのほうを選ぶ形にした
+        project = new_project()
+        text = project.add_text(project.pages[0], "セリフ", Rect(0.0, 0.0, 10.0, 10.0))
+        assert text.direction == "vertical"
 
 
 class TestPanelMove:

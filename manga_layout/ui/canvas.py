@@ -21,12 +21,19 @@ from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QFont,
+    QFontMetricsF,
     QPainter,
     QPen,
     QTextCursor,
     QTextOption,
 )
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsTextItem, QGraphicsView
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsScene,
+    QGraphicsTextItem,
+    QGraphicsView,
+)
 
 from ..errors import MangaLayoutError
 from ..geometry import Rect
@@ -354,6 +361,61 @@ class PageScene(QGraphicsScene):
         painter.restore()
 
 
+class ConfirmHintItem(QGraphicsItem):
+    """入力欄のすぐ下に出す「確定」の目印。
+
+    **Enter は改行なので、押しても入力から抜けられない。** 確定は Ctrl+Enter
+    だが、それが分からないと「閉じる手段が無い」と感じてしまう。押し方を
+    その場に出しておけば、状態表示まで目を動かさずに済む。
+
+    押しても確定する。ただし**自分では受け取らない**
+    （`setAcceptedMouseButtons(NoButton)`）。クリックは下の画面へ素通りし、
+    「画面を触ったら確定」という既にある道（`PageView.mousePressEvent` →
+    `finish_text_edit`）に乗る。自分で受け取ると、確定処理の途中で自分が
+    シーンから外されることになって危うい。
+
+    表示倍率を無視して常に同じ大きさで描く（`ItemIgnoresTransformations`）。
+    これは作品の一部ではなく画面の道具なので、拡大しても太らないほうがよい。
+    コマ枠に `cosmetic_pen` を使わないのと同じ線引き。
+    """
+
+    PADDING_X = 8.0
+    PADDING_Y = 4.0
+    GAP = 6.0  # 入力欄との間隔
+    LABEL = "確定（Ctrl+Enter）"
+
+    BG = QColor("#1E88E5")
+    FG = QColor("#FFFFFF")
+
+    def __init__(self, parent: QGraphicsItem):
+        super().__init__(parent)
+        self._font = QFont()
+        self._font.setPixelSize(12)
+        metrics = QFontMetricsF(self._font)
+        self._w = metrics.horizontalAdvance(self.LABEL) + self.PADDING_X * 2
+        self._h = metrics.height() + self.PADDING_Y * 2
+        self._baseline = self.PADDING_Y + metrics.ascent()
+
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setZValue(1001)  # 入力欄（1000）より上
+
+    def boundingRect(self) -> QRectF:
+        return QRectF(0.0, self.GAP, self._w, self._h)
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        box = QRectF(0.0, self.GAP, self._w, self._h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.BG))
+        painter.drawRoundedRect(box, 3.0, 3.0)
+
+        painter.setFont(self._font)
+        painter.setPen(QPen(self.FG))
+        painter.drawText(
+            QPointF(self.PADDING_X, self.GAP + self._baseline), self.LABEL
+        )
+
+
 class TextEditorItem(QGraphicsTextItem):
     """その場編集の入力欄。
 
@@ -386,12 +448,23 @@ class TextEditorItem(QGraphicsTextItem):
 
         self.setZValue(1000)
         self._center_in(text.rect)
+
+        self._confirm = ConfirmHintItem(self)
+        self._place_confirm()
+        # 行が増えると入力欄の下端が下がる。目印も付いていく
+        self.document().contentsChanged.connect(self._place_confirm)
+
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
 
     def _center_in(self, rect: Rect) -> None:
         """確定後の描画（上下中央）に合わせて置く。"""
         height = self.boundingRect().height()
         self.setPos(rect.x, rect.y + max(0.0, (rect.h - height) / 2.0))
+
+    def _place_confirm(self) -> None:
+        """確定の目印を入力欄の下端へ付け直す。"""
+        box = self.boundingRect()
+        self._confirm.setPos(box.left(), box.bottom())
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:

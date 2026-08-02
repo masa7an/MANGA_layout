@@ -344,6 +344,7 @@ class TestFormat:
         window_with_text.set_text_align("left")
         window_with_text.toggle_bold()
         window_with_text.step_text_size(1)
+        # 既定（縦書き）から外した値が残るかを見たいので、横書きへ倒す
         window_with_text.toggle_vertical()
         window_with_text.state.save(tmp_path)
 
@@ -351,10 +352,72 @@ class TestFormat:
         text = [f for f in restored.pages[0].floating if isinstance(f, TextObject)][0]
         assert text.align == "left"
         assert text.font.bold
-        assert text.direction == "vertical"
+        assert text.direction == "horizontal"
         assert text.content == "セリフ"
         assert text.attached_balloon_id is not None
         assert restored.load_warnings == []
+
+
+class TestConfirmHint:
+    """入力欄の外に出す「確定」の目印。
+
+    Enter は改行なので、押しても入力から抜けられない。それが分からないと
+    「閉じる手段が無い」と感じてしまうため、押し方をその場に出している。
+    """
+
+    def editor(self, window):
+        return window.view._text_editor
+
+    def test_入力中だけ出る(self, window_with_text):
+        assert self.editor(window_with_text) is None
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        assert self.editor(window_with_text)._confirm is not None
+        window_with_text.view.finish_text_edit(commit=False)
+        assert self.editor(window_with_text) is None
+
+    def test_入力欄の外に出る(self, window_with_text):
+        # 中に重ねると文字が読めなくなる。
+        # 目印は入力欄の子なので、比べる前に親（入力欄）の座標系へ写す
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        editor = self.editor(window_with_text)
+        confirm = editor._confirm
+        top = confirm.mapRectToParent(confirm.boundingRect()).top()
+        assert top >= editor.boundingRect().bottom()
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_マウスの操作を自分で受け取らない(self, window_with_text):
+        """クリックは下の画面へ素通りさせる。
+
+        自分で受け取ると、確定処理の途中で自分がシーンから外されることに
+        なって危うい。素通りさせれば「画面を触ったら確定」という既にある
+        道に乗る（→ `test_押すと確定する`）。
+        """
+        from PySide6.QtCore import Qt
+
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        confirm = self.editor(window_with_text)._confirm
+        assert confirm.acceptedMouseButtons() == Qt.MouseButton.NoButton
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_押すと確定する(self, window_with_text):
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        editor = self.editor(window_with_text)
+        editor.setPlainText("打ち込んだ内容")
+        spot = editor._confirm.mapToScene(editor._confirm.boundingRect().center())
+
+        click(window_with_text.view, spot.x(), spot.y())
+
+        assert window_with_text.view._text_editor is None, "入力から抜けていない"
+        assert only_text(window_with_text.state.page).content == "打ち込んだ内容"
+
+    def test_表示倍率を変えても大きさが変わらない(self, window_with_text):
+        """作品の一部ではなく画面の道具なので、拡大しても太らせない。"""
+        from PySide6.QtWidgets import QGraphicsItem
+
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        confirm = self.editor(window_with_text)._confirm
+        assert confirm.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        window_with_text.view.finish_text_edit(commit=False)
 
 
 class TestDirection:
@@ -365,14 +428,15 @@ class TestDirection:
     ここは「操作 → モデルの変更 → 履歴・保存」だけを見る。
     """
 
-    def test_既定は横書き(self, window_with_text):
-        assert window_with_text.state.selected_text.direction == "horizontal"
+    def test_既定は縦書き(self, window_with_text):
+        # マンガのセリフは縦書きが普通なので、横書きのほうを選ぶ形にした
+        assert window_with_text.state.selected_text.direction == "vertical"
 
     def test_切り替えられる(self, window_with_text):
         window_with_text.toggle_vertical()
-        assert window_with_text.state.selected_text.direction == "vertical"
-        window_with_text.toggle_vertical()
         assert window_with_text.state.selected_text.direction == "horizontal"
+        window_with_text.toggle_vertical()
+        assert window_with_text.state.selected_text.direction == "vertical"
 
     def test_履歴に積まれる(self, window_with_text):
         depth = window_with_text.state.history.depth
@@ -382,7 +446,7 @@ class TestDirection:
     def test_元に戻せる(self, window_with_text):
         window_with_text.toggle_vertical()
         window_with_text.state.undo()
-        assert only_text(window_with_text.state.page).direction == "horizontal"
+        assert only_text(window_with_text.state.page).direction == "vertical"
 
     def test_整列は持ち替えない(self, window_with_text):
         # 向きを往復したときに、どちらの値を使うのか決められなくなるのを避ける
@@ -396,34 +460,32 @@ class TestDirection:
         assert window.state.history.depth == depth
 
     def test_縦書きの印が状態に追随する(self, window_with_text):
-        assert not window_with_text.vertical_action.isChecked()
-        window_with_text.toggle_vertical()
+        # 既定が縦書きなので、置いた直後から印が付いている
         assert window_with_text.vertical_action.isChecked()
+        window_with_text.toggle_vertical()
+        assert not window_with_text.vertical_action.isChecked()
 
     def test_状態表示に向きが出る(self, window_with_text):
-        assert "横書き" in window_with_text._hint()
-        window_with_text.toggle_vertical()
         assert "縦書き" in window_with_text._hint()
+        window_with_text.toggle_vertical()
+        assert "横書き" in window_with_text._hint()
 
     def test_縦書きでもその場編集に入れる(self, window_with_text):
         # **入力欄は横書きのまま出る。** Qt に縦書きの入力欄が無いため。
         # 見た目の食い違いは案内で断る方針にした（下のテスト）
-        window_with_text.toggle_vertical()
         text_id = window_with_text.state.selected_text.id
         assert window_with_text.view.begin_text_edit(text_id)
         window_with_text.view.finish_text_edit(commit=True)
         assert only_text(window_with_text.state.page).direction == "vertical"
 
     def test_縦書きの入力では確定後どうなるかを断る(self, window_with_text):
-        # 黙っていると「縦書きにしたのに横書きで入る」と受け取られる
-        window_with_text.toggle_vertical()
+        # 黙っていると「縦書きなのに横書きで入る」と受け取られる
         window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
         message = window_with_text.statusBar().currentMessage()
         window_with_text.view.finish_text_edit(commit=False)
         assert "縦書き" in message
 
     def test_縦書きの入力でも操作キーの案内を落とさない(self, window_with_text):
-        window_with_text.toggle_vertical()
         window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
         message = window_with_text.statusBar().currentMessage()
         window_with_text.view.finish_text_edit(commit=False)
@@ -450,6 +512,7 @@ class TestDirection:
             assert len(hint) <= TEXT_EDIT_HINT_MAX_CHARS, hint
 
     def test_横書きの入力では余計な断りを出さない(self, window_with_text):
+        window_with_text.toggle_vertical()  # 横書きへ倒す
         window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
         message = window_with_text.statusBar().currentMessage()
         window_with_text.view.finish_text_edit(commit=False)
@@ -458,9 +521,9 @@ class TestDirection:
     def test_縦書きでは整列の呼び名が変わる(self, window_with_text):
         # align は横書き用の項目を読み替えて使っている（→ manga_layout.vertical）
         window_with_text.set_text_align("left")
-        assert "左寄せ" in window_with_text._hint()
-        window_with_text.toggle_vertical()
         assert "上寄せ" in window_with_text._hint()
+        window_with_text.toggle_vertical()
+        assert "左寄せ" in window_with_text._hint()
 
 
 class TestTextMenu:

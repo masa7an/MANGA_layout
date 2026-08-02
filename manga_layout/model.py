@@ -62,6 +62,13 @@ BALLOON_STYLES = ("ellipse", "jagged")
 TEXT_ALIGNS = ("left", "center", "right")
 TEXT_DIRECTIONS = ("horizontal", "vertical")
 
+# **新しく作るセリフの向き。** マンガのセリフは縦書きが普通なので、
+# 横書きのほうを選ぶ形にする（要件定義 6.11）。
+#
+# これは「作るとき」の既定であって、**読み込むときの既定ではない**。
+# 保存形式に `direction` が無いファイルは横書きとして読む（`TextObject.from_dict`）。
+DEFAULT_TEXT_DIRECTION = "vertical"
+
 # 斜め割りの境界が傾く向き。上へ行くほど右が "/"、上へ行くほど左が "\"
 SLANT_RIGHT = "/"
 SLANT_LEFT = "\\"
@@ -335,9 +342,7 @@ class TextObject(SceneObject):
     rect: Rect = field(default_factory=lambda: Rect(0.0, 0.0, 0.0, 0.0))
     font: Font = field(default_factory=Font)
     align: str = "center"
-    # MVP では "horizontal" のみ描画する。縦書きを足すときに
-    # 保存形式を変えずに済ませるため、項目だけ先に用意してある
-    direction: str = "horizontal"
+    direction: str = DEFAULT_TEXT_DIRECTION
     attached_panel_id: str | None = None
     # 吹き出しの上に置いたセリフは、その吹き出しに付いて回る（要件定義 6.5）。
     # コマへの紐づけとは別に持つ。吹き出しはコマの中で単独に動かせるので、
@@ -370,6 +375,10 @@ class TextObject(SceneObject):
             rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
             font=Font.from_dict(d.get("font", {}), f"{where}.font"),
             align=v.choice(d, "align", where, TEXT_ALIGNS, "center"),
+            # **既定は "horizontal" のまま。`DEFAULT_TEXT_DIRECTION` に
+            # 追随させてはいけない。** この項目が無いファイルは、縦書きが
+            # まだ無かった頃に書かれたもの。縦書きとして読むと、既にある
+            # 原稿の見た目が開いた瞬間に変わる
             direction=v.choice(d, "direction", where, TEXT_DIRECTIONS, "horizontal"),
             attached_panel_id=v.opt_text(d, "attached_panel_id", where),
             attached_balloon_id=v.opt_text(d, "attached_balloon_id", where),
