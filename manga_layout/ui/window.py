@@ -22,7 +22,12 @@ from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect
 from ..model import ImageObject, Panel
 from ..settings import ensure_settings_file, load_settings, settings_path
-from ..storage import is_project_dir, prune_unused_assets
+from ..storage import (
+    PROJECT_FILENAME,
+    is_project_dir,
+    project_dir_of,
+    prune_unused_assets,
+)
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .export import (
     DEFAULT_SCALE,
@@ -58,6 +63,10 @@ APP_TITLE = "漫画レイアウタ"
 PAGES_MENU_LABEL = "ページ一覧"
 
 TEXT_ALIGN_LABELS = {"left": "左寄せ", "center": "中央寄せ", "right": "右寄せ"}
+
+# 「開く」の窓に出す対象。作品フォルダそのものではなく、その中の
+# project.json を選ばせる（理由は `open_project`）
+PROJECT_FILE_FILTER = f"作品ファイル ({PROJECT_FILENAME});;すべてのファイル (*)"
 
 # 文字の大きさを1段階変える幅（px）と、行き過ぎを止める範囲。
 # 数値を打ち込ませるより、押して確かめるほうが速い
@@ -238,7 +247,14 @@ class MainWindow(QMainWindow):
 
         file_menu = self.menuBar().addMenu("ファイル(&F)")
         file_menu.addAction(self._act("新規作成", self.new_project, "Ctrl+N"))
-        file_menu.addAction(self._act("開く...", self.open_project, "Ctrl+O"))
+        file_menu.addAction(
+            self._act(
+                "開く...",
+                self.open_project,
+                "Ctrl+O",
+                f"作品フォルダの中の {PROJECT_FILENAME} を選ぶ",
+            )
+        )
         file_menu.addSeparator()
         file_menu.addAction(self._act("保存", self.save_project, "Ctrl+S"))
         file_menu.addAction(
@@ -911,17 +927,31 @@ class MainWindow(QMainWindow):
         self.state.message.emit("新しい作品を作りました")
 
     def open_project(self) -> None:
+        """作品を開く。**`project.json` を選ばせる。**
+
+        作品はフォルダ単位なので、内部で使うのはその親フォルダのほう。
+        それでも「フォルダを選ぶ窓」にはしない。利用者から見れば
+        「ファイルを開く」操作で、目当ての `project.json` が一覧に
+        出てこないと、選べないのか場所を間違えたのかが分からない。
+        """
         if not self._confirm_discard():
             return
-        folder = QFileDialog.getExistingDirectory(self, "作品フォルダを開く")
-        if not folder:
+        chosen, _ = QFileDialog.getOpenFileName(
+            self,
+            "作品を開く",
+            str(default_parent(self.state.project_dir, self.settings.default_parent_dir)),
+            PROJECT_FILE_FILTER,
+        )
+        if not chosen:
             return
-        path = pathlib.Path(folder)
+
+        path = project_dir_of(pathlib.Path(chosen))
         if not is_project_dir(path):
             QMessageBox.warning(
                 self,
                 "開けません",
-                f"このフォルダに project.json がありません。\n{path}",
+                f"作品として開けませんでした。\n{path}\n\n"
+                f"作品フォルダの中にある {PROJECT_FILENAME} を選んでください。",
             )
             return
         try:

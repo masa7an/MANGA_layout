@@ -42,6 +42,17 @@ def is_project_dir(path: pathlib.Path | str) -> bool:
     return (pathlib.Path(path) / PROJECT_FILENAME).is_file()
 
 
+def project_dir_of(path: pathlib.Path | str) -> pathlib.Path:
+    """選ばれたパスから作品フォルダを割り出す。
+
+    作品はフォルダ単位だが、利用者が指すのは `project.json` のほうが自然。
+    **どちらを渡しても同じ場所に行き着く**ようにして、開く側が
+    「ファイルとフォルダのどちらを受け取ったか」を気にせずに済ませる。
+    """
+    path = pathlib.Path(path)
+    return path.parent if path.is_file() else path
+
+
 def _compact_pairs(text: str) -> str:
     """`[x, y]` の 2 要素を 1 行に畳む。
 

@@ -18,6 +18,7 @@ import pytest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMessageBox
 
 from manga_layout import Rect, is_project_dir
+from manga_layout.storage import project_dir_of
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.saving import (
     DEFAULT_PROJECT_NAME,
@@ -244,6 +245,64 @@ class Test画面からの保存:
 
         assert window.save_project_as()
         assert (tmp_path / "先客" / "project.json").read_bytes() != before
+
+
+class Test開く:
+    """作品はフォルダ単位だが、選ばせるのは `project.json`。
+
+    フォルダを選ぶ窓にすると、目当ての `project.json` が一覧に出てこない。
+    選べないのか場所を間違えたのかが分からず、開けないと思ってしまう。
+    """
+
+    def test_選ばれたファイルから作品フォルダを割り出す(self, tmp_path):
+        (tmp_path / "作品").mkdir()
+        json = tmp_path / "作品" / "project.json"
+        json.write_text("{}", encoding="utf-8")
+
+        assert project_dir_of(json) == tmp_path / "作品"
+
+    def test_フォルダを渡してもそのまま通す(self, tmp_path):
+        """内部の経路がどちらを受け取っても壊れないようにしておく。"""
+        assert project_dir_of(tmp_path) == tmp_path
+
+    def test_projectjsonを選ぶと開ける(self, window, tmp_path, monkeypatch):
+        other = EditorState()
+        other.save(tmp_path / "先に作った作品")
+
+        _choose_file(monkeypatch, tmp_path / "先に作った作品" / "project.json")
+        window.open_project()
+
+        assert window.state.project_dir == tmp_path / "先に作った作品"
+
+    def test_取り消せば開かない(self, window, monkeypatch):
+        before = window.state.project_dir
+        _choose_file(monkeypatch, None)
+
+        window.open_project()
+
+        assert window.state.project_dir == before
+
+    def test_作品でないファイルは断る(self, window, tmp_path, monkeypatch):
+        stray = tmp_path / "ただのファイル.json"
+        stray.write_text("{}", encoding="utf-8")
+        _choose_file(monkeypatch, stray)
+        shown = []
+        monkeypatch.setattr(
+            QMessageBox, "warning", lambda *a, **k: shown.append(a[1])
+        )
+
+        window.open_project()
+
+        assert shown == ["開けません"]
+        assert window.state.project_dir is None
+
+
+def _choose_file(monkeypatch, path: pathlib.Path | None) -> None:
+    """ファイル選択の窓を出さずに、選んだことにして進める。"""
+    monkeypatch.setattr(
+        "manga_layout.ui.window.QFileDialog.getOpenFileName",
+        lambda *a, **k: (str(path) if path else "", ""),
+    )
 
 
 def _accept(monkeypatch, path: pathlib.Path) -> None:
