@@ -17,15 +17,20 @@ import pytest
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QDialog, QMessageBox
 
-from manga_layout import ExportError, Rect
+from manga_layout import ExportError, Rect, Size
 from manga_layout.images import PREVIEW_MAX_PX
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.export import (
     DEFAULT_DPI,
+    DEFAULT_SCALE,
     DPI_MAX,
     EXPORT_DIRNAME,
+    SCALE_CHOICES,
+    ExportDialog,
     FullImages,
     dots_per_meter,
+    page_px,
+    scale_label,
     existing_paths,
     export_dir_of,
     export_pages,
@@ -90,6 +95,68 @@ class Test換算:
     def test_1メートルあたりの画素数に直す(self):
         # 150dpi ＝ 1インチ 150 画素 ＝ 1メートル 5905.5 画素
         assert dots_per_meter(150) == 5906
+
+
+class Test画像サイズ:
+    """100% / 75% / 50%。**画素数がそのまま減る。**
+
+    この道具はウェブで読む絵の下敷きを作るもので、印刷しない（要件定義
+    1章）。紙の上で何 mm になるかを保つ細工はしない。
+    """
+
+    def test_3つから選ぶ(self):
+        assert SCALE_CHOICES == (1.0, 0.75, 0.5)
+        assert DEFAULT_SCALE == 1.0
+
+    def test_表示は百分率(self):
+        assert [scale_label(s) for s in SCALE_CHOICES] == ["100%", "75%", "50%"]
+
+    def test_画素数が倍率どおりに減る(self, saved_state):
+        page = saved_state.page
+        full = render_page(saved_state, page, 150, 1.0)
+        three_quarters = render_page(saved_state, page, 150, 0.75)
+        half = render_page(saved_state, page, 150, 0.5)
+
+        assert (full.width(), full.height()) == A4_AT_150
+        assert (three_quarters.width(), three_quarters.height()) == (930, 1315)
+        assert (half.width(), half.height()) == (620, 877)
+
+    def test_縦横比は保つ(self, saved_state):
+        page = saved_state.page
+        full = render_page(saved_state, page, 150, 1.0)
+        half = render_page(saved_state, page, 150, 0.5)
+
+        assert half.width() / half.height() == pytest.approx(
+            full.width() / full.height(), abs=0.002
+        )
+
+    def test_dpiは選んだ値のまま書き込む(self, saved_state):
+        """倍率のぶんを差し引かない。
+
+        印刷しないので、この値は覚え書きでしかない。「紙の大きさが同じに
+        見える」ように細工すると、選んだ dpi と書き込まれた値が食い違う。
+        """
+        half = render_page(saved_state, saved_state.page, 150, 0.5)
+        assert half.dotsPerMeterX() == dots_per_meter(150)
+
+    def test_倍率だけの違いは画素数に出る(self, saved_state):
+        """dpi を半分にするのと 50% にするのは、画素数としては同じ。"""
+        by_scale = render_page(saved_state, saved_state.page, 150, 0.5)
+        by_dpi = render_page(saved_state, saved_state.page, 75, 1.0)
+        assert (by_scale.width(), by_scale.height()) == (by_dpi.width(), by_dpi.height())
+
+    def test_画素数を直に引ける(self):
+        assert page_px(Size(210.0, 297.0), 150) == A4_AT_150
+        assert page_px(Size(210.0, 297.0), 150, 0.5) == (620, 877)
+
+    def test_小さいdpiとの組み合わせでも作れる(self, saved_state):
+        """36dpi の 50% は 149×210 画素。小さいが、作れないわけではない。"""
+        image = render_page(saved_state, saved_state.page, 36, 0.5)
+        assert (image.width(), image.height()) == (149, 210)
+
+    def test_倍率を省くと原寸(self, saved_state):
+        image = render_page(saved_state, saved_state.page, 150)
+        assert (image.width(), image.height()) == A4_AT_150
 
 
 class Testファイル名:

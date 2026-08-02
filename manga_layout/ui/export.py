@@ -44,7 +44,8 @@ from PySide6.QtWidgets import (
 
 from ..errors import ExportError
 from ..images import ImageCache, Preview, full_from_bytes
-from ..model import Page
+from ..geometry import Size
+from ..model import DEFAULT_PAGE_SIZE, Page
 from .render import PAGE_BG, PageRenderer
 
 EXPORT_DIRNAME = "export"
@@ -59,6 +60,10 @@ DPI_CHOICES = (72, 150, 300, 600)
 DPI_MIN = 36
 DPI_MAX = 600
 
+# 書き出す大きさの倍率。100% が指定 dpi の原寸
+SCALE_CHOICES = (1.0, 0.75, 0.5)
+DEFAULT_SCALE = 1.0
+
 # 書き出し中の PNG が完成品に見えないよう、いったんこの名前で書いて置き換える
 TMP_SUFFIX = ".tmp"
 
@@ -66,17 +71,33 @@ TMP_SUFFIX = ".tmp"
 # -- 換算とファイル名 --------------------------------------------------------
 
 
-def mm_to_px(mm: float, dpi: int) -> int:
+def mm_to_px(mm: float, dpi: float, scale: float = DEFAULT_SCALE) -> int:
     """mm を画素数にする。1px 未満にはしない（0 幅の画像は作れない）。"""
-    return max(1, round(mm * dpi / MM_PER_INCH))
+    return max(1, round(mm * dpi / MM_PER_INCH * scale))
 
 
-def dots_per_meter(dpi: int) -> int:
+def page_px(size: Size, dpi: int, scale: float = DEFAULT_SCALE) -> tuple[int, int]:
+    """書き出される画像の画素数。
+
+    **倍率は画素数をそのまま減らす。** この道具の出力はウェブで読む絵の
+    下敷きで、印刷しない（要件定義 1章）。だから「紙の上で何 mm か」を
+    保つ必要はなく、75% と言われたら素直に画素数を 75% にする。
+    """
+    return (mm_to_px(size.w, dpi, scale), mm_to_px(size.h, dpi, scale))
+
+
+def scale_label(scale: float) -> str:
+    return f"{round(scale * 100)}%"
+
+
+def dots_per_meter(dpi: float) -> int:
     """PNG に書き込む解像度。
 
     Qt が持つのは「1メートルあたりの画素数」なので、ここで直す。
-    **入れておかないと、クリスタが 72dpi の画像として開く。** 画素数は
-    合っていても原稿用紙に対して極端に大きく貼られ、毎回縮める羽目になる。
+
+    **書き込むのは選んだ dpi そのままで、倍率は掛けない。** 印刷しない以上
+    この値は覚え書きでしかなく、倍率のぶんを差し引いて「紙の大きさが同じに
+    見える」ように細工しても、誰の役にも立たない。
     """
     return round(dpi / (MM_PER_INCH / 1000.0))
 
@@ -152,19 +173,22 @@ class FullImages:
         return self._cache.get(ref, lambda: self.state.read_asset(ref))
 
 
-def render_page(state, page: Page, dpi: int = DEFAULT_DPI) -> QImage:
-    """1ページを指定 dpi の画像にする。
+def render_page(
+    state, page: Page, dpi: int = DEFAULT_DPI, scale: float = DEFAULT_SCALE
+) -> QImage:
+    """1ページを指定 dpi・指定倍率の画像にする。
 
     大きさの上限は `DPI_MAX`。A4 を 600dpi で描くと 4961×7016（約 3500 万
     画素・140MB）で、ここから上は確保できても待たされるだけになる。
+
+    倍率は画素数をそのまま減らす。50% なら 1240×1754 が 620×877 になる。
     """
     if page.size.w <= 0 or page.size.h <= 0:
         raise ExportError(f"ページの大きさが不正です（{page.size.w} × {page.size.h} mm）")
     if not DPI_MIN <= dpi <= DPI_MAX:
         raise ExportError(f"dpi は {DPI_MIN}〜{DPI_MAX} の範囲で指定してください（指定: {dpi}）")
 
-    width = mm_to_px(page.size.w, dpi)
-    height = mm_to_px(page.size.h, dpi)
+    width, height = page_px(page.size, dpi, scale)
     image = QImage(width, height, QImage.Format.Format_ARGB32)
     if image.isNull():
         raise ExportError(
@@ -213,7 +237,11 @@ def write_png(image: QImage, path: pathlib.Path) -> None:
 
 
 def export_pages(
-    state, indexes, dest: pathlib.Path, dpi: int = DEFAULT_DPI
+    state,
+    indexes,
+    dest: pathlib.Path,
+    dpi: int = DEFAULT_DPI,
+    scale: float = DEFAULT_SCALE,
 ) -> list[pathlib.Path]:
     """指定したページを PNG にする。書いたファイルの一覧を返す。
 
@@ -223,7 +251,7 @@ def export_pages(
     total = state.page_count
     written: list[pathlib.Path] = []
     for i in indexes:
-        image = render_page(state, state.project.pages[i], dpi)
+        image = render_page(state, state.project.pages[i], dpi, scale)
         path = dest / page_filename(i, total)
         write_png(image, path)
         written.append(path)
@@ -234,11 +262,16 @@ def export_pages(
 
 
 class ExportDialog(QDialog):
-    """書き出す範囲と dpi を選ぶ。
+    """書き出す範囲・解像度・大きさを選ぶ。
 
     書き出し先は選ばせず、決まった場所（`export/`）を**表示だけ**する。
     毎回選ばせると、書き出すたびに置き場所が散らばって「最新がどれか」を
     見失う。別の場所へ出したくなったら、書き出してから移せばよい。
+
+    解像度（dpi）と画像サイズ（%）を別々に置いているのは、決める理由が
+    違うから。dpi は「A4 を何画素で描くか」、% は「そこからどれだけ
+    小さくするか」。2つが掛かって分かりにくいので、**書き出される画素数を
+    常に1行で見せる**。
     """
 
     def __init__(
@@ -248,9 +281,12 @@ class ExportDialog(QDialog):
         page_count: int,
         dpi: int = DEFAULT_DPI,
         parent: QWidget | None = None,
+        page_size: Size | None = None,
+        scale: float = DEFAULT_SCALE,
     ):
         super().__init__(parent)
         self.setWindowTitle("PNG で書き出し")
+        self.page_size = page_size or DEFAULT_PAGE_SIZE
 
         self.current_only = QRadioButton(f"このページ（{page_index + 1} ページ目）", self)
         self.all_pages = QRadioButton(f"全ページ（{page_count} 枚）", self)
@@ -266,11 +302,18 @@ class ExportDialog(QDialog):
         self.custom_dpi.setSuffix(" dpi")
         self.custom_dpi.setValue(dpi)
 
+        self.scale = QComboBox(self)
+        for value in SCALE_CHOICES:
+            label = scale_label(value)
+            self.scale.addItem("100%（原寸）" if value == 1.0 else label, value)
+        self.scale.setCurrentIndex(self._scale_index(scale))
+
         form = QFormLayout()
         form.addRow("範囲", self.current_only)
         form.addRow("", self.all_pages)
         form.addRow("解像度", self.dpi)
         form.addRow("", self.custom_dpi)
+        form.addRow("画像サイズ", self.scale)
 
         self.note = QLabel(self)
         self.note.setWordWrap(True)
@@ -290,6 +333,7 @@ class ExportDialog(QDialog):
 
         self.dpi.currentIndexChanged.connect(self._on_dpi_changed)
         self.custom_dpi.valueChanged.connect(self._update_note)
+        self.scale.currentIndexChanged.connect(self._update_note)
         self.dpi.setCurrentIndex(self._index_of(dpi))
         self._on_dpi_changed()
 
@@ -298,6 +342,12 @@ class ExportDialog(QDialog):
             if self.dpi.itemData(row) == dpi:
                 return row
         return self.dpi.count() - 1  # カスタム
+
+    def _scale_index(self, scale: float) -> int:
+        for row in range(self.scale.count()):
+            if self.scale.itemData(row) == scale:
+                return row
+        return 0  # 覚えていた値が選択肢から消えていたら原寸に戻す
 
     def _on_dpi_changed(self) -> None:
         """決まった値を選んでいる間は、数値欄を触らせない。
@@ -312,15 +362,26 @@ class ExportDialog(QDialog):
         self._update_note()
 
     def _update_note(self) -> None:
-        dpi = self.chosen_dpi()
-        self.note.setText(
-            f"A4（210 × 297 mm）で {mm_to_px(210.0, dpi):,} × {mm_to_px(297.0, dpi):,} 画素。"
-            "同じ名前のファイルがあるときは、上書きする前に確認します。"
-        )
+        """書き出される画素数を出す。
+
+        dpi と % の2つが掛かるので、どちらを動かしても最後にどうなるかを
+        1行で確かめられるようにする。用紙の大きさは表示中のページの実物を
+        使う（A4 決め打ちにすると、B5 の作品で数字が合わない）。
+        """
+        scale = self.chosen_scale()
+        width, height = page_px(self.page_size, self.chosen_dpi(), scale)
+        text = f"書き出される画像: {width:,} × {height:,} 画素"
+        if scale != 1.0:
+            full_w, full_h = page_px(self.page_size, self.chosen_dpi())
+            text += f"（原寸なら {full_w:,} × {full_h:,}）"
+        self.note.setText(text)
 
     def chosen_dpi(self) -> int:
         value = self.dpi.currentData()
         return self.custom_dpi.value() if value is None else int(value)
+
+    def chosen_scale(self) -> float:
+        return float(self.scale.currentData())
 
     def wants_all_pages(self) -> bool:
         return self.all_pages.isChecked()

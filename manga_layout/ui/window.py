@@ -26,6 +26,7 @@ from ..storage import is_project_dir, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .export import (
     DEFAULT_DPI,
+    DEFAULT_SCALE,
     EXPORT_DIRNAME,
     ExportDialog,
     existing_paths,
@@ -33,6 +34,7 @@ from .export import (
     export_pages,
     missing_assets_in,
     planned_paths,
+    scale_label,
 )
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .saving import SaveAsDialog, default_parent
@@ -93,6 +95,7 @@ class MainWindow(QMainWindow):
         # 書き出しの dpi は作品ではなく好みなので、project.json には入れない。
         # ただし1回の作業中は同じ値を使い続けるのが普通なので覚えておく
         self._export_dpi = DEFAULT_DPI
+        self._export_scale = DEFAULT_SCALE
 
         # settings.json は手で書き換える前提のファイル。実物が無いと
         # 「どこに何を書けばいいのか」が分からないので、起動時に雛形を置く。
@@ -1006,12 +1009,19 @@ class MainWindow(QMainWindow):
             return False
 
         dialog = ExportDialog(
-            dest, self.state.page_index, self.state.page_count, self._export_dpi, self
+            dest,
+            self.state.page_index,
+            self.state.page_count,
+            self._export_dpi,
+            self,
+            self.state.page.size,
+            self._export_scale,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
 
         self._export_dpi = dialog.chosen_dpi()
+        self._export_scale = dialog.chosen_scale()
         indexes = (
             list(range(self.state.page_count))
             if dialog.wants_all_pages()
@@ -1091,7 +1101,9 @@ class MainWindow(QMainWindow):
     def _run_export(self, dest: pathlib.Path, indexes: list[int]) -> bool:
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            written = export_pages(self.state, indexes, dest, self._export_dpi)
+            written = export_pages(
+                self.state, indexes, dest, self._export_dpi, self._export_scale
+            )
         except (MangaLayoutError, OSError) as e:
             QMessageBox.critical(self, "書き出せません", str(e))
             return False
@@ -1099,8 +1111,9 @@ class MainWindow(QMainWindow):
             QGuiApplication.restoreOverrideCursor()
 
         where = written[0].name if len(written) == 1 else f"{len(written)} 枚"
+        size = "" if self._export_scale == 1.0 else f"・{scale_label(self._export_scale)}"
         self.state.message.emit(
-            f"{dest} に {where} を書き出しました（{self._export_dpi} dpi）"
+            f"{dest} に {where} を書き出しました（{self._export_dpi} dpi{size}）"
         )
         return True
 
