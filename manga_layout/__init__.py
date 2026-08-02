@@ -12,6 +12,7 @@ from .assets import AssetStore, PendingAssets, sniff_format
 from .errors import (
     AssetError,
     BrokenImageError,
+    ExportError,
     MangaLayoutError,
     ProjectFormatError,
     ProjectNotFoundError,
@@ -53,6 +54,7 @@ __all__ = [
     "BalloonObject",
     "Border",
     "BrokenImageError",
+    "ExportError",
     "Font",
     "PendingAssets",
     "History",

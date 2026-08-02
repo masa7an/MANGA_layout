@@ -25,6 +25,14 @@ class UnsupportedVersionError(ProjectFormatError):
     """
 
 
+class ExportError(MangaLayoutError):
+    """PNG の書き出しに失敗した。
+
+    保存先が決まっていない、確保できない大きさを指定した、書き込めない、
+    のいずれか。どれも利用者が対処できる話なので、そのまま見せる。
+    """
+
+
 class AssetError(MangaLayoutError):
     """assets/ の操作に失敗した。"""
 

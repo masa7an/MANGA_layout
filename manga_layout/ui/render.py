@@ -106,10 +106,32 @@ class PageRenderer:
 
     `state` からは設定と画像の縮小版だけを読む。**描くページは引数で渡す。**
     表示中のページに縛られないので、サムネイル一覧が同じ処理を使える。
+
+    `images` は画像を引く経路。既定は画面用の縮小版（`state.preview`）で、
+    PNG 書き出しだけが原寸を返すものを渡す（`export.FullImages`）。
+    描く手順そのものは共通のまま、解像度だけを差し替えられる。
+
+    `aids` は「画面でだけ要る補助表示」。次の3つがこれに当たる。
+
+    - コマの下地（薄い灰色）。紙の上ではコマの中は白なので、これは
+      「どこがコマか」を画面で見分けるための色でしかない
+    - 空のセリフの点線枠。無いと、作った直後に見失って選び直せなくなる
+    - 見つからない画像の×印。無いと、絵が消えたのか最初から無かったのか
+      分からない
+
+    どれも作品の一部ではないので**書き出しでは切る**。コマの範囲は枠線が
+    示すし、欠けた画像は目印の代わりに書き出し前の警告で知らせる
+    （`export.missing_assets_in`）。
+
+    この2つを構築時に決めるのは、「何のために描くか」で決まるものだからで、
+    目安線・影・用紙の縁は同じ描き手でも呼びごとに変わるので `draw()` の
+    引数に置いてある。
     """
 
-    def __init__(self, state) -> None:
+    def __init__(self, state, images=None, *, aids: bool = True) -> None:
         self.state = state
+        self.images = images if images is not None else state.preview
+        self.aids = aids
 
     # -- 全体 --------------------------------------------------------------
 
@@ -121,27 +143,35 @@ class PageRenderer:
         *,
         guides: bool = True,
         shadow: bool = True,
+        edge: bool = True,
     ) -> None:
         """用紙とその中身を描く。
 
         `guides` は基本枠の目安線、`shadow` は用紙の影。どちらも作品には
         出ないので、サムネイルでは切る（小さく描くと線が潰れて汚れになる）。
+
+        `edge` は用紙の輪郭線。画面とサムネイルでは、白い紙がどこまでかを
+        示すのに要る。**書き出しでは切る**。用紙そのものが画像の範囲なので、
+        輪郭線は絵の一部として四辺に残ってしまう。
         """
-        self.draw_paper(painter, page, shadow=shadow)
+        self.draw_paper(painter, page, shadow=shadow, edge=edge)
         if guides:
             self.draw_margin(painter, page)
         for panel in sorted(page.panels, key=lambda p: p.z):
             self.draw_panel(painter, page, panel, preview)
         self.draw_floating(painter, page, preview)
 
-    def draw_paper(self, painter: QPainter, page: Page, *, shadow: bool = True) -> None:
+    def draw_paper(
+        self, painter: QPainter, page: Page, *, shadow: bool = True, edge: bool = True
+    ) -> None:
         rect = QRectF(0.0, 0.0, page.size.w, page.size.h)
         if shadow:
             painter.fillRect(rect.translated(1.5, 1.5), PAGE_SHADOW)
         painter.fillRect(rect, PAGE_BG)
-        painter.setPen(cosmetic_pen(PAGE_EDGE))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(rect)
+        if edge:
+            painter.setPen(cosmetic_pen(PAGE_EDGE))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(rect)
 
     def draw_margin(self, painter: QPainter, page: Page) -> None:
         """基本枠（内側の目安線）。作品には出ない、置き場所の目印。"""
@@ -185,9 +215,12 @@ class PageRenderer:
         if shape is None:
             shape = panel.shape
         polygon = polygon_of(shape.points)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(PANEL_FILL))
-        painter.drawPolygon(polygon)
+        if self.aids:
+            # 下地は画面で「どこがコマか」を見分けるための色。紙の上では
+            # コマの中は白なので、書き出しでは塗らずに用紙の白を残す
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(PANEL_FILL))
+            painter.drawPolygon(polygon)
 
         if panel.children:
             self._draw_children(painter, panel, polygon)
@@ -218,7 +251,7 @@ class PageRenderer:
         painter.restore()
 
     def _draw_image(self, painter: QPainter, image: ImageObject) -> None:
-        preview = self.state.preview(image.asset)
+        preview = self.images(image.asset)
         if preview is None:
             self._draw_missing(painter, image)
             return
@@ -232,6 +265,8 @@ class PageRenderer:
         何も描かないと、絵が消えたのか最初から無かったのか分からない。
         枠だけ出して「ここに1枚あるはず」と示す。
         """
+        if not self.aids:
+            return
         painter.setPen(cosmetic_pen(MISSING_IMAGE, 1.0, Qt.PenStyle.DashLine))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         rect = qrect(image.rect)
@@ -264,6 +299,8 @@ class PageRenderer:
         if not obj.content:
             # 空のセリフは枠だけ出す。何も描かないと、作った直後に
             # 見失って選び直せなくなる
+            if not self.aids:
+                return
             painter.setPen(cosmetic_pen(PLACEHOLDER, 1.0, Qt.PenStyle.DotLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(qrect(obj.rect))

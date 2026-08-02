@@ -26,11 +26,13 @@ scratch/
 # 動作確認用の使い捨てプロジェクト（実際の原稿はリポジトリの外で扱う）
 /data/
 
-# サンプルは project.json だけを管理し、画像とバックアップは含めない
+# サンプルは project.json だけを管理し、画像・バックアップ・書き出しは含めない
 /samples/*/assets/
 /samples/*/backup/
+/samples/*/export/
 
 # アプリが書き出すもの（本来は %LOCALAPPDATA% に置くが、開発中に混入した場合の保険）
 /cache/
 /backup/
+/export/
 *.tmp

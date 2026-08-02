@@ -94,6 +94,17 @@ def preview_from_bytes(data: bytes) -> Preview:
     return Preview(image=make_preview(full), source_px=size_px(full))
 
 
+def full_from_bytes(data: bytes) -> Preview:
+    """縮小しない1枚。**PNG 書き出しのときだけ使う。**
+
+    画面用の縮小版（長辺 `PREVIEW_MAX_PX`）を 600dpi へ引き伸ばすと、
+    書き出したものだけがぼやける。画面で確かめても気づけないので、
+    ここで経路を分けてある。
+    """
+    full = decode(data)
+    return Preview(image=full, source_px=size_px(full))
+
+
 class ImageCache:
     """参照文字列から画面用の1枚を引く。展開は1回だけ。
 
@@ -102,9 +113,14 @@ class ImageCache:
 
     **展開に失敗したことも覚える。** 覚えずにいると、壊れた画像が1枚あるだけで
     描き直しのたびに展開を試して画面が固まる。
+
+    `make` を差し替えると原寸を持つ入れ物になる（書き出し用）。既定は
+    画面用の縮小版。**同じ入れ物に縮小版と原寸を混ぜてはいけない。**
+    どちらが入っているかを引く側が判断できず、書き出しが静かにぼやける。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, make: Callable[[bytes], Preview] = preview_from_bytes) -> None:
+        self._make = make
         self._items: dict[str, Preview | None] = {}
 
     def __len__(self) -> int:
@@ -123,7 +139,7 @@ class ImageCache:
         try:
             data = read_bytes()
             if data:
-                preview = preview_from_bytes(data)
+                preview = self._make(data)
         except (BrokenImageError, OSError):
             preview = None
 
