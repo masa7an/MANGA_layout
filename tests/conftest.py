@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import pathlib
 import sys
 
 import pytest
+
+# 画面まわりのテストは表示装置なしで動かす。
+# QApplication を作る前に決めておく必要がある
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures"
@@ -15,6 +20,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from manga_layout import Rect, Tail, new_project  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """画面まわりのテスト用。1つのプロセスに QApplication は1つだけ。"""
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    yield app
 
 
 @pytest.fixture
