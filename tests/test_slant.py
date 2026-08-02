@@ -27,6 +27,9 @@ from manga_layout.layout import (
     slant_narrowest,
     slant_offset,
     slant_polygons,
+    slant_ratio_at,
+    slant_ratio_bounds,
+    slide_slant_pair,
     split_panel,
     split_panel_slant,
 )
@@ -329,3 +332,86 @@ class TestSlantPersistence:
             data["pages"][0]["slant_pairs"][0][key] = bad
             with pytest.raises(ProjectFormatError):
                 Project.from_dict(data)
+
+
+class TestSlideSlant:
+    """境界を左右にずらす。"""
+
+    def test_ずらすと形が付いてくる(self, split_page):
+        _, page, left, _ = split_page
+        pair = slide_slant_pair(page, page.slant_pairs[0], 0.3, SETTINGS)
+        assert pair.ratio == pytest.approx(0.3)
+        # 左が細くなり、右が太くなる
+        assert left.shape.bounds().w < 50.0
+
+    def test_外側の矩形は変わらない(self, split_page):
+        _, page, _, _ = split_page
+        before = page.slant_bounds(page.slant_pairs[0])
+        after = page.slant_bounds(slide_slant_pair(page, page.slant_pairs[0], 0.3, SETTINGS))
+        assert (after.x, after.y, after.w, after.h) == pytest.approx(
+            (before.x, before.y, before.w, before.h)
+        )
+
+    def test_角度と向きは変わらない(self, split_page):
+        _, page, _, _ = split_page
+        before = page.slant_pairs[0]
+        after = slide_slant_pair(page, before, 0.28, SETTINGS)
+        assert after.angle == before.angle
+        assert after.direction == before.direction
+
+    def test_行きすぎたら押し戻す(self, split_page):
+        _, page, _, _ = split_page
+        pair = slide_slant_pair(page, page.slant_pairs[0], 0.01, SETTINGS)
+        low, high = slant_ratio_bounds(SQUARE, 12.0, SETTINGS)
+        assert pair.ratio == pytest.approx(low)
+        # 押し戻した先はちゃんと割れる
+        check_slant(SQUARE, pair.ratio, pair.angle, SETTINGS)
+
+    def test_範囲は左右対称(self):
+        low, high = slant_ratio_bounds(SQUARE, 12.0, SETTINGS)
+        assert low + high == pytest.approx(1.0)
+        assert 0.0 < low < 0.5
+
+    def test_割れない大きさでは動かせない(self):
+        """縦に長すぎるコマ。中央のみを返し、ドラッグしても動かない。"""
+        assert slant_ratio_bounds(Rect(0.0, 0.0, 20.0, 300.0), 12.0, SETTINGS) == (0.5, 0.5)
+
+    def test_中の画像は動かないし所属も変わらない(self, slant_page):
+        """境界を絵の向こうへ送っても、絵は元のコマに残る（切り抜かれる）。"""
+        project, page = slant_page
+        panel = page.panels[0]
+        image = project.add_image(panel, "a.png", Rect(20.0, 20.0, 15.0, 15.0), (100, 100))
+        left, right = split_panel_slant(
+            project, page, panel.id, position=50.0, settings=SETTINGS
+        )
+        assert image in left.children
+
+        before = image.rect
+        slide_slant_pair(page, page.slant_pairs[0], 0.2, SETTINGS)
+        assert image in left.children
+        assert image not in right.children
+        assert image.rect == before
+
+    def test_割合への変換(self):
+        assert slant_ratio_at(Rect(10.0, 0.0, 100.0, 50.0), 60.0) == pytest.approx(0.5)
+
+    def test_限界ちょうどまでずらしても落ちない(self, split_page):
+        """押し戻した値をそのまま作り直しへ渡す経路の回帰。
+
+        `clamp_slant_ratio` は最小幅ぴったりの割合を作る。厳密に比べると
+        浮動小数の丸めで `check_slant` に弾かれ、限界まで引いた瞬間に
+        ValueError で落ちていた。
+        """
+        _, page, _, _ = split_page
+        low, high = slant_ratio_bounds(SQUARE, 12.0, SETTINGS)
+        for target in (low, high):
+            pair = slide_slant_pair(page, page.slant_pairs[0], target, SETTINGS)
+            assert pair.ratio == pytest.approx(target)
+
+    def test_限界ちょうどまで縮めても落ちない(self, split_page):
+        """リサイズ側の同じ経路。`clamp_slant_rect` の返り値を通す。"""
+        _, page, _, _ = split_page
+        pair = page.slant_pairs[0]
+        clamped = clamp_slant_rect(pair, Rect(0.0, 0.0, 20.0, 100.0), SETTINGS)
+        set_slant_pair_rect(page, pair, clamped, SETTINGS)
+        assert page.slant_bounds(pair).h == pytest.approx(clamped.h)

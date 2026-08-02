@@ -14,7 +14,7 @@ import dataclasses
 import math
 from dataclasses import dataclass
 
-from .geometry import Polygon, Rect
+from .geometry import EPS, Polygon, Rect
 from .model import (
     SLANT_DIRECTIONS,
     SLANT_LEFT,
@@ -516,7 +516,10 @@ def check_slant(
     if not 0.0 < ratio < 1.0:
         raise ValueError("コマの内側で位置を指定してください")
     narrowest = slant_narrowest(rect, ratio, angle, settings.gutter)
-    if narrowest >= settings.min_panel_size:
+    # ちょうど限界に押し戻した値をここへ通すため、`EPS` ぶん緩める。
+    # `clamp_slant_ratio` / `clamp_slant_rect` は最小幅ぴったりの値を作るので、
+    # 厳密に比べると浮動小数の丸めで弾かれ、限界までドラッグした瞬間に落ちる
+    if narrowest >= settings.min_panel_size - EPS:
         return
     raise ValueError(
         f"そこで斜めに割ると幅 {max(narrowest, 0.0):.1f}mm のコマができます"
@@ -638,6 +641,72 @@ def set_slant_pair_rect(
     中の画像は動かさない。矩形のコマのリサイズと同じ扱いにしてある。
     """
     rebuild_slant_pair(page, pair, rect.normalized(), settings)
+
+
+def slant_handle_point(rect: Rect, ratio: float) -> tuple[float, float]:
+    """境界をつまむ位置。境界線の中点。
+
+    上下の中央では、傾きに関わらず境界がちょうど分割位置を通る。
+    向きを反転しても掴み所が動かないので、目が迷わない。
+    """
+    return (rect.x + rect.w * ratio, rect.y + rect.h / 2.0)
+
+
+def slant_ratio_at(rect: Rect, x: float) -> float:
+    """ページ座標の x を、外側の矩形に対する割合に直す。"""
+    return (x - rect.x) / rect.w if rect.w > 0.0 else 0.5
+
+
+def slant_ratio_bounds(
+    rect: Rect, angle: float, settings: LayoutSettings = DEFAULT_SETTINGS
+) -> tuple[float, float]:
+    """境界をずらせる割合の範囲。細いほうが最小幅を割らない限界。
+
+    左右で対称なので、片側の限界 `k` から `(k, 1-k)` になる。
+    そもそも割れない大きさなら幅ゼロの範囲（中央のみ）を返す。
+    """
+    if rect.w <= 0.0:
+        return (0.5, 0.5)
+    k = (
+        slant_offset(rect.h, angle)
+        + slant_gap(settings.gutter, angle)
+        + settings.min_panel_size
+    ) / rect.w
+    return (0.5, 0.5) if k >= 0.5 else (k, 1.0 - k)
+
+
+def clamp_slant_ratio(
+    rect: Rect, angle: float, ratio: float, settings: LayoutSettings = DEFAULT_SETTINGS
+) -> float:
+    """割合を、割れる範囲まで押し戻す。"""
+    low, high = slant_ratio_bounds(rect, angle, settings)
+    return min(max(ratio, low), high)
+
+
+def slide_slant_pair(
+    page: Page,
+    pair: SlantPair,
+    ratio: float,
+    settings: LayoutSettings = DEFAULT_SETTINGS,
+) -> SlantPair:
+    """境界を左右にずらす。差し替えた `SlantPair` を返す。
+
+    外側の矩形は変わらないので、隣のコマとの位置関係は動かない。
+    範囲外を渡しても断らずに押し戻す（リサイズが最小の大きさで
+    止まるのと同じ感触にするため）。
+
+    **中の画像は動かさないし、所属も変えない。** 境界を絵の向こう側まで
+    送ると、その絵はコマの外に出て切り抜かれ、見えなくなる。これは
+    「窓の大きさを変えても中身は付いて回らない」という既存の方針
+    （要件定義 4章）と同じで、絵が勝手に隣のコマへ飛ぶより読みやすい。
+    """
+    rect = page.slant_bounds(pair)
+    moved = dataclasses.replace(
+        pair, ratio=clamp_slant_ratio(rect, pair.angle, ratio, settings)
+    )
+    rebuild_slant_pair(page, moved, rect, settings)
+    page.slant_pairs[page.slant_pairs.index(pair)] = moved
+    return moved
 
 
 def flip_slant_pair(

@@ -47,9 +47,13 @@ from ..layout import (
     set_panel_rect,
     set_slant_pair_rect,
     clamp_slant_rect,
+    clamp_slant_ratio,
     snap_candidates,
     root_y_at,
     slant_boundary_x,
+    slant_handle_point,
+    slant_polygons,
+    slant_ratio_at,
     snap_moved_rect,
     snap_point,
     split_panel,
@@ -189,6 +193,8 @@ class PageScene(QGraphicsScene):
         self.tail_preview: tuple[str, tuple[float, float]] | None = None
         # しっぽの付け根を上下にずらしている最中の (吹き出しの id, 割合)
         self.root_preview: tuple[str, float] | None = None
+        # 斜めの境界をずらしている最中の (組のどちらかのコマの id, 割合)
+        self.slant_preview: tuple[str, float] | None = None
         # その場編集中のセリフ。編集中は下地を描かない
         self.editing_text_id: str | None = None
         self.update_scene_rect()
@@ -226,8 +232,32 @@ class PageScene(QGraphicsScene):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(QRectF(m, m, page.size.w - m * 2, page.size.h - m * 2))
 
+    def _preview_shape(self, panel: Panel):
+        """境界をドラッグ中のコマの、下見の形。関係なければ None。
+
+        モデルには触らずここで作り直す。確定するまで履歴を汚さない。
+        """
+        if self.slant_preview is None:
+            return None
+        held_id, ratio = self.slant_preview
+        page = self.state.page
+        pair = page.slant_pair_of(held_id)
+        if pair is None or panel.id not in pair.members():
+            return None
+        left, right = slant_polygons(
+            page.slant_bounds(pair),
+            ratio,
+            pair.angle,
+            pair.direction,
+            self.state.settings.gutter,
+        )
+        return left if panel.id == pair.left_id else right
+
     def _draw_panel(self, painter: QPainter, panel: Panel) -> None:
-        polygon = QPolygonF([QPointF(x, y) for x, y in panel.shape.points])
+        shape = self._preview_shape(panel)
+        if shape is None:
+            shape = panel.shape
+        polygon = QPolygonF([QPointF(x, y) for x, y in shape.points])
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(PANEL_FILL))
         painter.drawPolygon(polygon)
@@ -397,6 +427,7 @@ class PageScene(QGraphicsScene):
             self._draw_selection(painter, bounds, scale, self._accent())
         if balloon is not None:
             self._draw_tail_handle(painter, balloon, scale)
+        self._draw_slant_handle(painter, scale)
 
         if self.preview_rect is not None:
             painter.setPen(_cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
@@ -448,6 +479,47 @@ class PageScene(QGraphicsScene):
                     (root[0] + half, root[1]),
                     (root[0], root[1] + half),
                     (root[0] - half, root[1]),
+                )
+            )
+        )
+
+    def slant_handle(self) -> tuple[float, float] | None:
+        """斜めの境界をつまむ位置。選んでいなければ None。
+
+        描く側と掴む側で同じ答えが要るので、1箇所にまとめてある。
+        ずらしている最中は下見の位置に付いてくる。
+        """
+        pair = self.state.selected_slant_pair
+        if pair is None:
+            return None
+        ratio = pair.ratio
+        if self.slant_preview is not None and self.slant_preview[0] in pair.members():
+            ratio = self.slant_preview[1]
+        return slant_handle_point(self.state.page.slant_bounds(pair), ratio)
+
+    def _draw_slant_handle(self, painter: QPainter, scale: float) -> None:
+        """境界をずらすつまみ。左右向きの矢羽根で描く。
+
+        角の四角つまみ・しっぽのひし形と形を変える。同じ形だと、
+        大きさを変えるつもりで境界を引っぱってしまう。
+        """
+        point = self.slant_handle()
+        if point is None:
+            return
+        size = HANDLE_PX / scale
+        half = size / 2.0
+        x, y = point
+        painter.setPen(_cosmetic_pen(ACCENT, 1.2))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawPolygon(
+            _polygon(
+                (
+                    (x - size, y),
+                    (x - half, y - half),
+                    (x + half, y - half),
+                    (x + size, y),
+                    (x + half, y + half),
+                    (x - half, y + half),
                 )
             )
         )
@@ -617,6 +689,7 @@ class PageView(QGraphicsView):
         self._scene.preview_rect = None
         self._scene.tail_preview = None
         self._scene.root_preview = None
+        self._scene.slant_preview = None
 
     def fit_page(self) -> None:
         page = self.state.page
@@ -809,6 +882,19 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # 斜めの境界のつまみ。角のつまみより先に見る。細いコマでは
+        # 境界と左右のつまみが近づくため、狙って掴んだほうを優先する
+        if self._slant_handle_at(x, y):
+            panel = self.state.selected_panel
+            self._mode = "slant"
+            self._scene.slant_preview = (
+                panel.id,
+                self.state.page.slant_pair_of(panel.id).ratio,
+            )
+            self.state.message.emit("左右にドラッグすると、斜めの境界が動きます")
+            event.accept()
+            return
+
         selected_bounds = self.state.selected_bounds
         if handle is not None and selected_bounds is not None:
             self._mode = "resize"
@@ -929,6 +1015,14 @@ class PageView(QGraphicsView):
         half = HANDLE_PX / self.view_scale / 2.0
         return abs(x - tx) <= half and abs(y - ty) <= half
 
+    def _slant_handle_at(self, x: float, y: float) -> bool:
+        """斜めの境界のつまみを掴んでいるか。"""
+        point = self._scene.slant_handle()
+        if point is None:
+            return False
+        half = HANDLE_PX / self.view_scale / 2.0
+        return abs(x - point[0]) <= half and abs(y - point[1]) <= half
+
     def _tail_root_at(self, x: float, y: float) -> bool:
         """選択中の吹き出しの、しっぽの付け根を掴んでいるか。"""
         balloon = self.state.selected_balloon
@@ -1024,6 +1118,16 @@ class PageView(QGraphicsView):
             rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
             self._scene.preview_rect = rect.normalized()
 
+        elif self._mode == "slant" and self._scene.slant_preview is not None:
+            held_id = self._scene.slant_preview[0]
+            pair = self.state.page.slant_pair_of(held_id)
+            if pair is not None:
+                rect = self.state.page.slant_bounds(pair)
+                ratio = clamp_slant_ratio(
+                    rect, pair.angle, slant_ratio_at(rect, x), self.state.settings
+                )
+                self._scene.slant_preview = (held_id, ratio)
+
         elif self._mode == "move" and self._origin_rect is not None:
             moved = self._origin_rect.translated(x - self._grab[0], y - self._grab[1])
             xs, ys = self._candidates(self.state.selected_id)
@@ -1073,6 +1177,7 @@ class PageView(QGraphicsView):
         preview = self._scene.preview_rect
         tail = self._scene.tail_preview
         root = self._scene.root_preview
+        slant = self._scene.slant_preview
         mode, origin, press = self._mode, self._origin_rect, self._grab
         self._reset_drag()
 
@@ -1082,6 +1187,9 @@ class PageView(QGraphicsView):
         elif mode == "tail_root":
             if root is not None:
                 self._apply_tail_root(root[0], root[1])
+        elif mode == "slant":
+            if slant is not None:
+                self._apply_slant(slant[0], slant[1])
         elif preview is not None:
             if mode == "create":
                 self._apply_create(preview, press)
@@ -1150,6 +1258,9 @@ class PageView(QGraphicsView):
         elif self._tail_root_at(x, y):
             # 上下にしか動かないことを形で示す
             self.viewport().setCursor(Qt.CursorShape.SizeVerCursor)
+        elif self._slant_handle_at(x, y):
+            # 左右にしか動かないことを形で示す
+            self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
         elif handle is not None:
             self.viewport().setCursor(_HANDLE_CURSORS[handle])
         elif image is not None and image.rect.contains(x, y):
@@ -1241,6 +1352,13 @@ class PageView(QGraphicsView):
             return
         self.state.set_tail_root(balloon_id, root_y)
         self.state.message.emit(f"しっぽの付け根: {self._root_label(root_y)}")
+
+    def _apply_slant(self, panel_id: str, ratio: float) -> None:
+        pair = self.state.page.slant_pair_of(panel_id)
+        if pair is None or pair.ratio == ratio:
+            return
+        self.state.slide_slant(panel_id, ratio)
+        self.state.message.emit(f"斜めの境界: 左から {ratio * 100:.0f}%")
 
     @staticmethod
     def _root_label(root_y: float) -> str:

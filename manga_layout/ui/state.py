@@ -26,6 +26,7 @@ from ..layout import (
     contain_rect_in,
     default_tail_tip,
     flip_slant_pair,
+    slide_slant_pair,
 )
 from ..model import (
     BalloonObject,
@@ -302,6 +303,18 @@ class EditorState(QObject):
             page = project.pages[self._page_index]
             flip_slant_pair(page, page.slant_pair_of(panel_id), self.settings)
         return True
+
+    def slide_slant(self, panel_id: str, ratio: float) -> None:
+        """斜めの境界を左右にずらす。
+
+        1回のドラッグで1手。ドラッグ中は画面側が下見を描くだけで、
+        ここへは離した時点で1度だけ来る（しっぽの付け根と同じ流儀）。
+        """
+        with self.edit("斜めの境界を移動") as project:
+            page = project.pages[self._page_index]
+            pair = page.slant_pair_of(panel_id)
+            if pair is not None:
+                slide_slant_pair(page, pair, ratio, self.settings)
 
     # -- 吹き出し ----------------------------------------------------------
 

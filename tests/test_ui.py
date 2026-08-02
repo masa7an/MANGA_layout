@@ -894,3 +894,67 @@ class TestSlantSplitUI:
         window.view._apply_split(18.0, 150.0)
         assert len(window.state.page.panels) == 1
         assert window.state.page.slant_pairs == []
+
+
+class TestSlantSlideUI:
+    """斜めの境界を左右にずらす操作の結線。"""
+
+    def _split(self, window):
+        window.add_full_page_panel()
+        window.state.set_tool(TOOL_SPLIT_SLANT)
+        window.view._apply_split(105.0, 150.0)
+        page = window.state.page
+        window.state.select(page.panels[0].id)
+        return page
+
+    def test_つまみは境界の中点に出る(self, window):
+        page = self._split(window)
+        pair = page.slant_pairs[0]
+        outer = page.slant_bounds(pair)
+        hx, hy = window.view._scene.slant_handle()
+        assert hx == pytest.approx(outer.x + outer.w * pair.ratio)
+        assert hy == pytest.approx(outer.y + outer.h / 2.0)
+
+    def test_つまみを掴んで判定できる(self, window):
+        self._split(window)
+        hx, hy = window.view._scene.slant_handle()
+        assert window.view._slant_handle_at(hx, hy)
+        assert not window.view._slant_handle_at(hx + 30.0, hy)
+
+    def test_斜めでないコマにはつまみが出ない(self, window):
+        window.add_full_page_panel()
+        assert window.view._scene.slant_handle() is None
+
+    def test_ずらすとモデルに入る(self, window):
+        page = self._split(window)
+        before = page.slant_pairs[0].ratio
+        window.view._apply_slant(page.panels[0].id, 0.35)
+
+        page = window.state.page
+        assert page.slant_pairs[0].ratio == pytest.approx(0.35)
+        assert page.slant_pairs[0].ratio != before
+        # 外側の矩形は動かない
+        assert page.slant_bounds(page.slant_pairs[0]).w == pytest.approx(180.0)
+
+    def test_ずらしたあと履歴で戻せる(self, window):
+        page = self._split(window)
+        before = page.slant_pairs[0].ratio
+        window.view._apply_slant(page.panels[0].id, 0.35)
+        window.state.undo()
+        assert window.state.page.slant_pairs[0].ratio == pytest.approx(before)
+
+    def test_下見は履歴を汚さない(self, window):
+        """ドラッグ中はモデルに触らない（しっぽの付け根と同じ流儀）。"""
+        page = self._split(window)
+        depth = len(window.state.history._undo)
+        window.view._scene.slant_preview = (page.panels[0].id, 0.3)
+        assert window.state.page.slant_pairs[0].ratio == pytest.approx(
+            page.slant_pairs[0].ratio
+        )
+        assert len(window.state.history._undo) == depth
+
+    def test_行きすぎても押し戻して受け付ける(self, window):
+        page = self._split(window)
+        window.view._apply_slant(page.panels[0].id, 0.02)
+        ratio = window.state.page.slant_pairs[0].ratio
+        assert 0.02 < ratio < 0.5
