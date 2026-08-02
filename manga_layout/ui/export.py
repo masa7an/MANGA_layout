@@ -195,7 +195,7 @@ def write_png(image: QImage, path: pathlib.Path) -> None:
     """PNG を1枚書く。**別名で書き切ってから置き換える。**
 
     上書きの途中で落ちても、前回の書き出しが壊れた状態で残らない。
-    保存（`storage._atomic_write_text`）と同じ考え方。
+    保存（`storage.atomic_write_text`）と同じ考え方。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + TMP_SUFFIX)

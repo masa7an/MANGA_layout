@@ -54,7 +54,7 @@ def _compact_pairs(text: str) -> str:
     return _PAIR_RE.sub(r"[\1, \2]", text)
 
 
-def _atomic_write_text(path: pathlib.Path, text: str) -> None:
+def atomic_write_text(path: pathlib.Path, text: str) -> None:
     """一時ファイルへ書き切ってから置き換える。
 
     `os.replace` は Windows でも同一ドライブ内なら不可分な操作なので、
@@ -116,7 +116,7 @@ def save_project(
 
     text = _compact_pairs(json.dumps(project.to_dict(), ensure_ascii=False, indent=2)) + "\n"
     path = project_dir / PROJECT_FILENAME
-    _atomic_write_text(path, text)
+    atomic_write_text(path, text)
     return path
 
 

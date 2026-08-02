@@ -21,6 +21,7 @@ from ..errors import MangaLayoutError
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect
 from ..model import ImageObject, Panel
+from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import is_project_dir, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .export import (
@@ -34,6 +35,7 @@ from .export import (
     planned_paths,
 )
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
+from .saving import SaveAsDialog, default_parent
 from .state import (
     TOOL_BALLOON,
     TOOL_BALLOON_JAGGED,
@@ -91,6 +93,12 @@ class MainWindow(QMainWindow):
         # 書き出しの dpi は作品ではなく好みなので、project.json には入れない。
         # ただし1回の作業中は同じ値を使い続けるのが普通なので覚えておく
         self._export_dpi = DEFAULT_DPI
+
+        # settings.json は手で書き換える前提のファイル。実物が無いと
+        # 「どこに何を書けばいいのか」が分からないので、起動時に雛形を置く。
+        # 読めなくても既定値で進む（設定は好みで、無くても作業はできる）
+        ensure_settings_file()
+        self.settings = load_settings()
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -935,10 +943,41 @@ class MainWindow(QMainWindow):
         return self._write(self.state.project_dir)
 
     def save_project_as(self) -> bool:
-        folder = QFileDialog.getExistingDirectory(self, "保存先のフォルダを選ぶ")
-        if not folder:
+        """置き場所と作品名を決めて保存する。
+
+        作品はフォルダなので、「既にあるフォルダを選ぶ」窓では名前を
+        付けられない（選んだ瞬間にそこへ書き込まれる）。専用の窓で
+        置き場所と名前を分けて受け取る（`saving.SaveAsDialog`）。
+        """
+        dialog = SaveAsDialog(
+            default_parent(self.state.project_dir, self.settings.default_parent_dir),
+            self.state.project.title,
+            self,
+            settings_path(),
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
-        return self._write(pathlib.Path(folder))
+
+        target = dialog.chosen_path()
+        if dialog.overwrites_project() and not self._confirm_overwrite_project(target):
+            return False
+        return self._write(target)
+
+    def _confirm_overwrite_project(self, path: pathlib.Path) -> bool:
+        """既にある作品への上書きを確かめる。よければ True。
+
+        窓の中でも赤字で伝えているが、上書きすると相手の作品の
+        `project.json` が置き換わる。押し間違いで消せる場所ではない。
+        """
+        answer = QMessageBox.question(
+            self,
+            "上書きしますか",
+            f"{path} には既に別の作品が入っています。\n"
+            "この作品で上書きしますか。",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Ok
 
     def _write(self, path: pathlib.Path) -> bool:
         try:
