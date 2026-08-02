@@ -406,14 +406,27 @@ class TestDirection:
         assert "縦書き" in window_with_text._hint()
 
     def test_縦書きでもその場編集に入れる(self, window_with_text):
-        # **入力欄は横書きのまま出る。** Qt に縦書きの入力欄が無いため、
-        # 入力中と確定後で見た目が食い違う（段階3 で決める積み残し）。
-        # ここでは、その状態でも操作が壊れないことだけを押さえる
+        # **入力欄は横書きのまま出る。** Qt に縦書きの入力欄が無いため。
+        # 見た目の食い違いは案内で断る方針にした（下のテスト）
         window_with_text.toggle_vertical()
         text_id = window_with_text.state.selected_text.id
         assert window_with_text.view.begin_text_edit(text_id)
         window_with_text.view.finish_text_edit(commit=True)
         assert only_text(window_with_text.state.page).direction == "vertical"
+
+    def test_縦書きの入力では横書きで入ると断る(self, window_with_text):
+        # 黙っていると「縦書きにしたのに横書きで入る」と受け取られる
+        window_with_text.toggle_vertical()
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        message = window_with_text.statusBar().currentMessage()
+        window_with_text.view.finish_text_edit(commit=False)
+        assert "横書き" in message and "縦書き" in message
+
+    def test_横書きの入力では余計な断りを出さない(self, window_with_text):
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        message = window_with_text.statusBar().currentMessage()
+        window_with_text.view.finish_text_edit(commit=False)
+        assert "横書き" not in message
 
     def test_縦書きでは整列の呼び名が変わる(self, window_with_text):
         # align は横書き用の項目を読み替えて使っている（→ manga_layout.vertical）

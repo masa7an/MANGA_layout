@@ -132,6 +132,19 @@ CORNER_HANDLES = ("nw", "ne", "se", "sw")
 ASPECT_HINT = "Shift キーを押しながらドラッグで縦横比率を維持"
 ASPECT_HINT_HELD = "縦横比率を維持中（Shift）"
 
+# その場編集に入ったときの案内。
+_TEXT_EDIT_KEYS = "Enter で改行、Ctrl+Enter で確定、Esc で取り消し"
+TEXT_EDIT_HINT = f"文字を入力してください。{_TEXT_EDIT_KEYS}"
+
+# **縦書きのセリフでも、入力欄は横書きで出る。** Qt に縦書きの入力欄が
+# 無いため（`QTextOption` にあるのは左右の向きだけ）。黙っていると
+# 「縦書きにしたのに横書きで入る」と受け取られるので、先に断っておく。
+# 入力中と確定後で見た目が食い違うのはこの1点だけなので、案内で凌ぐ
+TEXT_EDIT_HINT_VERTICAL = (
+    f"文字を入力してください（入力中は横書き。確定すると縦書きに組み直します）。"
+    f"{_TEXT_EDIT_KEYS}"
+)
+
 _HANDLE_CURSORS = {
     "nw": Qt.CursorShape.SizeFDiagCursor,
     "se": Qt.CursorShape.SizeFDiagCursor,
@@ -761,7 +774,9 @@ class PageView(QGraphicsView):
         editor.setTextCursor(cursor)
 
         self.state.message.emit(
-            "文字を入力してください。Enter で改行、Ctrl+Enter で確定、Esc で取り消し"
+            TEXT_EDIT_HINT_VERTICAL
+            if text.direction == "vertical"
+            else TEXT_EDIT_HINT
         )
         self.viewport().update()
         return True
