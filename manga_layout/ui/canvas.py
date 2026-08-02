@@ -36,9 +36,11 @@ from ..layout import (
     resize_rect_keep_aspect,
     set_panel_rect,
     snap_candidates,
+    root_y_at,
     snap_moved_rect,
     snap_point,
     split_panel,
+    tail_root_point,
     tail_triangle,
 )
 from ..model import BalloonObject, ImageObject, Panel, TextObject
@@ -127,6 +129,8 @@ class PageScene(QGraphicsScene):
         self.split_preview: tuple[Rect, bool, float] | None = None
         # しっぽの先端をドラッグ中の (吹き出しの id, 先端の位置)
         self.tail_preview: tuple[str, tuple[float, float]] | None = None
+        # しっぽの付け根を上下にずらしている最中の (吹き出しの id, 割合)
+        self.root_preview: tuple[str, float] | None = None
         self.update_scene_rect()
 
     def update_scene_rect(self) -> None:
@@ -231,14 +235,18 @@ class PageScene(QGraphicsScene):
                 painter.drawRect(_qrect(obj.rect))
 
     def _with_preview_tail(self, balloon: BalloonObject) -> BalloonObject:
-        """先端をドラッグ中なら、その位置を当てはめた写しを返す。
+        """しっぽをドラッグ中なら、その値を当てはめた写しを返す。
 
         モデルは確定するまで触らない。写しを描くことで、Undo の1手が
         ドラッグの途中経過で埋まるのを避けられる。
         """
-        if self.tail_preview is None or self.tail_preview[0] != balloon.id:
+        tail = balloon.tail
+        if self.tail_preview is not None and self.tail_preview[0] == balloon.id:
+            tail = dataclasses.replace(tail, tip=self.tail_preview[1], enabled=True)
+        if self.root_preview is not None and self.root_preview[0] == balloon.id:
+            tail = dataclasses.replace(tail, root_y=self.root_preview[1], enabled=True)
+        if tail is balloon.tail:
             return balloon
-        tail = dataclasses.replace(balloon.tail, tip=self.tail_preview[1], enabled=True)
         return dataclasses.replace(balloon, tail=tail)
 
     def _balloon_path(self, balloon: BalloonObject) -> QPainterPath:
@@ -317,19 +325,37 @@ class PageScene(QGraphicsScene):
     def _draw_tail_handle(
         self, painter: QPainter, balloon: BalloonObject, scale: float
     ) -> None:
-        """しっぽの先端を掴む丸。
+        """しっぽの先端（丸）と付け根（ひし形）を掴む印。
 
         角を掴むつまみ（四角）と形を変える。同じ形だと、大きさを変える
-        つもりで先端を引っぱってしまう。
+        つもりで引っぱってしまう。先端と付け根も互いに別の形にして、
+        どちらを動かすのか掴む前に分かるようにする。
         """
         balloon = self._with_preview_tail(balloon)
         if not balloon.tail.enabled:
             return
+
         size = HANDLE_PX / scale
-        tx, ty = balloon.tail.tip
         painter.setPen(_cosmetic_pen(BALLOON_ACCENT, 1.2))
         painter.setBrush(QBrush(QColor("#FFFFFF")))
+
+        tx, ty = balloon.tail.tip
         painter.drawEllipse(QPointF(tx, ty), size / 2.0, size / 2.0)
+
+        root = tail_root_point(balloon, self.state.balloon_settings)
+        if root is None:
+            return
+        half = size / 2.0
+        painter.drawPolygon(
+            _polygon(
+                (
+                    (root[0], root[1] - half),
+                    (root[0] + half, root[1]),
+                    (root[0], root[1] + half),
+                    (root[0] - half, root[1]),
+                )
+            )
+        )
 
     def _draw_selection(
         self, painter: QPainter, bounds: Rect, scale: float, color: QColor = ACCENT
@@ -429,6 +455,7 @@ class PageView(QGraphicsView):
         self._hint_shown = None
         self._scene.preview_rect = None
         self._scene.tail_preview = None
+        self._scene.root_preview = None
 
     def fit_page(self) -> None:
         page = self.state.page
@@ -521,14 +548,25 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        # しっぽの先端。つまみより先に見る。小さな吹き出しでは
-        # 先端の丸と角のつまみが近づくため、狙って掴んだほうを優先する
+        # しっぽの先端と付け根。つまみより先に見る。小さな吹き出しでは
+        # これらと角のつまみが近づくため、狙って掴んだほうを優先する
         if self._tail_tip_at(x, y):
             self._mode = "tail"
             self._scene.tail_preview = (
                 self.state.selected_balloon.id,
                 self.state.selected_balloon.tail.tip,
             )
+            event.accept()
+            return
+
+        if self._tail_root_at(x, y):
+            selected = self.state.selected_balloon
+            self._mode = "tail_root"
+            self._scene.root_preview = (
+                selected.id,
+                root_y_at(selected.rect, y),
+            )
+            self.state.message.emit("上下にドラッグすると、しっぽの付け根が動きます")
             event.accept()
             return
 
@@ -581,6 +619,17 @@ class PageView(QGraphicsView):
         tx, ty = balloon.tail.tip
         half = HANDLE_PX / self.view_scale / 2.0
         return abs(x - tx) <= half and abs(y - ty) <= half
+
+    def _tail_root_at(self, x: float, y: float) -> bool:
+        """選択中の吹き出しの、しっぽの付け根を掴んでいるか。"""
+        balloon = self.state.selected_balloon
+        if balloon is None or not balloon.tail.enabled:
+            return False
+        root = tail_root_point(balloon, self.state.balloon_settings)
+        if root is None:
+            return False
+        half = HANDLE_PX / self.view_scale / 2.0
+        return abs(x - root[0]) <= half and abs(y - root[1]) <= half
 
     def mouseDoubleClickEvent(self, event) -> None:
         """コマの中に入って、画像そのものを選ぶ。
@@ -640,6 +689,16 @@ class PageView(QGraphicsView):
             if self._scene.tail_preview is not None:
                 self._scene.tail_preview = (self._scene.tail_preview[0], (x, y))
 
+        elif self._mode == "tail_root":
+            # **縦だけ見る。** 付け根は輪郭の上を滑るので、横位置は
+            # 高さから決まる。マウスの左右を拾うと形が飛ぶ
+            balloon = self.state.selected_balloon
+            if balloon is not None and self._scene.root_preview is not None:
+                self._scene.root_preview = (
+                    self._scene.root_preview[0],
+                    root_y_at(balloon.rect, y),
+                )
+
         elif self._mode == "create":
             rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
             xs, ys = self._candidates(None)
@@ -691,12 +750,16 @@ class PageView(QGraphicsView):
 
         preview = self._scene.preview_rect
         tail = self._scene.tail_preview
+        root = self._scene.root_preview
         mode, origin, press = self._mode, self._origin_rect, self._grab
         self._reset_drag()
 
         if mode == "tail":
             if tail is not None:
                 self._apply_tail(tail[0], tail[1])
+        elif mode == "tail_root":
+            if root is not None:
+                self._apply_tail_root(root[0], root[1])
         elif preview is not None:
             if mode == "create":
                 self._apply_create(preview, press)
@@ -758,6 +821,9 @@ class PageView(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
         elif self._tail_tip_at(x, y):
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        elif self._tail_root_at(x, y):
+            # 上下にしか動かないことを形で示す
+            self.viewport().setCursor(Qt.CursorShape.SizeVerCursor)
         elif handle is not None:
             self.viewport().setCursor(_HANDLE_CURSORS[handle])
         elif image is not None and image.rect.contains(x, y):
@@ -821,6 +887,26 @@ class PageView(QGraphicsView):
         if not isinstance(balloon, BalloonObject) or balloon.tail.tip == tip:
             return
         self.state.set_tail_tip(balloon_id, tip)
+
+    def _apply_tail_root(self, balloon_id: str, root_y: float) -> None:
+        balloon = self.state.page.find(balloon_id)
+        if not isinstance(balloon, BalloonObject) or balloon.tail.root_y == root_y:
+            return
+        self.state.set_tail_root(balloon_id, root_y)
+        self.state.message.emit(f"しっぽの付け根: {self._root_label(root_y)}")
+
+    @staticmethod
+    def _root_label(root_y: float) -> str:
+        """割合を言葉にする。数字だけでは上下どちらか分かりにくい。"""
+        if root_y <= -0.66:
+            return "上端"
+        if root_y < -0.15:
+            return "やや上"
+        if root_y <= 0.15:
+            return "中央"
+        if root_y < 0.66:
+            return "やや下"
+        return "下端"
 
     def _apply_move(self, origin: Rect, final: Rect) -> None:
         dx, dy = final.x - origin.x, final.y - origin.y

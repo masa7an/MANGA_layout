@@ -453,16 +453,13 @@ def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float
     return 0.95
 
 
-def tail_triangle(
-    balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
-) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None:
-    """しっぽの三角形（付け根の2点と先端）。しっぽ無しなら None。
+def tail_base_angle(balloon: BalloonObject) -> float | None:
+    """付け根を置く媒介変数（ラジアン）。決められなければ None。
 
-    先端の向きに合わせて付け根を回す。付け根の幅は `Tail.width`。
+    `root_y` が指定されていれば**その高さ**に置く。先端から見て
+    手前側（左右どちらか）の輪郭に付ける。指定が無ければ先端の向きに
+    合わせる（それまでの挙動）。
     """
-    if not balloon.tail.enabled:
-        return None
-
     rect = balloon.rect
     if rect.w <= 0.0 or rect.h <= 0.0:
         return None
@@ -471,11 +468,54 @@ def tail_triangle(
     tip = balloon.tail.tip
     dx, dy = tip[0] - cx, tip[1] - cy
     if abs(dx) < 1e-9 and abs(dy) < 1e-9:
-        return None  # 先端が中心に重なっている。三角形にならない
+        return None  # 先端が中心に重なっている。向きが決まらない
 
-    # 先端を向く媒介変数。楕円の潰れ具合を打ち消してから角度を取る
-    angle = math.atan2(dy / (rect.h / 2.0), dx / (rect.w / 2.0))
+    root_y = balloon.tail.root_y
+    if root_y is None:
+        # 先端を向く媒介変数。楕円の潰れ具合を打ち消してから角度を取る
+        return math.atan2(dy / (rect.h / 2.0), dx / (rect.w / 2.0))
 
+    # 高さから媒介変数を逆算する。同じ高さに左右2点あるので、
+    # 先端のある側を選ぶ。上端・下端（±1）では左右が一致する
+    angle = math.asin(min(max(root_y, -1.0), 1.0))
+    return angle if dx >= 0.0 else math.pi - angle
+
+
+def tail_root_point(
+    balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[float, float] | None:
+    """付け根の中心。上下にずらす操作の掴み所として使う。"""
+    angle = tail_base_angle(balloon)
+    if angle is None:
+        return None
+    return _on_ellipse(balloon.rect, angle, _tail_base_ratio(balloon, settings))
+
+
+def root_y_at(rect: Rect, y: float) -> float:
+    """ページ座標の高さを `root_y`（割合）に直す。上端 -1、下端 +1。"""
+    if rect.h <= 0.0:
+        return 0.0
+    ratio = (y - rect.center[1]) / (rect.h / 2.0)
+    return min(max(ratio, -1.0), 1.0)
+
+
+def tail_triangle(
+    balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None:
+    """しっぽの三角形（付け根の2点と先端）。しっぽ無しなら None。
+
+    付け根の幅は `Tail.width`、縦位置は `Tail.root_y`。
+    """
+    if not balloon.tail.enabled:
+        return None
+
+    angle = tail_base_angle(balloon)
+    if angle is None:
+        return None
+
+    rect = balloon.rect
+    cx, cy = rect.center
+    tip = balloon.tail.tip
     ratio = _tail_base_ratio(balloon, settings)
     base_center = _on_ellipse(rect, angle, ratio)
     radius = math.hypot(base_center[0] - cx, base_center[1] - cy)

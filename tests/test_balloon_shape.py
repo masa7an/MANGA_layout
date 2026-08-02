@@ -23,6 +23,9 @@ from manga_layout.layout import (
     default_tail_tip,
     ellipse_points,
     jagged_points,
+    root_y_at,
+    tail_base_angle,
+    tail_root_point,
     tail_triangle,
 )
 
@@ -169,6 +172,106 @@ class TestTail:
         tip = default_tail_tip(RECT)
         assert tip[0] == pytest.approx(RECT.center[0])
         assert tip[1] > RECT.bottom
+
+
+class TestTailRoot:
+    """付け根の縦位置（root_y）。上端 -1、中央 0、下端 +1。"""
+
+    def test_指定しなければ先端の向きに合わせる(self, balloon):
+        balloon.tail.tip = (200.0, 43.0)  # 真横
+        assert balloon.tail.root_y is None
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+        mid_y = (base1[1] + base2[1]) / 2.0
+        assert mid_y == pytest.approx(RECT.center[1], abs=0.5)
+
+    @pytest.mark.parametrize(
+        "root_y,expected_y",
+        [(-1.0, RECT.y), (0.0, RECT.center[1]), (1.0, RECT.bottom)],
+        ids=["上端", "中央", "下端"],
+    )
+    def test_指定した高さに付く(self, balloon, root_y, expected_y):
+        balloon.tail.tip = (200.0, 200.0)
+        balloon.tail.root_y = root_y
+        root = tail_root_point(balloon, SETTINGS)
+        # 付け根は輪郭より少し内側に置くので、その分だけ縮む
+        ratio = distance_ratio(RECT, root)
+        assert ratio <= 1.0
+        want = RECT.center[1] + (expected_y - RECT.center[1]) * 0.95
+        assert root[1] == pytest.approx(want, abs=0.01)
+
+    def test_上端と下端を越えない(self, balloon):
+        """要望どおり上端〜下端の範囲。外に飛び出すと形が壊れる。"""
+        balloon.tail.tip = (200.0, 200.0)
+        for value in (-5.0, -1.0, 0.3, 1.0, 5.0):
+            balloon.tail.root_y = value
+            root = tail_root_point(balloon, SETTINGS)
+            assert RECT.y - 1e-9 <= root[1] <= RECT.bottom + 1e-9
+
+    def test_先端のある側に付く(self, balloon):
+        """反対側から生えると、しっぽが吹き出しを横切る。"""
+        balloon.tail.root_y = 0.0
+
+        balloon.tail.tip = (200.0, 43.0)  # 右
+        assert tail_root_point(balloon, SETTINGS)[0] > RECT.center[0]
+
+        balloon.tail.tip = (-200.0, 43.0)  # 左
+        assert tail_root_point(balloon, SETTINGS)[0] < RECT.center[0]
+
+    def test_上端下端では左右が一致する(self, balloon):
+        """極では左右の解が同じ点になる。ここで飛ぶと操作中に形が跳ねる。"""
+        for tip in ((200.0, 200.0), (-200.0, 200.0)):
+            balloon.tail.tip = tip
+            balloon.tail.root_y = 1.0
+            root = tail_root_point(balloon, SETTINGS)
+            assert root[0] == pytest.approx(RECT.center[0])
+
+    def test_大きさを変えても同じ割合に残る(self, balloon):
+        """mm ではなく割合で持つ理由。"""
+        balloon.tail.tip = (200.0, 200.0)
+        balloon.tail.root_y = 0.5
+
+        before = tail_root_point(balloon, SETTINGS)
+        before_ratio = (before[1] - RECT.center[1]) / (RECT.h / 2.0)
+
+        balloon.rect = Rect(RECT.x, RECT.y, RECT.w * 2, RECT.h * 2)
+        after = tail_root_point(balloon, SETTINGS)
+        after_ratio = (after[1] - balloon.rect.center[1]) / (balloon.rect.h / 2.0)
+
+        assert after_ratio == pytest.approx(before_ratio)
+
+    def test_付け根を動かしても三角形は先端に届く(self, balloon):
+        balloon.tail.tip = (30.0, 120.0)
+        for value in (-1.0, -0.5, 0.0, 0.5, 1.0):
+            balloon.tail.root_y = value
+            _, tip, _ = tail_triangle(balloon, SETTINGS)
+            assert tip == (30.0, 120.0)
+
+    def test_しっぽ無しなら付け根も無い(self, balloon):
+        balloon.tail.enabled = False
+        balloon.tail.root_y = 0.0
+        assert tail_triangle(balloon, SETTINGS) is None
+
+    def test_先端が中心に重なると決められない(self, balloon):
+        balloon.tail.tip = RECT.center
+        balloon.tail.root_y = 0.0
+        assert tail_base_angle(balloon) is None
+        assert tail_root_point(balloon, SETTINGS) is None
+
+    @pytest.mark.parametrize(
+        "y,want",
+        [
+            (RECT.y, -1.0),
+            (RECT.center[1], 0.0),
+            (RECT.bottom, 1.0),
+            (RECT.y - 100.0, -1.0),
+            (RECT.bottom + 100.0, 1.0),
+        ],
+    )
+    def test_高さから割合に直せる(self, y, want):
+        assert root_y_at(RECT, y) == pytest.approx(want)
+
+    def test_潰れた吹き出しでも落ちない(self):
+        assert root_y_at(Rect(0.0, 0.0, 10.0, 0.0), 5.0) == 0.0
 
 
 class TestHitTest:

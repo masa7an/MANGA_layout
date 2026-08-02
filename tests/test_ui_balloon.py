@@ -425,6 +425,60 @@ class TestBalloonDrawing:
         ]
         assert gaps == [], f"継ぎ目に隙間: {gaps[:5]}"
 
+    @pytest.mark.parametrize("style", ["ellipse", "jagged"])
+    @pytest.mark.parametrize("root_y", [-1.0, -0.5, 0.0, 0.5, 1.0])
+    def test_付け根をどこにずらしても隙間が空かない(self, drawn, style, root_y):
+        """付け根の位置が変われば、輪郭の凹凸との噛み合わせも変わる。
+
+        ギザギザの谷にあたる高さに来たときが危ない。
+        """
+        window, rect, balloon = drawn
+        window.state.set_balloon_style(balloon.id, style)
+        window.state.set_tail_root(balloon.id, root_y)
+        window.state.select(None)
+        image = render_page(window)
+
+        from manga_layout.layout import tail_triangle
+
+        current = window.state.page.floating[0]
+        base1, tip, base2 = tail_triangle(current, window.state.balloon_settings)
+        mid = ((base1[0] + base2[0]) / 2.0, (base1[1] + base2[1]) / 2.0)
+        center = current.rect.center
+
+        # 中心 → 付け根の中点 → 少しだけ先端寄り、の順にたどる。
+        # **2本に折る必要がある。** 中心から先端寄りの点へ一直線に引くと、
+        # 継ぎ目を通らず輪郭の脇を抜けてしまい、塗りの外を拾う。
+        # 先端の側は三角形が1画素未満に細るので、15% までにとどめる
+        beyond = (mid[0] + (tip[0] - mid[0]) * 0.15, mid[1] + (tip[1] - mid[1]) * 0.15)
+        gaps = []
+        for start, finish in ((center, mid), (mid, beyond)):
+            for i in range(41):
+                t = i / 40
+                x = int(round(start[0] + (finish[0] - start[0]) * t))
+                y = int(round(start[1] + (finish[1] - start[1]) * t))
+                color = image.pixelColor(x, y)
+                if not (is_fill(color) or is_ink(color)):
+                    gaps.append((x, y, color.name()))
+        assert gaps == [], f"付け根 {root_y} で隙間: {gaps[:5]}"
+
+    def test_付け根を上端に寄せると絵が変わる(self, drawn):
+        window, rect, balloon = drawn
+        window.state.set_tail_root(balloon.id, 1.0)
+        window.state.select(None)
+        low = render_page(window)
+
+        window.state.set_tail_root(balloon.id, -1.0)
+        window.state.select(None)
+        high = render_page(window)
+
+        diff = sum(
+            1
+            for y in range(int(rect.y) - 5, int(rect.bottom) + 20)
+            for x in range(int(rect.x) - 5, int(rect.right) + 5)
+            if low.pixelColor(x, y) != high.pixelColor(x, y)
+        )
+        assert diff > 100
+
     def test_しっぽが先端まで届く(self, drawn):
         window, rect, _ = drawn
         image = render_page(window)
@@ -453,6 +507,144 @@ class TestBalloonDrawing:
             if before.pixelColor(x, y) != after.pixelColor(x, y)
         )
         assert diff > 100
+
+
+class TestTailRoot:
+    """しっぽの付け根を上下にずらす操作。"""
+
+    def test_付け根の印を掴める(self, window_with_balloon):
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        press(window_with_balloon.view, root[0], root[1])
+
+        assert window_with_balloon.view._mode == "tail_root"
+
+    def test_上下にドラッグすると付け根が動く(self, window_with_balloon):
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        rect = state.selected_balloon.rect
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        drag(view, root[0], root[1], root[0], rect.y)  # 上端まで
+
+        assert state.selected_balloon.tail.root_y == pytest.approx(-1.0, abs=0.05)
+
+    def test_横に動かしても縦しか変わらない(self, window_with_balloon):
+        """付け根は輪郭の上を滑る。横を拾うと形が飛ぶ。"""
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        rect = state.selected_balloon.rect
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        drag(view, root[0], root[1], root[0] + 200.0, rect.center[1])
+
+        assert state.selected_balloon.tail.root_y == pytest.approx(0.0, abs=0.05)
+
+    def test_吹き出しの外まで引いても範囲に収まる(self, window_with_balloon):
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        drag(view, root[0], root[1], root[0], root[1] + 500.0)
+
+        assert state.selected_balloon.tail.root_y == pytest.approx(1.0)
+
+    def test_履歴に1手だけ積む(self, window_with_balloon):
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        depth = state.history.depth
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        press(view, root[0], root[1])
+        for step in range(1, 6):
+            move_to(view, root[0], root[1] - step * 2.0)
+        release(view, root[0], root[1] - 10.0)
+
+        assert state.history.depth == depth + 1
+
+    def test_付け根を動かしても本体と先端は動かない(self, window_with_balloon):
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        rect = state.selected_balloon.rect
+        tip = state.selected_balloon.tail.tip
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        drag(window_with_balloon.view, root[0], root[1], root[0], rect.y)
+
+        assert state.selected_balloon.rect == rect
+        assert state.selected_balloon.tail.tip == tip
+
+    @pytest.mark.parametrize(
+        "ratio,label", [(-1.0, "上端"), (0.0, "中央"), (1.0, "下端"), (None, "自動")]
+    )
+    def test_メニューから位置を決められる(self, window_with_balloon, ratio, label):
+        window_with_balloon.set_tail_root(ratio)
+        assert window_with_balloon.state.selected_balloon.tail.root_y == ratio
+
+    def test_自動に戻せる(self, window_with_balloon):
+        window_with_balloon.set_tail_root(-1.0)
+        window_with_balloon.set_tail_root(None)
+        assert window_with_balloon.state.selected_balloon.tail.root_y is None
+
+    def test_元に戻せる(self, window_with_balloon):
+        window_with_balloon.set_tail_root(-1.0)
+        window_with_balloon.state.undo()
+        assert window_with_balloon.state.selected_balloon.tail.root_y is None
+
+    def test_保存して開き直しても残る(self, window_with_balloon, tmp_path):
+        from manga_layout import load_project
+
+        window_with_balloon.set_tail_root(-0.5)
+        window_with_balloon.state.save(tmp_path)
+
+        restored = load_project(tmp_path)
+        assert restored.pages[0].floating[0].tail.root_y == pytest.approx(-0.5)
+        assert restored.load_warnings == []
+
+    def test_項目が無い作品は自動として開ける(self, window_with_balloon, tmp_path):
+        """root_y を足す前に保存したファイルでも、それまでと同じ形で開ける。"""
+        import json
+
+        from manga_layout import load_project
+
+        window_with_balloon.state.save(tmp_path)
+        path = tmp_path / "project.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        del data["pages"][0]["floating"][0]["tail"]["root_y"]
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+        restored = load_project(tmp_path)
+        assert restored.pages[0].floating[0].tail.root_y is None
+
+    def test_範囲外の値は読み込みで弾く(self, window_with_balloon, tmp_path):
+        """黙って直すと、保存のたびに形が変わる。"""
+        import json
+
+        import pytest as _pytest
+
+        from manga_layout import load_project
+        from manga_layout.errors import ProjectFormatError
+
+        window_with_balloon.state.save(tmp_path)
+        path = tmp_path / "project.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["pages"][0]["floating"][0]["tail"]["root_y"] = 3.5
+        path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+        with _pytest.raises(ProjectFormatError):
+            load_project(tmp_path)
 
 
 class TestStyleAndDelete:

@@ -124,6 +124,23 @@ def opt_text(data: Mapping[str, Any], key: str, where: str) -> str | None:
     return value
 
 
+def opt_ratio(data: Mapping[str, Any], key: str, where: str) -> float | None:
+    """-1.0〜1.0 の数値、または null を取り出す。
+
+    しっぽの付け根の高さのように「指定なし＝自動」が正常な項目に使う。
+    範囲外は切り詰めずに弾く。黙って直すと、書き出した値と読み戻した値が
+    食い違い、保存のたびに形が変わる。
+    """
+    value = data.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        _fail(f"{where}.{key}", f"数値でも null でもありません（{value!r}）")
+    if not -1.0 <= value <= 1.0:
+        _fail(f"{where}.{key}", f"-1.0〜1.0 の範囲外です（{value}）")
+    return float(value)
+
+
 def point(value: Any, where: str) -> tuple[float, float]:
     """[x, y] の 2 要素を取り出す。"""
     seq = req_list(value, where)

@@ -304,6 +304,13 @@ class EditorState(QObject):
         with self._edit_balloon(balloon_id, "しっぽの向き") as balloon:
             balloon.tail = dataclasses.replace(balloon.tail, tip=tip, enabled=True)
 
+    def set_tail_root(self, balloon_id: str, root_y: float | None) -> None:
+        """しっぽの付け根の縦位置。None で先端の向きに合わせる（自動）。"""
+        if root_y is not None:
+            root_y = min(max(root_y, -1.0), 1.0)
+        with self._edit_balloon(balloon_id, "しっぽの付け根") as balloon:
+            balloon.tail = dataclasses.replace(balloon.tail, root_y=root_y)
+
     def set_tail_enabled(self, balloon_id: str, enabled: bool) -> None:
         label = "しっぽを出す" if enabled else "しっぽを消す"
         with self._edit_balloon(balloon_id, label) as balloon:

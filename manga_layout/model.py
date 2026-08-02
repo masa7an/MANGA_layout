@@ -116,17 +116,33 @@ class Tail:
     `tip`（先端）は吹き出しからの相対ではなく**ページ座標**で持つ。
     しゃべっている人物を指すものなので、吹き出しを動かしたときに
     先端が付いて回らないほうが自然に扱える。
+
+    `root_y` は付け根の縦位置を、吹き出しの高さに対する割合で持つ
+    （-1.0 が上端、0.0 が中央、+1.0 が下端）。**mm ではなく割合**なのは、
+    吹き出しの大きさを変えても付け根が同じ場所に残るようにするため。
+    `None` は自動＝先端の向きに合わせる。
     """
 
     enabled: bool = True
     tip: tuple[float, float] = (0.0, 0.0)
     width: float = 6.0
+    root_y: float | None = None
 
     def translated(self, dx: float, dy: float) -> "Tail":
-        return Tail(self.enabled, (self.tip[0] + dx, self.tip[1] + dy), self.width)
+        return Tail(
+            self.enabled,
+            (self.tip[0] + dx, self.tip[1] + dy),
+            self.width,
+            self.root_y,
+        )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"enabled": self.enabled, "tip": [self.tip[0], self.tip[1]], "width": self.width}
+        return {
+            "enabled": self.enabled,
+            "tip": [self.tip[0], self.tip[1]],
+            "width": self.width,
+            "root_y": self.root_y,
+        }
 
     @classmethod
     def from_dict(cls, data: Any, where: str) -> "Tail":
@@ -136,6 +152,9 @@ class Tail:
             enabled=v.flag(d, "enabled", where, True),
             tip=tip,
             width=v.positive(d, "width", where, 6.0),
+            # 項目が無い作品は自動として読む。root_y を足す前に保存した
+            # ファイルでも、それまでと同じ形で開ける
+            root_y=v.opt_ratio(d, "root_y", where),
         )
 
 

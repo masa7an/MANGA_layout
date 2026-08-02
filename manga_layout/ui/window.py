@@ -192,6 +192,16 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.tail_action)
         self.balloon_actions.append(self.tail_action)
 
+        for label, ratio in (
+            ("付け根を上端へ", -1.0),
+            ("付け根を中央へ", 0.0),
+            ("付け根を下端へ", 1.0),
+            ("付け根を自動に戻す", None),
+        ):
+            action = self._act(label, lambda _=False, r=ratio: self.set_tail_root(r))
+            balloon_menu.addAction(action)
+            self.balloon_actions.append(action)
+
         self.attach_action = self._act("コマへの紐づけを解除", self.toggle_attachment)
         balloon_menu.addAction(self.attach_action)
         self.balloon_actions.append(self.attach_action)
@@ -452,6 +462,18 @@ class MainWindow(QMainWindow):
         enabled = not balloon.tail.enabled
         self.state.set_tail_enabled(balloon.id, enabled)
         self.state.message.emit("しっぽを出しました" if enabled else "しっぽを消しました")
+
+    def set_tail_root(self, root_y: float | None) -> None:
+        """しっぽの付け根の縦位置。None は先端の向きに合わせる（自動）。"""
+        balloon = self.state.selected_balloon
+        if balloon is None or balloon.tail.root_y == root_y:
+            return
+        if not balloon.tail.enabled:
+            self.state.message.emit("しっぽが出ていません")
+            return
+        self.state.set_tail_root(balloon.id, root_y)
+        where = "自動" if root_y is None else PageView._root_label(root_y)
+        self.state.message.emit(f"しっぽの付け根: {where}")
 
     def toggle_attachment(self) -> None:
         """コマへの紐づけを付けたり外したり（要件定義 6.4「手動で解除可」）。
