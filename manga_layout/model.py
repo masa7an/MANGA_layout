@@ -316,6 +316,10 @@ class TextObject(SceneObject):
     # 保存形式を変えずに済ませるため、項目だけ先に用意してある
     direction: str = "horizontal"
     attached_panel_id: str | None = None
+    # 吹き出しの上に置いたセリフは、その吹き出しに付いて回る（要件定義 6.5）。
+    # コマへの紐づけとは別に持つ。吹き出しはコマの中で単独に動かせるので、
+    # コマだけを見ていると吹き出しを動かしたときにセリフが取り残される
+    attached_balloon_id: str | None = None
 
     TYPE = "text"
 
@@ -329,6 +333,7 @@ class TextObject(SceneObject):
             "align": self.align,
             "direction": self.direction,
             "attached_panel_id": self.attached_panel_id,
+            "attached_balloon_id": self.attached_balloon_id,
             "z": self.z,
         }
 
@@ -344,6 +349,7 @@ class TextObject(SceneObject):
             align=v.choice(d, "align", where, TEXT_ALIGNS, "center"),
             direction=v.choice(d, "direction", where, TEXT_DIRECTIONS, "horizontal"),
             attached_panel_id=v.opt_text(d, "attached_panel_id", where),
+            attached_balloon_id=v.opt_text(d, "attached_balloon_id", where),
         )
 
 
@@ -420,21 +426,72 @@ class Page:
 
     # -- 編集 --------------------------------------------------------------
 
+    def texts_on_balloon(self, balloon_id: str) -> list["TextObject"]:
+        """その吹き出しの上に置かれたセリフ。"""
+        return [
+            f
+            for f in self.floating
+            if isinstance(f, TextObject) and f.attached_balloon_id == balloon_id
+        ]
+
+    def move_balloon(self, balloon_id: str, dx: float, dy: float) -> None:
+        """吹き出しを動かす。上に乗ったセリフも一緒に動く。
+
+        **しっぽの先端は動かさない。** 先端はしゃべっている人物を指す
+        ページ座標なので、吹き出しの置き場所を変えても指す相手は変わらない
+        （要件定義 4章）。
+        """
+        balloon = self.find(balloon_id)
+        if not isinstance(balloon, BalloonObject):
+            raise KeyError(f"吹き出しが見つかりません: {balloon_id}")
+        balloon.rect = balloon.rect.translated(dx, dy)
+        for text in self.texts_on_balloon(balloon_id):
+            text.rect = text.rect.translated(dx, dy)
+
     def move_panel(self, panel_id: str, dx: float, dy: float) -> None:
         """コマを動かす。中の画像と、紐づいた吹き出し・セリフも一緒に動く。
 
         要件定義 4章で狙った挙動そのもの。吹き出しは親子関係ではなく
         `attached_panel_id` の紐づけなので、追随はするが切り抜かれない。
+
+        吹き出しの上に乗ったセリフも連れていく。**同じものを2回動かさない**
+        よう、動かした id を控えながら進む。コマにもその上の吹き出しにも
+        紐づいたセリフがあると、二重に動いて位置がずれる。
         """
         panel = self.panel(panel_id)
         panel.shape = panel.shape.translated(dx, dy)
         for child in panel.children:
             child.rect = child.rect.translated(dx, dy)
+
+        moved: set[str] = set()
         for obj in self.attached_to(panel_id):
+            if obj.id in moved:
+                continue
             obj.rect = obj.rect.translated(dx, dy)
+            moved.add(obj.id)
             if isinstance(obj, BalloonObject):
                 # しっぽの先端はページ座標なので、これも動かさないと形が崩れる
                 obj.tail = obj.tail.translated(dx, dy)
+                for text in self.texts_on_balloon(obj.id):
+                    if text.id in moved:
+                        continue
+                    text.rect = text.rect.translated(dx, dy)
+                    moved.add(text.id)
+
+    def remove_floating(self, object_id: str) -> "FloatingObject":
+        """ページ直下のもの（吹き出し・セリフ）を消す。
+
+        吹き出しを消しても、上に乗っていたセリフは消さず紐づけだけ外す。
+        コマ削除と同じ考え方で、手のかかっているセリフを巻き添えにしない。
+        """
+        for obj in self.floating:
+            if obj.id == object_id:
+                self.floating.remove(obj)
+                if isinstance(obj, BalloonObject):
+                    for text in self.texts_on_balloon(object_id):
+                        text.attached_balloon_id = None
+                return obj
+        raise KeyError(f"見つかりません: {object_id}")
 
     def remove_panel(self, panel_id: str) -> Panel:
         """コマを消す。中の画像も一緒に消える。
@@ -686,10 +743,11 @@ class Project:
             )
             self.next_id = max_serial + 1
 
-        # 存在しないコマを指した紐づけを外す。
-        # 残しておくとコマ移動時に追随せず、しかも原因が見えない
+        # 存在しないコマ・吹き出しを指した紐づけを外す。
+        # 残しておくと移動時に追随せず、しかも原因が見えない
         for page in self.pages:
             panel_ids = {p.id for p in page.panels}
+            balloon_ids = {f.id for f in page.floating if isinstance(f, BalloonObject)}
             for obj in page.floating:
                 if obj.attached_panel_id is not None and obj.attached_panel_id not in panel_ids:
                     self.load_warnings.append(
@@ -697,6 +755,15 @@ class Project:
                         "紐づけを外しました"
                     )
                     obj.attached_panel_id = None
+
+                if not isinstance(obj, TextObject) or obj.attached_balloon_id is None:
+                    continue
+                if obj.attached_balloon_id not in balloon_ids:
+                    self.load_warnings.append(
+                        f"{obj.id} が存在しない吹き出し {obj.attached_balloon_id} を"
+                        "指していたため、紐づけを外しました"
+                    )
+                    obj.attached_balloon_id = None
 
 
 def new_project(title: str = "", size: Size | None = None) -> Project:

@@ -15,8 +15,18 @@ import dataclasses
 import pathlib
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QPolygonF
-from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+    QTextCursor,
+    QTextOption,
+)
+from PySide6.QtWidgets import QGraphicsScene, QGraphicsTextItem, QGraphicsView
 
 from ..errors import MangaLayoutError
 from ..geometry import Rect
@@ -42,14 +52,17 @@ from ..layout import (
     split_panel,
     tail_root_point,
     tail_triangle,
+    text_at,
 )
-from ..model import BalloonObject, ImageObject, Panel, TextObject
+from ..model import BalloonObject, Font, ImageObject, Panel, TextObject
 from .state import (
     BALLOON_TOOLS,
+    DEFAULT_TEXT_SIZE,
     TOOL_PANEL,
     TOOL_SELECT,
     TOOL_SPLIT_H,
     TOOL_SPLIT_V,
+    TOOL_TEXT,
     EditorState,
 )
 
@@ -81,6 +94,17 @@ SNAP_PX = 8.0
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 IMAGE_FILE_FILTER = "画像 (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;すべてのファイル (*)"
 
+# 文字の大きさは mm で持っているが、Qt のフォントは**整数の画素数**でしか
+# 指定できない。3.5mm をそのまま渡すと 3 か 4 に丸められ、狙った大きさに
+# ならない。いったんこの倍率で大きく作り、描くときに同じ倍率で縮めて合わせる
+TEXT_FONT_SCALE = 20.0
+
+_TEXT_ALIGN_FLAGS = {
+    "left": Qt.AlignmentFlag.AlignLeft,
+    "center": Qt.AlignmentFlag.AlignHCenter,
+    "right": Qt.AlignmentFlag.AlignRight,
+}
+
 # 縦と横が同時に変わるつまみ。ここでだけ等比かどうかが問題になる
 CORNER_HANDLES = ("nw", "ne", "se", "sw")
 ASPECT_HINT = "Shift キーを押しながらドラッグで縦横比率を維持"
@@ -107,6 +131,18 @@ def _polygon(points) -> QPolygonF:
     return QPolygonF([QPointF(x, y) for x, y in points])
 
 
+def text_font(font: Font, scale: float = TEXT_FONT_SCALE) -> QFont:
+    """mm 指定の書式から Qt のフォントを作る。
+
+    `scale` 倍の大きさで作る。使う側は同じ倍率で縮めてから描くこと。
+    そうしないと文字が `scale` 倍で出る。
+    """
+    qfont = QFont(font.family)
+    qfont.setPixelSize(max(1, round(font.size_mm * scale)))
+    qfont.setBold(font.bold)
+    return qfont
+
+
 def _cosmetic_pen(color: QColor, width: float = 1.0, style=Qt.PenStyle.SolidLine) -> QPen:
     """表示倍率によらず同じ太さで描かれる線。
 
@@ -131,6 +167,8 @@ class PageScene(QGraphicsScene):
         self.tail_preview: tuple[str, tuple[float, float]] | None = None
         # しっぽの付け根を上下にずらしている最中の (吹き出しの id, 割合)
         self.root_preview: tuple[str, float] | None = None
+        # その場編集中のセリフ。編集中は下地を描かない
+        self.editing_text_id: str | None = None
         self.update_scene_rect()
 
     def update_scene_rect(self) -> None:
@@ -230,9 +268,48 @@ class PageScene(QGraphicsScene):
             if isinstance(obj, BalloonObject):
                 self._draw_balloon(painter, obj)
             elif isinstance(obj, TextObject):
-                painter.setPen(_cosmetic_pen(PLACEHOLDER, 1.0, Qt.PenStyle.DotLine))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
-                painter.drawRect(_qrect(obj.rect))
+                self._draw_text(painter, obj)
+
+    def _draw_text(self, painter: QPainter, obj: TextObject) -> None:
+        """セリフ。横書き・手動改行のみ（要件定義 6.5、9章）。
+
+        その場編集の最中は描かない。編集中の文字が二重に見えてしまう。
+        """
+        if self.editing_text_id == obj.id:
+            return
+
+        if not obj.content:
+            # 空のセリフは枠だけ出す。何も描かないと、作った直後に
+            # 見失って選び直せなくなる
+            painter.setPen(_cosmetic_pen(PLACEHOLDER, 1.0, Qt.PenStyle.DotLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(_qrect(obj.rect))
+            return
+
+        scale = TEXT_FONT_SCALE
+        painter.save()
+        painter.setFont(text_font(obj.font, scale))
+        painter.setPen(QPen(QColor("#000000")))
+        # 大きく作ったフォントを縮めて mm に合わせる。矩形も同じ倍率で拡げる
+        painter.scale(1.0 / scale, 1.0 / scale)
+        flags = (
+            _TEXT_ALIGN_FLAGS.get(obj.align, Qt.AlignmentFlag.AlignHCenter)
+            | Qt.AlignmentFlag.AlignVCenter
+            # 折り返さない（要件定義 9章: MVP は手動改行のみ）。
+            # 枠に収まらない字も隠さずに出し、はみ出しに気づけるようにする
+            | Qt.TextFlag.TextDontClip
+        )
+        painter.drawText(
+            QRectF(
+                obj.rect.x * scale,
+                obj.rect.y * scale,
+                obj.rect.w * scale,
+                obj.rect.h * scale,
+            ),
+            flags,
+            obj.content,
+        )
+        painter.restore()
 
     def _with_preview_tail(self, balloon: BalloonObject) -> BalloonObject:
         """しっぽをドラッグ中なら、その値を当てはめた写しを返す。
@@ -386,6 +463,71 @@ class PageScene(QGraphicsScene):
         painter.restore()
 
 
+class TextEditorItem(QGraphicsTextItem):
+    """その場編集の入力欄。
+
+    画面に重ねた別の部品ではなく、シーンに置いた項目にしてある。
+    拡大縮小や画面移動に自動で付いてくるので、位置合わせを自分で
+    やらずに済む（要件定義 6.5「画面上でその場編集」）。
+    """
+
+    def __init__(self, view: "PageView", text: TextObject):
+        super().__init__(text.content)
+        self._view = view
+        self._closing = False
+
+        scale = TEXT_FONT_SCALE
+        self.setFont(text_font(text.font, scale))
+        self.setDefaultTextColor(QColor("#000000"))
+
+        option = self.document().defaultTextOption()
+        option.setAlignment(
+            _TEXT_ALIGN_FLAGS.get(text.align, Qt.AlignmentFlag.AlignHCenter)
+        )
+        # 折り返さない。確定後の描画と食い違うと、入力中と結果で
+        # 改行位置が変わって驚く（要件定義 9章: 手動改行のみ）
+        option.setWrapMode(QTextOption.WrapMode.NoWrap)
+        self.document().setDefaultTextOption(option)
+        self.document().setDocumentMargin(0.0)
+        self.setTextWidth(text.rect.w * scale)
+
+        self.setScale(1.0 / scale)
+        self.setZValue(1000)
+        self._center_in(text.rect)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
+
+    def _center_in(self, rect: Rect) -> None:
+        """確定後の描画（上下中央）に合わせて置く。"""
+        height = self.boundingRect().height() / TEXT_FONT_SCALE
+        self.setPos(rect.x, rect.y + max(0.0, (rect.h - height) / 2.0))
+
+    def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self._view.finish_text_edit(commit=False)
+            event.accept()
+            return
+        if event.key() in (
+            Qt.Key.Key_Return,
+            Qt.Key.Key_Enter,
+        ) and event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Enter だけなら改行。確定は Ctrl+Enter
+            self._view.finish_text_edit(commit=True)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def focusOutEvent(self, event) -> None:
+        super().focusOutEvent(event)
+        # 取り外す最中の focusOut で呼び戻されないようにする
+        if not self._closing:
+            self._view.finish_text_edit(commit=True)
+
+    def close_editor(self) -> str:
+        """入力内容を返して、自分を畳む。"""
+        self._closing = True
+        return self.toPlainText()
+
+
 class PageView(QGraphicsView):
     """マウスとキーの受け口。当たり判定は mm 空間で行う。"""
 
@@ -414,6 +556,7 @@ class PageView(QGraphicsView):
         self._pan_from: QPointF | None = None
         # 状態表示に出している案内。同じ文を出し続けないための控え
         self._hint_shown: str | None = None
+        self._text_editor: TextEditorItem | None = None
 
         state.changed.connect(self._on_model_changed)
         state.selection_changed.connect(self.viewport().update)
@@ -473,9 +616,18 @@ class PageView(QGraphicsView):
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
+            # 入力中の Esc は編集項目が先に受け取る。ここに来るのは
+            # 入力していないときだけ
             self._select_parent()
             event.accept()
             return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            # 選択中のセリフを打ち始める。ダブルクリックより速い
+            text = self.state.selected_text
+            if text is not None and not self.is_editing_text:
+                self.begin_text_edit(text.id)
+                event.accept()
+                return
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._space_held = True
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
@@ -521,27 +673,37 @@ class PageView(QGraphicsView):
         x, y = self._mm(event)
         tool = self.state.tool
 
+        # 入力中に画面を触ったら、そこで確定してから次の操作へ移る
+        self.finish_text_edit(commit=True)
+
         if tool in (TOOL_SPLIT_H, TOOL_SPLIT_V):
             self._apply_split(x, y)
             event.accept()
             return
 
-        # 吹き出しはコマの上に置くものなので、下に何があっても作れる。
+        # 吹き出しとセリフはコマの上に置くものなので、下に何があっても作れる。
         # コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で作れない
-        if tool in BALLOON_TOOLS:
-            self._mode = "create_balloon"
+        if tool in BALLOON_TOOLS or tool == TOOL_TEXT:
+            self._mode = "create_balloon" if tool in BALLOON_TOOLS else "create_text"
             self._grab = (x, y)
             self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
             event.accept()
             return
 
         handle = self._handle_at_point(x, y)
+        text = text_at(self.state.page, x, y)
         balloon = balloon_at(self.state.page, x, y)
         hit = panel_at(self.state.page, x, y)
 
         # コマ追加の道具でも、既にあるコマやそのつまみの上なら編集を優先する。
         # 何も無いところを押したときだけ新しいコマを作る
-        if tool == TOOL_PANEL and handle is None and hit is None and balloon is None:
+        if (
+            tool == TOOL_PANEL
+            and handle is None
+            and hit is None
+            and balloon is None
+            and text is None
+        ):
             self._mode = "create"
             self._grab = (x, y)
             self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
@@ -581,6 +743,17 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # セリフは吹き出しより手前。吹き出しの上に乗せるものなので、
+        # 先に拾わないと文字を掴んだつもりで吹き出しが動く
+        if text is not None:
+            self.state.select(text.id)
+            self._mode = "move"
+            self._origin_rect = text.rect
+            self._grab = (x, y)
+            self._scene.preview_rect = text.rect
+            event.accept()
+            return
+
         # 吹き出しはコマより手前にある。コマより先に拾わないと、
         # 吹き出しを掴んだつもりで下のコマが動く
         if balloon is not None:
@@ -611,6 +784,57 @@ class PageView(QGraphicsView):
             self._scene.preview_rect = self._origin_rect
         event.accept()
 
+    # -- セリフのその場編集 --------------------------------------------------
+
+    @property
+    def is_editing_text(self) -> bool:
+        return self._text_editor is not None
+
+    def begin_text_edit(self, text_id: str) -> bool:
+        """セリフの入力を始める。始められたら True。"""
+        self.finish_text_edit(commit=True)
+
+        text = self.state.page.find(text_id)
+        if not isinstance(text, TextObject):
+            return False
+
+        self.state.select(text_id)
+        self._reset_drag()
+        editor = TextEditorItem(self, text)
+        self._scene.addItem(editor)
+        self._scene.editing_text_id = text_id
+        self._text_editor = editor
+
+        editor.setFocus(Qt.FocusReason.MouseFocusReason)
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        editor.setTextCursor(cursor)
+
+        self.state.message.emit(
+            "文字を入力してください。Enter で改行、Ctrl+Enter で確定、Esc で取り消し"
+        )
+        self.viewport().update()
+        return True
+
+    def finish_text_edit(self, commit: bool = True) -> None:
+        """入力を終える。`commit` が False なら書き戻さない。"""
+        editor = self._text_editor
+        if editor is None:
+            return
+
+        text_id = self._scene.editing_text_id
+        content = editor.close_editor()
+
+        self._text_editor = None
+        self._scene.editing_text_id = None
+        self._scene.removeItem(editor)
+
+        if commit and text_id is not None:
+            current = self.state.page.find(text_id)
+            if isinstance(current, TextObject) and current.content != content:
+                self.state.set_text_content(text_id, content)
+        self.viewport().update()
+
     def _tail_tip_at(self, x: float, y: float) -> bool:
         """選択中の吹き出しの、しっぽの先端を掴んでいるか。"""
         balloon = self.state.selected_balloon
@@ -632,7 +856,7 @@ class PageView(QGraphicsView):
         return abs(x - root[0]) <= half and abs(y - root[1]) <= half
 
     def mouseDoubleClickEvent(self, event) -> None:
-        """コマの中に入って、画像そのものを選ぶ。
+        """セリフなら文字の入力へ、コマの中なら画像そのものを選ぶ。
 
         1回のクリックでコマではなく画像が選ばれると、コマを動かすつもりの
         ドラッグが絵だけを動かしてしまう。踏み込む操作を分けておく。
@@ -642,6 +866,13 @@ class PageView(QGraphicsView):
             return
 
         x, y = self._mm(event)
+
+        text = text_at(self.state.page, x, y)
+        if text is not None:
+            self.begin_text_edit(text.id)
+            event.accept()
+            return
+
         panel = panel_at(self.state.page, x, y)
         image = image_at(panel, x, y) if panel is not None else None
         if image is None:
@@ -704,7 +935,7 @@ class PageView(QGraphicsView):
             xs, ys = self._candidates(None)
             self._scene.preview_rect = snap_moved_rect(rect.normalized(), xs, ys, threshold)
 
-        elif self._mode == "create_balloon":
+        elif self._mode in ("create_balloon", "create_text"):
             rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
             self._scene.preview_rect = rect.normalized()
 
@@ -765,6 +996,8 @@ class PageView(QGraphicsView):
                 self._apply_create(preview, press)
             elif mode == "create_balloon":
                 self._apply_create_balloon(preview, press)
+            elif mode == "create_text":
+                self._apply_create_text(preview, press)
             elif mode == "move" and origin is not None:
                 self._apply_move(origin, preview)
             elif mode == "resize":
@@ -816,9 +1049,11 @@ class PageView(QGraphicsView):
     def _update_cursor(self, x: float, y: float) -> None:
         handle = self._handle_at_point(x, y)
         image = self.state.selected_image
-        if self.state.tool in BALLOON_TOOLS:
+        if self.state.tool in BALLOON_TOOLS or self.state.tool == TOOL_TEXT:
             # どこを押しても作れるので、常に十字
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        elif text_at(self.state.page, x, y) is not None:
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif self._tail_tip_at(x, y):
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         elif self._tail_root_at(x, y):
@@ -882,6 +1117,27 @@ class PageView(QGraphicsView):
             f"吹き出しを追加しました（{where}）。丸い印を引くとしっぽの向きが変わります"
         )
 
+    def _apply_create_text(self, rect: Rect, press: tuple[float, float]) -> None:
+        """セリフを1つ作り、そのまま入力を始める。
+
+        作っただけでは空の枠が残るだけなので、続けて打てる状態にする。
+        道具は選択に戻す（コマ・吹き出しと同じ「1回きり」）。
+        """
+        minimum = MIN_CREATE_PX / self.view_scale
+        if rect.w < minimum or rect.h < minimum:
+            w, h = DEFAULT_TEXT_SIZE
+            page = self.state.page
+            rect = Rect(
+                min(max(press[0] - w / 2.0, 0.0), max(page.size.w - w, 0.0)),
+                min(max(press[1] - h / 2.0, 0.0), max(page.size.h - h, 0.0)),
+                w,
+                h,
+            )
+
+        text = self.state.add_text(rect)
+        self.state.set_tool(TOOL_SELECT)
+        self.begin_text_edit(text.id)
+
     def _apply_tail(self, balloon_id: str, tip: tuple[float, float]) -> None:
         balloon = self.state.page.find(balloon_id)
         if not isinstance(balloon, BalloonObject) or balloon.tail.tip == tip:
@@ -923,14 +1179,20 @@ class PageView(QGraphicsView):
                     image.rect = image.rect.translated(dx, dy)
             return
 
+        if self.state.selected_text is not None:
+            with self.state.edit("セリフの移動") as project:
+                text = project.pages[self.state.page_index].find(object_id)
+                if isinstance(text, TextObject):
+                    text.rect = text.rect.translated(dx, dy)
+            return
+
         if self.state.selected_balloon is not None:
             # **しっぽの先端は動かさない。** 先端はしゃべっている人物を
             # 指すページ座標なので、吹き出しの置き場所を変えても
-            # 指す相手は変わらない（要件定義 4章）
+            # 指す相手は変わらない（要件定義 4章）。
+            # 上に乗ったセリフは一緒に動く
             with self.state.edit("吹き出しの移動") as project:
-                balloon = project.pages[self.state.page_index].find(object_id)
-                if isinstance(balloon, BalloonObject):
-                    balloon.rect = balloon.rect.translated(dx, dy)
+                project.pages[self.state.page_index].move_balloon(object_id, dx, dy)
             return
 
         with self.state.edit("コマの移動") as project:
@@ -945,6 +1207,18 @@ class PageView(QGraphicsView):
             with self.state.edit("画像の大きさ変更") as project:
                 target = project.pages[self.state.page_index].find(image_id)
                 if isinstance(target, ImageObject):
+                    target.rect = rect
+            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            return
+
+        text = self.state.selected_text
+        if text is not None:
+            if text.rect == rect:
+                return
+            text_id = text.id
+            with self.state.edit("セリフの大きさ変更") as project:
+                target = project.pages[self.state.page_index].find(text_id)
+                if isinstance(target, TextObject):
                     target.rect = rect
             self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
             return

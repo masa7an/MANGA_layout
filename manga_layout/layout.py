@@ -15,7 +15,7 @@ import math
 from dataclasses import dataclass
 
 from .geometry import Polygon, Rect
-from .model import BalloonObject, ImageObject, Page, Panel, Project
+from .model import BalloonObject, ImageObject, Page, Panel, Project, TextObject
 
 # 8方向のつまみ。n=上 s=下 w=左 e=右
 HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
@@ -573,6 +573,19 @@ def balloon_at(page: Page, x: float, y: float) -> BalloonObject | None:
     for balloon in sorted(balloons, key=lambda b: b.z, reverse=True):
         if balloon_contains(balloon, x, y):
             return balloon
+    return None
+
+
+def text_at(page: Page, x: float, y: float) -> TextObject | None:
+    """その位置にあるセリフ。重なっていれば手前のものを返す。
+
+    枠は矩形なので、そのまま矩形で判定する。吹き出しと違って
+    「四隅に何も無い」ということが起きない。
+    """
+    texts = [f for f in page.floating if isinstance(f, TextObject)]
+    for text in sorted(texts, key=lambda t: t.z, reverse=True):
+        if text.rect.contains(x, y):
+            return text
     return None
 
 

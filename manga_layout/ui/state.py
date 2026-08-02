@@ -22,6 +22,7 @@ from ..layout import (
     BalloonSettings,
     LayoutSettings,
     attach_target,
+    balloon_at,
     contain_rect_in,
     default_tail_tip,
 )
@@ -45,6 +46,7 @@ TOOL_SPLIT_H = "split_h"
 TOOL_SPLIT_V = "split_v"
 TOOL_BALLOON = "balloon"
 TOOL_BALLOON_JAGGED = "balloon_jagged"
+TOOL_TEXT = "text"
 
 TOOL_LABELS = {
     TOOL_SELECT: "選択",
@@ -55,7 +57,12 @@ TOOL_LABELS = {
     # 「吹き出し > 吹き出し」と重ならない言い方にしてある
     TOOL_BALLOON: "楕円を追加",
     TOOL_BALLOON_JAGGED: "ギザギザを追加",
+    TOOL_TEXT: "セリフを追加",
 }
+
+# クリックだけでセリフを置いたときの大きさ（mm）。
+# 吹き出しの既定より一回り小さくして、中に収まるようにしてある
+DEFAULT_TEXT_SIZE = (34.0, 18.0)
 
 # どの道具がどの種類の吹き出しを作るか
 BALLOON_TOOLS = {TOOL_BALLOON: "ellipse", TOOL_BALLOON_JAGGED: "jagged"}
@@ -142,6 +149,12 @@ class EditorState(QObject):
         """選択中の吹き出し。"""
         obj = self.selected_object
         return obj if isinstance(obj, BalloonObject) else None
+
+    @property
+    def selected_text(self) -> TextObject | None:
+        """選択中のセリフ。"""
+        obj = self.selected_object
+        return obj if isinstance(obj, TextObject) else None
 
     @property
     def selected_bounds(self) -> Rect | None:
@@ -278,6 +291,68 @@ class EditorState(QObject):
             )
         self.select(balloon.id)
         return balloon
+
+    # -- セリフ ------------------------------------------------------------
+
+    def add_text(self, rect: Rect, content: str = "") -> TextObject:
+        """セリフを1つ置く。置いたものを選択状態にする。
+
+        **吹き出しの上なら、その吹き出しに紐づける**（要件定義 6.5）。
+        吹き出しはコマの中で単独に動かせるので、コマだけに紐づけると
+        吹き出しを動かしたときにセリフが取り残される。
+        """
+        page = self.page
+        balloon = balloon_at(page, *rect.center)
+        panel_id = None if balloon is not None else attach_target(page, rect)
+
+        with self.edit("セリフの追加") as project:
+            text = project.add_text(
+                project.pages[self._page_index], content, rect, panel_id
+            )
+            text.attached_balloon_id = balloon.id if balloon is not None else None
+        self.select(text.id)
+        return text
+
+    def _edit_text(self, text_id: str, label: str):
+        @contextlib.contextmanager
+        def scope():
+            with self.edit(label) as project:
+                target = project.pages[self._page_index].find(text_id)
+                if not isinstance(target, TextObject):
+                    raise KeyError(f"セリフが見つかりません: {text_id}")
+                yield target
+
+        return scope()
+
+    def set_text_content(self, text_id: str, content: str) -> None:
+        with self._edit_text(text_id, "セリフの入力") as text:
+            text.content = content
+
+    def set_text_align(self, text_id: str, align: str) -> None:
+        with self._edit_text(text_id, "セリフの整列") as text:
+            text.align = align
+
+    def set_text_font(
+        self,
+        text_id: str,
+        *,
+        family: str | None = None,
+        size_mm: float | None = None,
+        bold: bool | None = None,
+    ) -> None:
+        with self._edit_text(text_id, "セリフの書式") as text:
+            text.font = dataclasses.replace(
+                text.font,
+                **{
+                    key: value
+                    for key, value in (
+                        ("family", family),
+                        ("size_mm", size_mm),
+                        ("bold", bold),
+                    )
+                    if value is not None
+                },
+            )
 
     def _edit_balloon(self, balloon_id: str, label: str):
         """id で引き直してから触るための小さな入れ物。

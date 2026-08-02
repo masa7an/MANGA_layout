@@ -5,9 +5,10 @@ from __future__ import annotations
 import pathlib
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
+    QFontDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -28,10 +29,19 @@ from .state import (
     TOOL_SELECT,
     TOOL_SPLIT_H,
     TOOL_SPLIT_V,
+    TOOL_TEXT,
     EditorState,
 )
 
 APP_TITLE = "漫画レイアウタ"
+
+TEXT_ALIGN_LABELS = {"left": "左寄せ", "center": "中央寄せ", "right": "右寄せ"}
+
+# 文字の大きさを1段階変える幅（mm）と、行き過ぎを止める範囲。
+# 数値を打ち込ませるより、押して確かめるほうが速い
+TEXT_SIZE_STEP_MM = 0.5
+TEXT_SIZE_MIN_MM = 1.5
+TEXT_SIZE_MAX_MM = 30.0
 
 # 起動時の希望サイズ。画面に入らなければ後述の作業領域に合わせて縮める
 WINDOW_SIZE = (1100, 860)
@@ -121,6 +131,7 @@ class MainWindow(QMainWindow):
             (TOOL_SPLIT_V, "J"),
             (TOOL_BALLOON, "B"),
             (TOOL_BALLOON_JAGGED, "G"),
+            (TOOL_TEXT, "T"),
         ):
             action = QAction(f"{TOOL_LABELS[tool]} ({shortcut})", self)
             action.setCheckable(True)
@@ -130,6 +141,39 @@ class MainWindow(QMainWindow):
             self.addAction(action)
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
+
+    def _build_text_menu(self) -> None:
+        """セリフのメニュー。
+
+        先頭に「作る」を置く。ここが選択中のセリフへの操作だけだと、
+        1つも選んでいない間はメニュー全体がグレーになり、
+        どこから作るのか分からなくなる（吹き出しで一度やった失敗）。
+        """
+        menu = self.menuBar().addMenu("セリフ(&X)")
+        menu.addAction(self._tool_actions[TOOL_TEXT])
+        menu.addSeparator()
+
+        self.text_actions: list[QAction] = []
+
+        def add(label: str, slot, shortcut: str | None = None) -> QAction:
+            action = self._act(label, slot, shortcut)
+            menu.addAction(action)
+            self.text_actions.append(action)
+            return action
+
+        add("文字を入力...", self.edit_text, "F2")
+        menu.addSeparator()
+
+        for label, align in (("左寄せ", "left"), ("中央寄せ", "center"), ("右寄せ", "right")):
+            add(label, lambda _=False, a=align: self.set_text_align(a))
+        menu.addSeparator()
+
+        add("大きく", lambda: self.step_text_size(1), "Ctrl+]")
+        add("小さく", lambda: self.step_text_size(-1), "Ctrl+[")
+        self.bold_action = add("太字", self.toggle_bold, "Ctrl+B")
+        self.bold_action.setCheckable(True)
+        menu.addSeparator()
+        add("フォントを選ぶ...", self.choose_font)
 
     def _build_menus(self) -> None:
         self._build_tool_actions()
@@ -206,6 +250,8 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.attach_action)
         self.balloon_actions.append(self.attach_action)
 
+        self._build_text_menu()
+
         tool_menu = self.menuBar().addMenu("道具(&T)")
         for action in self._tool_actions.values():
             tool_menu.addAction(action)
@@ -232,6 +278,7 @@ class MainWindow(QMainWindow):
             TOOL_SPLIT_V,
             TOOL_BALLOON,
             TOOL_BALLOON_JAGGED,
+            TOOL_TEXT,
         ):
             bar.addAction(self._tool_actions[tool])
         bar.addSeparator()
@@ -266,6 +313,11 @@ class MainWindow(QMainWindow):
         self.delete_action.setEnabled(self.state.selected_object is not None)
         self.fit_action.setEnabled(self.state.selected_image is not None)
 
+        text = self.state.selected_text
+        for action in self.text_actions:
+            action.setEnabled(text is not None)
+        self.bold_action.setChecked(text is not None and text.font.bold)
+
         balloon = self.state.selected_balloon
         for action in self.balloon_actions:
             action.setEnabled(balloon is not None)
@@ -290,6 +342,18 @@ class MainWindow(QMainWindow):
             r = image.rect
             w, h = image.src_px
             return f"画像を選択中: {r.w:.1f} × {r.h:.1f} mm（元 {w}×{h} px）"
+
+        text = self.state.selected_text
+        if text is not None:
+            font = text.font
+            weight = " 太字" if font.bold else ""
+            tied = "吹き出しに紐づけ" if text.attached_balloon_id else "紐づけなし"
+            lines = text.content.count("\n") + 1 if text.content else 0
+            body = f"{lines} 行" if lines else "（未入力）"
+            return (
+                f"セリフを選択中: {body} / {font.family} {font.size_mm:.1f}mm{weight}"
+                f" / {TEXT_ALIGN_LABELS.get(text.align, text.align)} / {tied}"
+            )
 
         balloon = self.state.selected_balloon
         if balloon is not None:
@@ -321,19 +385,21 @@ class MainWindow(QMainWindow):
         """Delete キー。選んでいるものに応じて消し分ける。"""
         if self.state.selected_image is not None:
             self.delete_image()
+        elif self.state.selected_text is not None:
+            self.delete_text()
         elif self.state.selected_balloon is not None:
             self.delete_balloon()
         else:
             self.delete_panel()
 
     def delete_balloon(self) -> None:
+        """吹き出しを消す。上に乗っていたセリフは残り、紐づけだけ外れる。"""
         balloon = self.state.selected_balloon
         if balloon is None:
             return
         balloon_id = balloon.id
         with self.state.edit("吹き出しの削除") as project:
-            page = project.pages[self.state.page_index]
-            page.floating = [f for f in page.floating if f.id != balloon_id]
+            project.pages[self.state.page_index].remove_floating(balloon_id)
         self.state.select(None)
         self.state.message.emit("吹き出しを削除しました")
 
@@ -495,6 +561,67 @@ class MainWindow(QMainWindow):
             return
         self.state.set_attachment(balloon.id, panel_id)
         self.state.message.emit("コマに紐づけました。コマを動かすと付いてきます")
+
+    # -- セリフ ------------------------------------------------------------
+
+    def edit_text(self) -> None:
+        text = self.state.selected_text
+        if text is None:
+            self.state.message.emit("先にセリフを選んでください")
+            return
+        self.view.begin_text_edit(text.id)
+
+    def set_text_align(self, align: str) -> None:
+        text = self.state.selected_text
+        if text is None or text.align == align:
+            return
+        self.state.set_text_align(text.id, align)
+        self.state.message.emit(f"整列: {TEXT_ALIGN_LABELS[align]}")
+
+    def step_text_size(self, direction: int) -> None:
+        """文字を1段階だけ大きく／小さくする。
+
+        数値を打ち込ませるより、押して確かめるほうが速い。
+        """
+        text = self.state.selected_text
+        if text is None:
+            return
+        size = round(text.font.size_mm + direction * TEXT_SIZE_STEP_MM, 2)
+        size = min(max(size, TEXT_SIZE_MIN_MM), TEXT_SIZE_MAX_MM)
+        if size == text.font.size_mm:
+            return
+        self.state.set_text_font(text.id, size_mm=size)
+        self.state.message.emit(f"文字の大きさ: {size:.1f} mm")
+
+    def toggle_bold(self) -> None:
+        text = self.state.selected_text
+        if text is None:
+            return
+        bold = not text.font.bold
+        self.state.set_text_font(text.id, bold=bold)
+        self.state.message.emit("太字にしました" if bold else "太字をやめました")
+
+    def choose_font(self) -> None:
+        text = self.state.selected_text
+        if text is None:
+            self.state.message.emit("先にセリフを選んでください")
+            return
+        current = QFont(text.font.family)
+        chosen, ok = QFontDialog.getFont(current, self, "フォントを選ぶ")
+        if not ok:
+            return
+        self.state.set_text_font(text.id, family=chosen.family(), bold=chosen.bold())
+        self.state.message.emit(f"フォント: {chosen.family()}")
+
+    def delete_text(self) -> None:
+        text = self.state.selected_text
+        if text is None:
+            return
+        text_id = text.id
+        with self.state.edit("セリフの削除") as project:
+            project.pages[self.state.page_index].remove_floating(text_id)
+        self.state.select(None)
+        self.state.message.emit("セリフを削除しました")
 
     def prune_assets(self) -> None:
         """どこからも使われていない画像を assets/_unused/ へ移す。
