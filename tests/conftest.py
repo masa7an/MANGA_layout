@@ -1,0 +1,48 @@
+"""テスト共通の準備。"""
+
+from __future__ import annotations
+
+import pathlib
+import sys
+
+import pytest
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+FIXTURE_DIR = REPO_ROOT / "tests" / "fixtures"
+
+# venv に入れずに実行された場合でも manga_layout を見つけられるようにする
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from manga_layout import Rect, Tail, new_project  # noqa: E402
+
+
+@pytest.fixture
+def fixture_dir() -> pathlib.Path:
+    return FIXTURE_DIR
+
+
+@pytest.fixture
+def png_bytes() -> bytes:
+    """透明度ありの基準画像。"""
+    return (FIXTURE_DIR / "rgba_transparent.png").read_bytes()
+
+
+@pytest.fixture
+def sample_project():
+    """1ページに、コマ・画像・吹き出し・セリフを1つずつ入れたプロジェクト。
+
+    紐づけ（attached_panel_id）まで張ってあるので、これ1つで
+    往復変換とコマ移動の追随を確かめられる。
+    """
+    project = new_project(title="テスト作品")
+    page = project.pages[0]
+
+    panel = project.add_panel(page, Rect(10.0, 10.0, 90.0, 60.0))
+    project.add_image(panel, "assets/abc123.png", Rect(12.0, 12.0, 80.0, 55.0), (1200, 900))
+
+    balloon = project.add_balloon(page, Rect(20.0, 15.0, 40.0, 25.0), attached_panel_id=panel.id)
+    balloon.tail = Tail(enabled=True, tip=(55.0, 45.0), width=6.0)
+    project.add_text(page, "テスト\nセリフ", Rect(22.0, 18.0, 36.0, 19.0), attached_panel_id=panel.id)
+
+    return project

@@ -1,0 +1,375 @@
+{
+  "format_version": 1,
+  "app": "MANGA_layout",
+  "title": "サンプル作品",
+  "default_page_size": {
+    "w": 210.0,
+    "h": 297.0
+  },
+  "reading_direction": "rtl",
+  "next_id": 19,
+  "pages": [
+    {
+      "id": "page_0001",
+      "size": {
+        "w": 210.0,
+        "h": 297.0
+      },
+      "panels": [
+        {
+          "id": "panel_0002",
+          "type": "panel",
+          "shape": {
+            "kind": "polygon",
+            "points": [
+              [15.0, 15.0],
+              [195.0, 15.0],
+              [195.0, 95.0],
+              [15.0, 95.0]
+            ]
+          },
+          "border": {
+            "width": 0.6,
+            "color": "#000000",
+            "visible": true
+          },
+          "z": 0,
+          "children": []
+        },
+        {
+          "id": "panel_0005",
+          "type": "panel",
+          "shape": {
+            "kind": "polygon",
+            "points": [
+              [15.0, 101.0],
+              [102.0, 101.0],
+              [102.0, 181.0],
+              [15.0, 181.0]
+            ]
+          },
+          "border": {
+            "width": 0.6,
+            "color": "#000000",
+            "visible": true
+          },
+          "z": 1,
+          "children": []
+        },
+        {
+          "id": "panel_0008",
+          "type": "panel",
+          "shape": {
+            "kind": "polygon",
+            "points": [
+              [108.0, 101.0],
+              [195.0, 101.0],
+              [195.0, 181.0],
+              [108.0, 181.0]
+            ]
+          },
+          "border": {
+            "width": 0.6,
+            "color": "#000000",
+            "visible": true
+          },
+          "z": 2,
+          "children": []
+        },
+        {
+          "id": "panel_0011",
+          "type": "panel",
+          "shape": {
+            "kind": "polygon",
+            "points": [
+              [15.0, 187.0],
+              [195.0, 187.0],
+              [195.0, 282.0],
+              [15.0, 282.0]
+            ]
+          },
+          "border": {
+            "width": 0.6,
+            "color": "#000000",
+            "visible": true
+          },
+          "z": 3,
+          "children": []
+        }
+      ],
+      "floating": [
+        {
+          "id": "bal_0003",
+          "type": "balloon",
+          "style": "ellipse",
+          "rect": {
+            "x": 20.0,
+            "y": 20.0,
+            "w": 42.0,
+            "h": 24.0
+          },
+          "fill": "#FFFFFF",
+          "border": {
+            "width": 0.4,
+            "color": "#000000",
+            "visible": true
+          },
+          "tail": {
+            "enabled": true,
+            "tip": [49.0, 56.0],
+            "width": 6.0
+          },
+          "attached_panel_id": "panel_0002",
+          "z": 10
+        },
+        {
+          "id": "txt_0004",
+          "type": "text",
+          "content": "ここが1コマ目だ",
+          "rect": {
+            "x": 23.0,
+            "y": 23.0,
+            "w": 36.0,
+            "h": 18.0
+          },
+          "font": {
+            "family": "Yu Gothic UI",
+            "size_mm": 3.5,
+            "bold": false
+          },
+          "align": "center",
+          "direction": "horizontal",
+          "attached_panel_id": "panel_0002",
+          "z": 11
+        },
+        {
+          "id": "bal_0006",
+          "type": "balloon",
+          "style": "ellipse",
+          "rect": {
+            "x": 20.0,
+            "y": 106.0,
+            "w": 42.0,
+            "h": 24.0
+          },
+          "fill": "#FFFFFF",
+          "border": {
+            "width": 0.4,
+            "color": "#000000",
+            "visible": true
+          },
+          "tail": {
+            "enabled": true,
+            "tip": [35.0, 140.0],
+            "width": 6.0
+          },
+          "attached_panel_id": "panel_0005",
+          "z": 12
+        },
+        {
+          "id": "txt_0007",
+          "type": "text",
+          "content": "左のコマ",
+          "rect": {
+            "x": 23.0,
+            "y": 109.0,
+            "w": 36.0,
+            "h": 18.0
+          },
+          "font": {
+            "family": "Yu Gothic UI",
+            "size_mm": 3.5,
+            "bold": false
+          },
+          "align": "center",
+          "direction": "horizontal",
+          "attached_panel_id": "panel_0005",
+          "z": 13
+        },
+        {
+          "id": "bal_0009",
+          "type": "balloon",
+          "style": "ellipse",
+          "rect": {
+            "x": 113.0,
+            "y": 106.0,
+            "w": 42.0,
+            "h": 24.0
+          },
+          "fill": "#FFFFFF",
+          "border": {
+            "width": 0.4,
+            "color": "#000000",
+            "visible": true
+          },
+          "tail": {
+            "enabled": true,
+            "tip": [140.0, 140.0],
+            "width": 6.0
+          },
+          "attached_panel_id": "panel_0008",
+          "z": 14
+        },
+        {
+          "id": "txt_0010",
+          "type": "text",
+          "content": "右のコマ",
+          "rect": {
+            "x": 116.0,
+            "y": 109.0,
+            "w": 36.0,
+            "h": 18.0
+          },
+          "font": {
+            "family": "Yu Gothic UI",
+            "size_mm": 3.5,
+            "bold": false
+          },
+          "align": "center",
+          "direction": "horizontal",
+          "attached_panel_id": "panel_0008",
+          "z": 15
+        },
+        {
+          "id": "bal_0012",
+          "type": "balloon",
+          "style": "ellipse",
+          "rect": {
+            "x": 20.0,
+            "y": 192.0,
+            "w": 42.0,
+            "h": 24.0
+          },
+          "fill": "#FFFFFF",
+          "border": {
+            "width": 0.4,
+            "color": "#000000",
+            "visible": true
+          },
+          "tail": {
+            "enabled": true,
+            "tip": [41.0, 230.0],
+            "width": 6.0
+          },
+          "attached_panel_id": "panel_0011",
+          "z": 16
+        },
+        {
+          "id": "txt_0013",
+          "type": "text",
+          "content": "最後の大ゴマ",
+          "rect": {
+            "x": 23.0,
+            "y": 195.0,
+            "w": 36.0,
+            "h": 18.0
+          },
+          "font": {
+            "family": "Yu Gothic UI",
+            "size_mm": 3.5,
+            "bold": false
+          },
+          "align": "center",
+          "direction": "horizontal",
+          "attached_panel_id": "panel_0011",
+          "z": 17
+        }
+      ]
+    },
+    {
+      "id": "page_0014",
+      "size": {
+        "w": 210.0,
+        "h": 297.0
+      },
+      "panels": [
+        {
+          "id": "panel_0015",
+          "type": "panel",
+          "shape": {
+            "kind": "polygon",
+            "points": [
+              [15.0, 15.0],
+              [195.0, 15.0],
+              [195.0, 99.0],
+              [15.0, 99.0]
+            ]
+          },
+          "border": {
+            "width": 0.6,
+            "color": "#000000",
+            "visible": true
+          },
+          "z": 0,
+          "children": []
+        },
+        {
+          "id": "panel_0016",
+          "type": "panel",
+          "shape": {
+            "kind": "polygon",
+            "points": [
+              [15.0, 105.0],
+              [195.0, 105.0],
+              [195.0, 189.0],
+              [15.0, 189.0]
+            ]
+          },
+          "border": {
+            "width": 0.6,
+            "color": "#000000",
+            "visible": true
+          },
+          "z": 1,
+          "children": []
+        },
+        {
+          "id": "panel_0017",
+          "type": "panel",
+          "shape": {
+            "kind": "polygon",
+            "points": [
+              [15.0, 195.0],
+              [195.0, 195.0],
+              [195.0, 279.0],
+              [15.0, 279.0]
+            ]
+          },
+          "border": {
+            "width": 0.6,
+            "color": "#000000",
+            "visible": true
+          },
+          "z": 2,
+          "children": []
+        }
+      ],
+      "floating": [
+        {
+          "id": "bal_0018",
+          "type": "balloon",
+          "style": "jagged",
+          "rect": {
+            "x": 15.0,
+            "y": 269.0,
+            "w": 60.0,
+            "h": 18.0
+          },
+          "fill": "#FFFFFF",
+          "border": {
+            "width": 0.4,
+            "color": "#000000",
+            "visible": true
+          },
+          "tail": {
+            "enabled": true,
+            "tip": [0.0, 0.0],
+            "width": 6.0
+          },
+          "attached_panel_id": null,
+          "z": 10
+        }
+      ]
+    }
+  ]
+}
