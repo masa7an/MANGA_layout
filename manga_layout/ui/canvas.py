@@ -45,26 +45,34 @@ from ..layout import (
     resize_rect,
     resize_rect_keep_aspect,
     set_panel_rect,
+    set_slant_pair_rect,
+    clamp_slant_rect,
     snap_candidates,
     root_y_at,
+    slant_boundary_x,
     snap_moved_rect,
     snap_point,
     split_panel,
+    split_panel_slant,
     tail_root_point,
     tail_triangle,
     text_at,
 )
-from ..model import BalloonObject, Font, ImageObject, Panel, TextObject
+from ..model import SLANT_RIGHT, BalloonObject, Font, ImageObject, Panel, TextObject
 from .state import (
     BALLOON_TOOLS,
     DEFAULT_TEXT_SIZE,
     TOOL_PANEL,
     TOOL_SELECT,
     TOOL_SPLIT_H,
+    TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
     TOOL_TEXT,
     EditorState,
 )
+
+# 分割の道具。押した位置で1回きり切る、という扱いが共通している
+SPLIT_TOOLS = (TOOL_SPLIT_H, TOOL_SPLIT_V, TOOL_SPLIT_SLANT)
 
 CANVAS_BG = QColor("#3C3F41")
 PAGE_BG = QColor("#FFFFFF")
@@ -175,7 +183,8 @@ class PageScene(QGraphicsScene):
         self.state = state
         # 操作中の下書き。確定するまでモデルには触らない
         self.preview_rect: Rect | None = None
-        self.split_preview: tuple[Rect, bool, float] | None = None
+        # 分割線の下見。両端の座標で持つ。斜め・横・縦を同じ描き方で扱える
+        self.split_preview: tuple[tuple[float, float], tuple[float, float]] | None = None
         # しっぽの先端をドラッグ中の (吹き出しの id, 先端の位置)
         self.tail_preview: tuple[str, tuple[float, float]] | None = None
         # しっぽの付け根を上下にずらしている最中の (吹き出しの id, 割合)
@@ -396,13 +405,9 @@ class PageScene(QGraphicsScene):
             self._draw_size_hint(painter, self.preview_rect)
 
         if self.split_preview is not None:
-            bounds, horizontal, position = self.split_preview
+            (x1, y1), (x2, y2) = self.split_preview
             painter.setPen(_cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
-            if horizontal:
-                line = QLineF(bounds.x, position, bounds.right, position)
-            else:
-                line = QLineF(position, bounds.y, position, bounds.bottom)
-            painter.drawLine(line)
+            painter.drawLine(QLineF(x1, y1, x2, y2))
 
     def _accent(self) -> QColor:
         """選択枠の色。何を選んでいるかで変える。"""
@@ -748,7 +753,7 @@ class PageView(QGraphicsView):
         # 入力中に画面を触ったら、そこで確定してから次の操作へ移る
         self.finish_text_edit(commit=True)
 
-        if tool in (TOOL_SPLIT_H, TOOL_SPLIT_V):
+        if tool in SPLIT_TOOLS:
             self._apply_split(x, y)
             event.accept()
             return
@@ -851,9 +856,17 @@ class PageView(QGraphicsView):
         self.state.select(hit.id if hit is not None else None)
         if hit is not None:
             self._mode = "move"
-            self._origin_rect = hit.shape.bounds()
+            # 斜めの組なら組の外側を掴む。片方だけ動く見た目にならない
+            pair = self.state.page.slant_pair_of(hit.id)
+            self._origin_rect = (
+                hit.shape.bounds()
+                if pair is None
+                else self.state.page.slant_bounds(pair)
+            )
             self._grab = (x, y)
             self._scene.preview_rect = self._origin_rect
+            if pair is not None:
+                self.state.message.emit("斜めに割った2枚は、まとめて動きます")
         event.accept()
 
     # -- セリフのその場編集 --------------------------------------------------
@@ -974,7 +987,7 @@ class PageView(QGraphicsView):
 
         x, y = self._mm(event)
 
-        if self.state.tool in (TOOL_SPLIT_H, TOOL_SPLIT_V):
+        if self.state.tool in SPLIT_TOOLS:
             self._update_split_preview(x, y)
             event.accept()
             return
@@ -1025,13 +1038,19 @@ class PageView(QGraphicsView):
             # ゆっくり合わせているうちに見えなくなってしまう
             self._update_aspect_hint(self._shift_held(event))
             if aspect > 0.0:
-                self._scene.preview_rect = resize_rect_keep_aspect(
+                resized = resize_rect_keep_aspect(
                     self._origin_rect, self._handle, sx, sy, minimum, aspect
                 )
             else:
-                self._scene.preview_rect = resize_rect(
+                resized = resize_rect(
                     self._origin_rect, self._handle, sx, sy, minimum
                 )
+            # 斜めの組は、細いほうが最小幅を割る手前で止める。下見のうちに
+            # 押し戻しておけば、離した瞬間に形が飛ぶことがない
+            pair = self.state.selected_slant_pair
+            if pair is not None:
+                resized = clamp_slant_rect(pair, resized, self.state.settings)
+            self._scene.preview_rect = resized
 
         self.viewport().update()
         event.accept()
@@ -1308,9 +1327,26 @@ class PageView(QGraphicsView):
             return
 
         panel = self.state.selected_panel
-        if panel is None or panel.shape.bounds() == rect:
+        if panel is None:
             return
         panel_id = panel.id
+
+        # 斜めの組は外側の矩形を差し替え、2枚を作り直す。1枚ずつ変形すると
+        # 傾きと隙間が左右で食い違う
+        pair = self.state.page.slant_pair_of(panel_id)
+        if pair is not None:
+            if self.state.page.slant_bounds(pair) == rect:
+                return
+            with self.state.edit("斜めのコマの大きさ変更") as project:
+                page = project.pages[self.state.page_index]
+                set_slant_pair_rect(
+                    page, page.slant_pair_of(panel_id), rect, self.state.settings
+                )
+            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            return
+
+        if panel.shape.bounds() == rect:
+            return
         with self.state.edit("コマの大きさ変更") as project:
             set_panel_rect(project.pages[self.state.page_index].panel(panel_id), rect)
         self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
@@ -1318,19 +1354,41 @@ class PageView(QGraphicsView):
     # -- 分割 --------------------------------------------------------------
 
     def _split_target(self, x: float, y: float):
+        """そこで分割できるコマ。できないなら None。
+
+        斜めに割ったコマは（矩形でなくなるため）どの分割にも出さない。
+        分割は「軸並行の矩形を切る」操作として閉じている。
+        """
         panel = panel_at(self.state.page, x, y)
         if panel is None or panel.shape.as_rect() is None:
             return None
         return panel
 
+    def _split_line(self, panel: Panel, x: float, y: float):
+        """分割線の両端。押した位置に合わせて引く。"""
+        bounds = panel.shape.bounds()
+        tool = self.state.tool
+        if tool == TOOL_SPLIT_H:
+            return ((bounds.x, y), (bounds.right, y))
+        if tool == TOOL_SPLIT_V:
+            return ((x, bounds.y), (x, bounds.bottom))
+
+        # 斜めは、実際に割ったときと同じ計算で下見を引く。見えている線と
+        # 出来上がる形がずれない
+        settings = self.state.settings
+        angle = settings.slant_angle
+        ratio = (x - bounds.x) / bounds.w if bounds.w > 0.0 else 0.5
+        top = slant_boundary_x(bounds, ratio, angle, SLANT_RIGHT, bounds.y)
+        bottom = slant_boundary_x(
+            bounds, ratio, angle, SLANT_RIGHT, bounds.bottom
+        )
+        return ((top, bounds.y), (bottom, bounds.bottom))
+
     def _update_split_preview(self, x: float, y: float) -> None:
         panel = self._split_target(x, y)
-        if panel is None:
-            self._scene.split_preview = None
-        else:
-            horizontal = self.state.tool == TOOL_SPLIT_H
-            bounds = panel.shape.bounds()
-            self._scene.split_preview = (bounds, horizontal, y if horizontal else x)
+        self._scene.split_preview = (
+            None if panel is None else self._split_line(panel, x, y)
+        )
         self.viewport().update()
 
     def _apply_split(self, x: float, y: float) -> None:
@@ -1339,25 +1397,42 @@ class PageView(QGraphicsView):
             self.state.message.emit("コマの上でクリックしてください")
             return
 
-        horizontal = self.state.tool == TOOL_SPLIT_H
+        tool = self.state.tool
         panel_id = panel.id
         try:
             with self.state.edit("コマの分割") as project:
-                split_panel(
-                    project,
-                    project.pages[self.state.page_index],
-                    panel_id,
-                    horizontal=horizontal,
-                    position=y if horizontal else x,
-                    settings=self.state.settings,
-                )
+                page = project.pages[self.state.page_index]
+                if tool == TOOL_SPLIT_SLANT:
+                    split_panel_slant(
+                        project,
+                        page,
+                        panel_id,
+                        position=x,
+                        direction=SLANT_RIGHT,
+                        settings=self.state.settings,
+                    )
+                else:
+                    split_panel(
+                        project,
+                        page,
+                        panel_id,
+                        horizontal=tool == TOOL_SPLIT_H,
+                        position=y if tool == TOOL_SPLIT_H else x,
+                        settings=self.state.settings,
+                    )
         except ValueError as e:
             self.state.message.emit(str(e))
             return
 
         self._scene.split_preview = None
         self.state.select(panel_id)
-        self.state.message.emit("コマを分割しました")
+        if tool == TOOL_SPLIT_SLANT:
+            self.state.message.emit(
+                "斜めに割りました。2枚はまとめて動きます。"
+                "向きは「コマ > 斜めの向きを反転」で変えられます"
+            )
+        else:
+            self.state.message.emit("コマを分割しました")
 
     # -- ドラッグ&ドロップ --------------------------------------------------
 

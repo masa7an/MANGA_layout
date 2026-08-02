@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -96,6 +97,25 @@ class Rect:
         )
 
 
+def _on_segment(
+    px: float, py: float, x1: float, y1: float, x2: float, y2: float
+) -> bool:
+    """点 (px, py) が線分 (x1,y1)-(x2,y2) の上に乗っているか。
+
+    外積で線の上かを見てから、内積で線分の範囲に収まっているかを見る。
+    判定を `EPS` の幅で緩めるのは、頂点を計算で求めた座標と比べたときに
+    浮動小数の丸めで外れるのを防ぐため。
+    """
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    if length <= EPS:
+        return math.hypot(px - x1, py - y1) <= EPS
+    if abs(dx * (py - y1) - dy * (px - x1)) / length > EPS:
+        return False
+    dot = (px - x1) * dx + (py - y1) * dy
+    return -EPS <= dot <= length * length + EPS
+
+
 @dataclass(frozen=True)
 class Polygon:
     """コマの形。頂点は時計回りに並べる。
@@ -135,6 +155,53 @@ class Polygon:
 
     def translated(self, dx: float, dy: float) -> "Polygon":
         return Polygon(tuple((x + dx, y + dy) for x, y in self.points))
+
+    def fitted_to(self, bounds: Rect) -> "Polygon":
+        """外接矩形が `bounds` になるよう、頂点を比例で移し替える。
+
+        軸並行の長方形に使うと結果は `bounds` そのものになるので、
+        矩形のコマのリサイズは今までと変わらない。斜めのコマは
+        **傾きを保ったまま**伸縮する。
+
+        矩形で上書きしてしまうと、大きさを変えた瞬間に斜めが消える。
+        頂点を移す形にしておくと、その壊れ方が構造的に起きない。
+        """
+        old = self.bounds()
+        target = bounds.normalized()
+        # 潰れた図形は比を取れない。全頂点を新しい辺の上へ寄せる
+        sx = target.w / old.w if old.w > EPS else 0.0
+        sy = target.h / old.h if old.h > EPS else 0.0
+        return Polygon(
+            tuple(
+                (target.x + (x - old.x) * sx, target.y + (y - old.y) * sy)
+                for x, y in self.points
+            )
+        )
+
+    def contains(self, x: float, y: float) -> bool:
+        """点が内側にあるか。辺の上も内側として扱う。
+
+        外接矩形では代用できない。斜めのコマは隣同士で外接矩形が重なるため、
+        斜めに削られた三角形の部分を押すと隣のコマが選ばれてしまう。
+
+        辺の上を含めるのは `Rect.contains` に合わせるため。枠線をちょうど
+        狙って押したときに何も選ばれないと、掴めない縁があるように感じる。
+        """
+        n = len(self.points)
+        inside = False
+        for i in range(n):
+            x1, y1 = self.points[i]
+            x2, y2 = self.points[(i + 1) % n]
+            if _on_segment(x, y, x1, y1, x2, y2):
+                return True
+            # 点から右へ半直線を伸ばし、辺と交わった回数を数える。奇数なら内側。
+            # 「上端は含み下端は含まない」で辺を数えると、頂点をちょうど通る
+            # ときに 1 本の辺を二重に数えることがない
+            if (y1 > y) != (y2 > y):
+                cross_x = x1 + (y - y1) / (y2 - y1) * (x2 - x1)
+                if x < cross_x:
+                    inside = not inside
+        return inside
 
     def is_axis_aligned_rect(self) -> bool:
         """軸に沿った長方形か。MVP が保つべき不変条件の確認に使う。

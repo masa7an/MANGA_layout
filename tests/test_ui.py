@@ -15,7 +15,13 @@ from manga_layout import Rect
 from manga_layout.layout import default_panel_rect, full_page_rect
 from manga_layout.storage import load_project
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.state import TOOL_PANEL, TOOL_SELECT, TOOL_SPLIT_H, TOOL_SPLIT_V
+from manga_layout.ui.state import (
+    TOOL_PANEL,
+    TOOL_SELECT,
+    TOOL_SPLIT_H,
+    TOOL_SPLIT_SLANT,
+    TOOL_SPLIT_V,
+)
 
 
 @pytest.fixture
@@ -799,3 +805,92 @@ class TestFile:
         assert warnings == []
         assert window.state.page_count == 2
         assert len(window.state.page.panels) == 4
+
+
+class TestSlantSplitUI:
+    """斜めの縦割りの結線。
+
+    形そのものは tests/test_slant.py で固めてある。ここでは
+    「道具 → 分割 → 履歴 → 選択」がつながっているかを見る。
+    """
+
+    def _split(self, window, x: float = 105.0):
+        window.add_full_page_panel()
+        window.state.set_tool(TOOL_SPLIT_SLANT)
+        window.view._apply_split(x, 150.0)
+        return window.state.page
+
+    def test_斜めに割れて組ができる(self, window):
+        page = self._split(window)
+        assert len(page.panels) == 2
+        assert len(page.slant_pairs) == 1
+        # どちらも軸並行の矩形ではなくなっている
+        assert all(p.shape.as_rect() is None for p in page.panels)
+
+    def test_割ったあとも履歴で戻せる(self, window):
+        self._split(window)
+        window.state.undo()
+        assert len(window.state.page.panels) == 1
+        assert window.state.page.slant_pairs == []
+        window.state.redo()
+        assert len(window.state.page.slant_pairs) == 1
+
+    def test_選択枠は組の外側の矩形になる(self, window):
+        page = self._split(window)
+        window.state.select(page.panels[0].id)
+        bounds = window.state.selected_bounds
+        outer = page.slant_bounds(page.slant_pairs[0])
+        assert (bounds.x, bounds.y, bounds.w, bounds.h) == pytest.approx(
+            (outer.x, outer.y, outer.w, outer.h)
+        )
+
+    def test_リサイズは2枚まとめて効く(self, window):
+        page = self._split(window)
+        window.state.select(page.panels[0].id)
+        window.view._apply_resize(Rect(20.0, 20.0, 150.0, 200.0))
+
+        page = window.state.page
+        outer = page.slant_bounds(page.slant_pairs[0])
+        assert (outer.x, outer.y, outer.w, outer.h) == pytest.approx(
+            (20.0, 20.0, 150.0, 200.0)
+        )
+        assert all(p.shape.as_rect() is None for p in page.panels)
+
+    def test_移動は2枚まとめて効く(self, window):
+        page = self._split(window)
+        window.state.select(page.panels[0].id)
+        before = page.panels[1].shape.bounds()
+        origin = window.state.selected_bounds
+        window.view._apply_move(origin, origin.translated(8.0, 4.0))
+
+        after = window.state.page.panels[1].shape.bounds()
+        assert (after.x, after.y) == pytest.approx((before.x + 8.0, before.y + 4.0))
+
+    def test_向きを反転できる(self, window):
+        page = self._split(window)
+        window.state.select(page.panels[0].id)
+        before = page.slant_pairs[0].direction
+
+        window.flip_slant()
+
+        assert window.state.page.slant_pairs[0].direction != before
+        assert window.slant_flip_action.isEnabled()
+
+    def test_斜めでないコマでは反転が選べない(self, window):
+        window.add_full_page_panel()
+        assert not window.slant_flip_action.isEnabled()
+
+    def test_下見の分割線が斜めになる(self, window):
+        window.add_full_page_panel()
+        window.state.set_tool(TOOL_SPLIT_SLANT)
+        window.view._update_split_preview(105.0, 150.0)
+
+        (x1, _), (x2, _) = window.view._scene.split_preview
+        assert x1 != pytest.approx(x2)
+
+    def test_割れない場所では知らせるだけ(self, window):
+        window.add_full_page_panel()
+        window.state.set_tool(TOOL_SPLIT_SLANT)
+        window.view._apply_split(18.0, 150.0)
+        assert len(window.state.page.panels) == 1
+        assert window.state.page.slant_pairs == []

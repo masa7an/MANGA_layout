@@ -28,6 +28,7 @@ from .state import (
     TOOL_PANEL,
     TOOL_SELECT,
     TOOL_SPLIT_H,
+    TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
     TOOL_TEXT,
     EditorState,
@@ -129,6 +130,7 @@ class MainWindow(QMainWindow):
             (TOOL_PANEL, "P"),
             (TOOL_SPLIT_H, "H"),
             (TOOL_SPLIT_V, "J"),
+            (TOOL_SPLIT_SLANT, "K"),
             (TOOL_BALLOON, "B"),
             (TOOL_BALLOON_JAGGED, "G"),
             (TOOL_TEXT, "T"),
@@ -200,6 +202,22 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(
             self._act("ページ全面にコマを作る", self.add_full_page_panel, "Ctrl+Shift+A")
         )
+
+        panel_menu = self.menuBar().addMenu("コマ(&M)")
+        # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
+        # 何も選んでいない間はメニュー全体がグレーになる（吹き出しでの失敗）
+        panel_menu.addAction(self._tool_actions[TOOL_PANEL])
+        panel_menu.addSeparator()
+        for tool in (TOOL_SPLIT_H, TOOL_SPLIT_V, TOOL_SPLIT_SLANT):
+            panel_menu.addAction(self._tool_actions[tool])
+        panel_menu.addSeparator()
+        self.slant_flip_action = self._act(
+            "斜めの向きを反転",
+            self.flip_slant,
+            None,
+            "斜めに割った2枚の傾きを / と \\ で入れ替える",
+        )
+        panel_menu.addAction(self.slant_flip_action)
 
         image_menu = self.menuBar().addMenu("画像(&I)")
         image_menu.addAction(
@@ -284,6 +302,7 @@ class MainWindow(QMainWindow):
             TOOL_PANEL,
             TOOL_SPLIT_H,
             TOOL_SPLIT_V,
+            TOOL_SPLIT_SLANT,
             TOOL_BALLOON,
             TOOL_BALLOON_JAGGED,
             TOOL_TEXT,
@@ -331,6 +350,7 @@ class MainWindow(QMainWindow):
         )
         self.delete_action.setEnabled(self.state.selected_object is not None)
         self.fit_action.setEnabled(self.state.selected_image is not None)
+        self.slant_flip_action.setEnabled(self.state.selected_slant_pair is not None)
 
         text = self.state.selected_text
         for action in self.text_actions:
@@ -431,6 +451,14 @@ class MainWindow(QMainWindow):
             project.pages[self.state.page_index].remove_panel(panel_id)
         self.state.select(None)
         self.state.message.emit("コマを削除しました")
+
+    def flip_slant(self) -> None:
+        """斜めに割った2枚の傾きを入れ替える。
+
+        外側の矩形は変わらないので、隣のコマとの位置関係は動かない。
+        """
+        if self.state.flip_slant():
+            self.state.message.emit("斜めの向きを反転しました")
 
     def delete_image(self) -> None:
         """画像だけ消す。入っていたコマは残り、そのコマを選び直す。

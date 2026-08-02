@@ -25,6 +25,7 @@ from ..layout import (
     balloon_at,
     contain_rect_in,
     default_tail_tip,
+    flip_slant_pair,
 )
 from ..model import (
     BalloonObject,
@@ -33,6 +34,7 @@ from ..model import (
     Panel,
     Project,
     SceneObject,
+    SlantPair,
     Tail,
     TextObject,
     new_project,
@@ -44,6 +46,7 @@ TOOL_SELECT = "select"
 TOOL_PANEL = "panel"
 TOOL_SPLIT_H = "split_h"
 TOOL_SPLIT_V = "split_v"
+TOOL_SPLIT_SLANT = "split_slant"
 TOOL_BALLOON = "balloon"
 TOOL_BALLOON_JAGGED = "balloon_jagged"
 TOOL_TEXT = "text"
@@ -53,6 +56,7 @@ TOOL_LABELS = {
     TOOL_PANEL: "コマ追加",
     TOOL_SPLIT_H: "横に分割",
     TOOL_SPLIT_V: "縦に分割",
+    TOOL_SPLIT_SLANT: "斜めに縦割り",
     # 「吹き出し」メニューの中にも並べるので、そこで
     # 「吹き出し > 吹き出し」と重ならない言い方にしてある
     TOOL_BALLOON: "楕円を追加",
@@ -157,11 +161,22 @@ class EditorState(QObject):
         return obj if isinstance(obj, TextObject) else None
 
     @property
+    def selected_slant_pair(self) -> SlantPair | None:
+        """選択中のコマが属する斜めの組。属していなければ None。"""
+        panel = self.selected_panel
+        return None if panel is None else self.page.slant_pair_of(panel.id)
+
+    @property
     def selected_bounds(self) -> Rect | None:
-        """選択枠とつまみを描く矩形。"""
+        """選択枠とつまみを描く矩形。
+
+        斜めの組に入っているコマは、**組の外側の矩形**を返す。組は必ず
+        一緒に動くので、つまみも外側に付いていないと操作と結果が合わない。
+        """
         obj = self.selected_object
         if isinstance(obj, Panel):
-            return obj.shape.bounds()
+            pair = self.page.slant_pair_of(obj.id)
+            return obj.shape.bounds() if pair is None else self.page.slant_bounds(pair)
         if isinstance(obj, (ImageObject, BalloonObject, TextObject)):
             return obj.rect
         return None
@@ -268,6 +283,25 @@ class EditorState(QObject):
             image = project.add_image(target, ref, rect, px)
         self.select(image.id)
         return image
+
+    # -- 斜めのコマ --------------------------------------------------------
+
+    def flip_slant(self) -> bool:
+        """選択中の斜めの組の向きを反転する。反転できたら True。
+
+        利用者がつつけるのはここだけ。位置と角度は分割したときに決まり、
+        あとは外側の矩形にぶら下がって動く。
+        """
+        panel = self.selected_panel
+        if panel is None or self.page.slant_pair_of(panel.id) is None:
+            self.message.emit("斜めに割ったコマを選んでください")
+            return False
+
+        panel_id = panel.id
+        with self.edit("斜めの向きを反転") as project:
+            page = project.pages[self._page_index]
+            flip_slant_pair(page, page.slant_pair_of(panel_id), self.settings)
+        return True
 
     # -- 吹き出し ----------------------------------------------------------
 

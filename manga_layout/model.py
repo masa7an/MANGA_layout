@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterator
@@ -52,6 +53,11 @@ _ID_RE = re.compile(r"^[a-z]+_(\d+)$")
 BALLOON_STYLES = ("ellipse", "jagged")
 TEXT_ALIGNS = ("left", "center", "right")
 TEXT_DIRECTIONS = ("horizontal", "vertical")
+
+# 斜め割りの境界が傾く向き。上へ行くほど右が "/"、上へ行くほど左が "\"
+SLANT_RIGHT = "/"
+SLANT_LEFT = "\\"
+SLANT_DIRECTIONS = (SLANT_RIGHT, SLANT_LEFT)
 READING_DIRECTIONS = ("rtl", "ltr")
 
 # 吹き出しとセリフはコマより手前に置く。既存が無いときの開始値
@@ -374,6 +380,71 @@ def _floating_from_dict(data: Any, where: str) -> FloatingObject:
 
 
 # --------------------------------------------------------------------------
+# 斜めに割ったコマの組
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class SlantPair:
+    """1つの矩形を斜めに割って生まれた、コマ2枚の関係。
+
+    2枚は普通の `Panel` として `Page.panels` に並んでおり、切り抜きも
+    画像の所属も吹き出しの紐づけも通常どおり動く。ここが持つのは
+    **形を決めるパラメータだけ**。
+
+    パラメータをコマ側に持たせず1箇所に集めているのは、2枚で値が
+    食い違う経路を無くすため（`attached_panel_id` と同じ考え方）。
+
+    `ratio` を絶対座標ではなく割合にしてあるのが要。外側の矩形を縮めても
+    境界が外へ飛び出さず、拡大縮小に素直に追従する。
+    """
+
+    left_id: str
+    right_id: str
+    ratio: float
+    angle: float
+    direction: str
+
+    def members(self) -> tuple[str, str]:
+        return (self.left_id, self.right_id)
+
+    def flipped(self) -> "SlantPair":
+        """傾きの向きを反転した組を返す。"""
+        other = SLANT_LEFT if self.direction == SLANT_RIGHT else SLANT_RIGHT
+        return dataclasses.replace(self, direction=other)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "left": self.left_id,
+            "right": self.right_id,
+            "ratio": self.ratio,
+            "angle": self.angle,
+            "direction": self.direction,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> "SlantPair":
+        d = v.req_mapping(data, where)
+        ratio = v.number(d, "ratio", where)
+        if not 0.0 < ratio < 1.0:
+            raise ProjectFormatError(
+                f"{where}.ratio: 0 と 1 の間である必要があります（{ratio}）"
+            )
+        angle = v.positive(d, "angle", where)
+        if angle >= 90.0:
+            raise ProjectFormatError(
+                f"{where}.angle: 90 度未満である必要があります（{angle}）"
+            )
+        return cls(
+            left_id=v.text(d, "left", where),
+            right_id=v.text(d, "right", where),
+            ratio=ratio,
+            angle=angle,
+            direction=v.choice(d, "direction", where, SLANT_DIRECTIONS),
+        )
+
+
+# --------------------------------------------------------------------------
 # ページ
 # --------------------------------------------------------------------------
 
@@ -384,6 +455,7 @@ class Page:
     size: Size = DEFAULT_PAGE_SIZE
     panels: list[Panel] = field(default_factory=list)
     floating: list[FloatingObject] = field(default_factory=list)
+    slant_pairs: list[SlantPair] = field(default_factory=list)
 
     # -- 検索 --------------------------------------------------------------
 
@@ -418,6 +490,29 @@ class Page:
         """そのコマに紐づいた吹き出し・セリフ。"""
         return [f for f in self.floating if f.attached_panel_id == panel_id]
 
+    def slant_pair_of(self, panel_id: str) -> SlantPair | None:
+        """そのコマが属する斜めの組。属していなければ None。
+
+        1枚のコマが入れる組は必ず1つまで。この決まりがあるおかげで、
+        移動もリサイズも「相方を1枚探して一緒に動かす」で済んでいる。
+        （代わりに、左右とも斜めの平行四辺形のコマは作れない）
+        """
+        for pair in self.slant_pairs:
+            if panel_id in pair.members():
+                return pair
+        return None
+
+    def slant_bounds(self, pair: SlantPair) -> Rect:
+        """斜めの組の外側の矩形。
+
+        2枚の外接矩形を合わせると元の矩形が厳密に戻るので、保存せず
+        毎回ここで求めている。持たなければ食い違いようがない。
+        """
+        a = self.panel(pair.left_id).shape.bounds()
+        b = self.panel(pair.right_id).shape.bounds()
+        x, y = min(a.x, b.x), min(a.y, b.y)
+        return Rect(x, y, max(a.right, b.right) - x, max(a.bottom, b.bottom) - y)
+
     def iter_objects(self) -> Iterator[SceneObject]:
         for p in self.panels:
             yield p
@@ -450,6 +545,16 @@ class Page:
 
     def move_panel(self, panel_id: str, dx: float, dy: float) -> None:
         """コマを動かす。中の画像と、紐づいた吹き出し・セリフも一緒に動く。
+
+        斜めの組に入っているコマは、**相方も同じだけ動く**。片方だけ動かすと
+        噛み合っていた斜めの辺が離れ、組の意味が無くなる。
+        """
+        pair = self.slant_pair_of(panel_id)
+        for target in (pair.members() if pair is not None else (panel_id,)):
+            self._move_panel_only(target, dx, dy)
+
+    def _move_panel_only(self, panel_id: str, dx: float, dy: float) -> None:
+        """コマ1枚とその持ち物だけを動かす。
 
         要件定義 4章で狙った挙動そのもの。吹き出しは親子関係ではなく
         `attached_panel_id` の紐づけなので、追随はするが切り抜かれない。
@@ -498,9 +603,16 @@ class Page:
 
         紐づいていた吹き出し・セリフは消さず、紐づけだけ外してページに残す。
         セリフはコマより手間がかかっているので、巻き添えで消さない。
+
+        斜めの組の片方だった場合は、組の関係だけを解く。**残ったコマは
+        斜めの辺を持ったまま**その場に残る。外側の矩形に戻すと、消した
+        覚えのない方向へコマが伸びて驚きが大きい。
         """
         panel = self.panel(panel_id)
         self.panels.remove(panel)
+        pair = self.slant_pair_of(panel_id)
+        if pair is not None:
+            self.slant_pairs.remove(pair)
         for obj in self.attached_to(panel_id):
             obj.attached_panel_id = None
         return panel
@@ -508,18 +620,24 @@ class Page:
     # -- 変換 --------------------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "id": self.id,
             "size": self.size.to_dict(),
             "panels": [p.to_dict() for p in self.panels],
             "floating": [f.to_dict() for f in self.floating],
         }
+        # 斜めの組が無いページには項目ごと書かない。斜めを使っていない
+        # 作品の project.json が、この機能の追加前と同じ内容のままになる
+        if self.slant_pairs:
+            out["slant_pairs"] = [s.to_dict() for s in self.slant_pairs]
+        return out
 
     @classmethod
     def from_dict(cls, data: Any, where: str) -> "Page":
         d = v.req_mapping(data, where)
         panels_raw = v.req_list(d.get("panels", []), f"{where}.panels")
         floating_raw = v.req_list(d.get("floating", []), f"{where}.floating")
+        slant_raw = v.req_list(d.get("slant_pairs", []), f"{where}.slant_pairs")
         return cls(
             id=v.text(d, "id", where),
             size=Size.from_dict(d.get("size", DEFAULT_PAGE_SIZE.to_dict()), f"{where}.size"),
@@ -527,6 +645,10 @@ class Page:
             floating=[
                 _floating_from_dict(f, f"{where}.floating[{i}]")
                 for i, f in enumerate(floating_raw)
+            ],
+            slant_pairs=[
+                SlantPair.from_dict(s, f"{where}.slant_pairs[{i}]")
+                for i, s in enumerate(slant_raw)
             ],
         )
 
@@ -748,6 +870,36 @@ class Project:
         for page in self.pages:
             panel_ids = {p.id for p in page.panels}
             balloon_ids = {f.id for f in page.floating if isinstance(f, BalloonObject)}
+
+            # 斜めの組の整合を取る。組が壊れていても、コマ自体は正しい形を
+            # 持っているので開ける。関係だけ解いて普通のコマとして扱う
+            paired: set[str] = set()
+            for pair in list(page.slant_pairs):
+                missing = [i for i in pair.members() if i not in panel_ids]
+                if missing:
+                    self.load_warnings.append(
+                        f"斜めの組が存在しないコマ {' / '.join(missing)} を指していたため、"
+                        "組を解きました（コマの形はそのままです）"
+                    )
+                    page.slant_pairs.remove(pair)
+                    continue
+                if pair.left_id == pair.right_id:
+                    self.load_warnings.append(
+                        f"斜めの組が同じコマ {pair.left_id} を左右に指していたため、組を解きました"
+                    )
+                    page.slant_pairs.remove(pair)
+                    continue
+                # 1枚が2つの組に入ると、どちらに合わせて動かすかが決まらない
+                overlap = paired & set(pair.members())
+                if overlap:
+                    self.load_warnings.append(
+                        f"コマ {' / '.join(sorted(overlap))} が複数の斜めの組に入っていたため、"
+                        "後ろの組を解きました"
+                    )
+                    page.slant_pairs.remove(pair)
+                    continue
+                paired.update(pair.members())
+
             for obj in page.floating:
                 if obj.attached_panel_id is not None and obj.attached_panel_id not in panel_ids:
                     self.load_warnings.append(
