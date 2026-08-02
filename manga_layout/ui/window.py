@@ -29,6 +29,20 @@ from .state import (
 
 APP_TITLE = "漫画レイアウタ"
 
+# 起動時の希望サイズ。画面に入らなければ後述の作業領域に合わせて縮める
+WINDOW_SIZE = (1100, 860)
+
+# 画面下端との間に必ず空ける余白（px）。
+# ここを 0 にすると、下端いっぱいのときにステータス表示がタスクバーと
+# 接して読みにくくなる
+BOTTOM_GAP_PX = 20
+
+# タイトルバーと枠のぶんの見込み（px）。
+# 表示前は実寸（frameGeometry）が取れないため固定値で確保する。
+# これが無いと、画面いっぱいの高さにしたときタイトルバーが画面外に出て
+# ウィンドウを掴めなくなる
+FRAME_ALLOWANCE_PX = 48
+
 
 class MainWindow(QMainWindow):
     def __init__(self, state: EditorState | None = None):
@@ -36,7 +50,7 @@ class MainWindow(QMainWindow):
         self.state = state or EditorState()
         self.view = PageView(self.state)
         self.setCentralWidget(self.view)
-        self.resize(1100, 860)
+        self._apply_initial_geometry()
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_menus()
@@ -52,6 +66,31 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     # -- 組み立て ----------------------------------------------------------
+
+    def _apply_initial_geometry(self) -> None:
+        """タスクバーに隠れないよう、画面の作業領域に収めて配置する。
+
+        availableGeometry はタスクバーを除いた領域を返す。そこから
+        下に BOTTOM_GAP_PX、上に FRAME_ALLOWANCE_PX を残した範囲に
+        中央寄せする。画面が希望サイズより小さければ縮める。
+        """
+        width, height = WINDOW_SIZE
+        screen = self.screen()
+        if screen is None:  # 表示装置が無いとき（offscreen 等）
+            self.resize(width, height)
+            return
+
+        area = screen.availableGeometry().adjusted(
+            0, FRAME_ALLOWANCE_PX, 0, -BOTTOM_GAP_PX
+        )
+        width = min(width, area.width())
+        height = min(height, area.height())
+        self.setGeometry(
+            area.x() + (area.width() - width) // 2,
+            area.y() + (area.height() - height) // 2,
+            width,
+            height,
+        )
 
     def _act(self, text: str, slot, shortcut: str | None = None, tip: str = "") -> QAction:
         action = QAction(text, self)
