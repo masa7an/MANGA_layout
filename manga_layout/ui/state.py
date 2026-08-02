@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import pathlib
 from typing import Iterator
 
@@ -17,8 +18,24 @@ from ..assets import AssetStore, PendingAssets
 from ..geometry import Rect
 from ..history import History
 from ..images import ImageCache, Preview, preview_from_bytes
-from ..layout import LayoutSettings, contain_rect_in
-from ..model import ImageObject, Page, Panel, Project, SceneObject, new_project
+from ..layout import (
+    BalloonSettings,
+    LayoutSettings,
+    attach_target,
+    contain_rect_in,
+    default_tail_tip,
+)
+from ..model import (
+    BalloonObject,
+    ImageObject,
+    Page,
+    Panel,
+    Project,
+    SceneObject,
+    Tail,
+    TextObject,
+    new_project,
+)
 from ..storage import load_project, save_project
 
 # 道具（ツール）
@@ -26,13 +43,20 @@ TOOL_SELECT = "select"
 TOOL_PANEL = "panel"
 TOOL_SPLIT_H = "split_h"
 TOOL_SPLIT_V = "split_v"
+TOOL_BALLOON = "balloon"
+TOOL_BALLOON_JAGGED = "balloon_jagged"
 
 TOOL_LABELS = {
     TOOL_SELECT: "選択",
     TOOL_PANEL: "コマ追加",
     TOOL_SPLIT_H: "横に分割",
     TOOL_SPLIT_V: "縦に分割",
+    TOOL_BALLOON: "吹き出し",
+    TOOL_BALLOON_JAGGED: "吹き出し（ギザ）",
 }
+
+# どの道具がどの種類の吹き出しを作るか
+BALLOON_TOOLS = {TOOL_BALLOON: "ellipse", TOOL_BALLOON_JAGGED: "jagged"}
 
 
 class EditorState(QObject):
@@ -54,6 +78,7 @@ class EditorState(QObject):
         self.history = History(project if project is not None else new_project())
         self.project_dir = project_dir
         self.settings = LayoutSettings()
+        self.balloon_settings = BalloonSettings()
         self._page_index = 0
         self._tool = TOOL_SELECT
         self._selected_id: str | None = None
@@ -111,12 +136,18 @@ class EditorState(QObject):
         return obj if isinstance(obj, ImageObject) else None
 
     @property
+    def selected_balloon(self) -> BalloonObject | None:
+        """選択中の吹き出し。"""
+        obj = self.selected_object
+        return obj if isinstance(obj, BalloonObject) else None
+
+    @property
     def selected_bounds(self) -> Rect | None:
         """選択枠とつまみを描く矩形。"""
         obj = self.selected_object
         if isinstance(obj, Panel):
             return obj.shape.bounds()
-        if isinstance(obj, ImageObject):
+        if isinstance(obj, (ImageObject, BalloonObject, TextObject)):
             return obj.rect
         return None
 
@@ -222,6 +253,65 @@ class EditorState(QObject):
             image = project.add_image(target, ref, rect, px)
         self.select(image.id)
         return image
+
+    # -- 吹き出し ----------------------------------------------------------
+
+    def add_balloon(self, rect: Rect, style: str = "ellipse") -> BalloonObject:
+        """吹き出しを1つ置く。置いたものを選択状態にする。
+
+        重なっているコマに自動で紐づける（要件定義 6.4）。紐づけておくと、
+        あとでコマを動かしたときに吹き出しが付いて回る。外したいときは
+        あとから解除できる。
+        """
+        page = self.page
+        attached = attach_target(page, rect)
+        tip = default_tail_tip(rect)
+
+        with self.edit("吹き出しの追加") as project:
+            balloon = project.add_balloon(
+                project.pages[self._page_index], rect, style, attached
+            )
+            balloon.tail = Tail(
+                enabled=True, tip=tip, width=self.balloon_settings.tail_width
+            )
+        self.select(balloon.id)
+        return balloon
+
+    def _edit_balloon(self, balloon_id: str, label: str):
+        """id で引き直してから触るための小さな入れ物。
+
+        Undo で `Project` の実体が差し替わるため、外で掴んだ吹き出しを
+        そのまま書き換えてはいけない（要件定義 6.8）。
+        """
+
+        @contextlib.contextmanager
+        def scope():
+            with self.edit(label) as project:
+                target = project.pages[self._page_index].find(balloon_id)
+                if not isinstance(target, BalloonObject):
+                    raise KeyError(f"吹き出しが見つかりません: {balloon_id}")
+                yield target
+
+        return scope()
+
+    def set_balloon_style(self, balloon_id: str, style: str) -> None:
+        with self._edit_balloon(balloon_id, "吹き出しの種類変更") as balloon:
+            balloon.style = style
+
+    def set_tail_tip(self, balloon_id: str, tip: tuple[float, float]) -> None:
+        with self._edit_balloon(balloon_id, "しっぽの向き") as balloon:
+            balloon.tail = dataclasses.replace(balloon.tail, tip=tip, enabled=True)
+
+    def set_tail_enabled(self, balloon_id: str, enabled: bool) -> None:
+        label = "しっぽを出す" if enabled else "しっぽを消す"
+        with self._edit_balloon(balloon_id, label) as balloon:
+            balloon.tail = dataclasses.replace(balloon.tail, enabled=enabled)
+
+    def set_attachment(self, balloon_id: str, panel_id: str | None) -> None:
+        """コマへの紐づけを付け替える。None で解除。"""
+        label = "コマへの紐づけ" if panel_id else "紐づけの解除"
+        with self._edit_balloon(balloon_id, label) as balloon:
+            balloon.attached_panel_id = panel_id
 
     # -- ファイル ----------------------------------------------------------
 

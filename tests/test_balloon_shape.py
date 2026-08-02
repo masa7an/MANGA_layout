@@ -1,0 +1,230 @@
+"""吹き出しの形の検証。
+
+見た目そのものは目で見ないと分からないが、**形が壊れる条件**は数で押さえられる。
+ギザギザの山と谷が対になっているか、しっぽの付け根が本体の内側に入っているか、
+極端な大きさで潰れないか。ここが崩れると、継ぎ目に隙間が空いたり
+輪郭が自己交差したりする。
+"""
+
+from __future__ import annotations
+
+import math
+
+import pytest
+
+from manga_layout import Rect, new_project
+from manga_layout.layout import (
+    BalloonSettings,
+    attach_target,
+    balloon_at,
+    balloon_contains,
+    balloon_outline,
+    default_balloon_rect,
+    default_tail_tip,
+    ellipse_points,
+    jagged_points,
+    tail_triangle,
+)
+
+SETTINGS = BalloonSettings()
+RECT = Rect(20.0, 30.0, 40.0, 26.0)
+
+
+def distance_ratio(rect: Rect, point: tuple[float, float]) -> float:
+    """楕円の半径に対する、中心からその点までの割合。1.0 なら輪郭の上。"""
+    cx, cy = rect.center
+    nx = (point[0] - cx) / (rect.w / 2.0)
+    ny = (point[1] - cy) / (rect.h / 2.0)
+    return math.hypot(nx, ny)
+
+
+@pytest.fixture
+def balloon():
+    project = new_project()
+    return project.add_balloon(project.pages[0], RECT)
+
+
+class TestEllipse:
+    def test_すべて輪郭の上に乗る(self):
+        for point in ellipse_points(RECT, SETTINGS):
+            assert distance_ratio(RECT, point) == pytest.approx(1.0)
+
+    def test_外接矩形に収まる(self):
+        for x, y in ellipse_points(RECT, SETTINGS):
+            assert RECT.x - 1e-9 <= x <= RECT.right + 1e-9
+            assert RECT.y - 1e-9 <= y <= RECT.bottom + 1e-9
+
+    def test_点が少なすぎても形になる(self):
+        # 設定を極端に小さくされても三角形未満にはしない
+        points = ellipse_points(RECT, BalloonSettings(ellipse_segments=1))
+        assert len(points) >= 8
+
+    def test_同じ点が重複しない(self):
+        points = ellipse_points(RECT, SETTINGS)
+        assert len(set(points)) == len(points)
+
+
+class TestJagged:
+    def test_山と谷が交互に並ぶ(self):
+        points = jagged_points(RECT, SETTINGS)
+        ratios = [distance_ratio(RECT, p) for p in points]
+        for i, ratio in enumerate(ratios):
+            want = 1.0 if i % 2 == 0 else 1.0 - SETTINGS.jagged_depth
+            assert ratio == pytest.approx(want)
+
+    def test_頂点数は必ず偶数(self):
+        """奇数だと一周したときに山が隣り合い、そこだけ形が崩れる。"""
+        for spikes in (3, 7, 14, 21):
+            points = jagged_points(RECT, BalloonSettings(jagged_spikes=spikes))
+            assert len(points) == spikes * 2
+            assert len(points) % 2 == 0
+
+    def test_谷が深すぎても中心を越えない(self):
+        points = jagged_points(RECT, BalloonSettings(jagged_depth=5.0))
+        assert min(distance_ratio(RECT, p) for p in points) > 0.0
+
+    def test_山の数が少なすぎても三角形以上(self):
+        points = jagged_points(RECT, BalloonSettings(jagged_spikes=1))
+        assert len(points) >= 6
+
+
+class TestOutline:
+    def test_種類で切り替わる(self, balloon):
+        balloon.style = "ellipse"
+        assert len(balloon_outline(balloon, SETTINGS)) == SETTINGS.ellipse_segments
+        balloon.style = "jagged"
+        assert len(balloon_outline(balloon, SETTINGS)) == SETTINGS.jagged_spikes * 2
+
+
+class TestTail:
+    def test_先端がそのまま頂点になる(self, balloon):
+        balloon.tail.tip = (30.0, 90.0)
+        base1, tip, base2 = tail_triangle(balloon, SETTINGS)
+        assert tip == (30.0, 90.0)
+
+    def test_付け根は本体の内側にある(self, balloon):
+        """外側だと、ギザギザの谷で本体と離れて継ぎ目に隙間が空く。"""
+        balloon.style = "jagged"
+        balloon.tail.tip = (30.0, 90.0)
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+        limit = 1.0 - SETTINGS.jagged_depth
+        assert distance_ratio(RECT, base1) <= limit + 1e-9
+        assert distance_ratio(RECT, base2) <= limit + 1e-9
+
+    def test_楕円でも付け根は輪郭より内側(self, balloon):
+        balloon.tail.tip = (30.0, 90.0)
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+        assert distance_ratio(RECT, base1) < 1.0
+        assert distance_ratio(RECT, base2) < 1.0
+
+    @pytest.mark.parametrize(
+        "tip",
+        [(30.0, 90.0), (30.0, -20.0), (100.0, 43.0), (-30.0, 43.0), (90.0, 95.0)],
+        ids=["下", "上", "右", "左", "斜め"],
+    )
+    def test_どの向きでも付け根が先端側を向く(self, balloon, tip):
+        balloon.tail.tip = tip
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+        cx, cy = RECT.center
+        mid = ((base1[0] + base2[0]) / 2.0, (base1[1] + base2[1]) / 2.0)
+
+        # 中心→付け根中点 と 中心→先端 が同じ側を向いていること
+        dot = (mid[0] - cx) * (tip[0] - cx) + (mid[1] - cy) * (tip[1] - cy)
+        assert dot > 0.0
+
+    def test_付け根の幅が反映される(self, balloon):
+        balloon.tail.tip = (30.0, 90.0)
+        narrow = tail_triangle(balloon, SETTINGS)
+        balloon.tail.width = 12.0
+        wide = tail_triangle(balloon, SETTINGS)
+
+        def base_length(tri):
+            (x1, y1), _, (x2, y2) = tri
+            return math.hypot(x2 - x1, y2 - y1)
+
+        assert base_length(wide) > base_length(narrow)
+
+    def test_小さな吹き出しでも付け根が一周しない(self, balloon):
+        """付け根が広がりすぎると、しっぽが本体を飲み込む。"""
+        balloon.rect = Rect(0.0, 0.0, 4.0, 4.0)
+        balloon.tail.width = 50.0
+        balloon.tail.tip = (2.0, 40.0)
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+
+        cx, cy = balloon.rect.center
+        a1 = math.atan2(base1[1] - cy, base1[0] - cx)
+        a2 = math.atan2(base2[1] - cy, base2[0] - cx)
+        spread = abs((a2 - a1 + math.pi) % (2 * math.pi) - math.pi)
+        assert spread <= 2 * math.pi / 3 + 1e-6  # 120度まで
+
+    def test_しっぽ無しなら作らない(self, balloon):
+        balloon.tail.enabled = False
+        assert tail_triangle(balloon, SETTINGS) is None
+
+    def test_先端が中心と重なっていたら作らない(self, balloon):
+        balloon.tail.tip = RECT.center
+        assert tail_triangle(balloon, SETTINGS) is None
+
+    def test_既定の先端は下に出る(self):
+        tip = default_tail_tip(RECT)
+        assert tip[0] == pytest.approx(RECT.center[0])
+        assert tip[1] > RECT.bottom
+
+
+class TestHitTest:
+    def test_中心は当たる(self, balloon):
+        assert balloon_contains(balloon, *RECT.center)
+
+    def test_四隅は当たらない(self, balloon):
+        """外接矩形で判定すると、何もない隅で掴めて下のコマが選べなくなる。"""
+        assert not balloon_contains(balloon, RECT.x, RECT.y)
+        assert not balloon_contains(balloon, RECT.right, RECT.bottom)
+
+    def test_辺の中点は当たる(self, balloon):
+        cx, cy = RECT.center
+        assert balloon_contains(balloon, RECT.x + 0.1, cy)
+        assert balloon_contains(balloon, cx, RECT.y + 0.1)
+
+    def test_潰れた吹き出しは当たらない(self, balloon):
+        balloon.rect = Rect(10.0, 10.0, 0.0, 0.0)
+        assert not balloon_contains(balloon, 10.0, 10.0)
+
+    def test_重なっていれば手前を返す(self):
+        project = new_project()
+        page = project.pages[0]
+        lower = project.add_balloon(page, RECT)
+        upper = project.add_balloon(page, RECT)
+        assert upper.z > lower.z
+        assert balloon_at(page, *RECT.center) is upper
+
+    def test_何も無ければ返さない(self):
+        project = new_project()
+        assert balloon_at(project.pages[0], 5.0, 5.0) is None
+
+
+class TestAttach:
+    def test_中心が乗っているコマに紐づく(self):
+        project = new_project()
+        page = project.pages[0]
+        panel = project.add_panel(page, Rect(10.0, 10.0, 100.0, 80.0))
+        assert attach_target(page, Rect(20.0, 20.0, 30.0, 20.0)) == panel.id
+
+    def test_コマの外なら紐づけない(self):
+        project = new_project()
+        page = project.pages[0]
+        project.add_panel(page, Rect(10.0, 10.0, 40.0, 30.0))
+        assert attach_target(page, Rect(150.0, 200.0, 30.0, 20.0)) is None
+
+
+class TestDefaultRect:
+    def test_クリック位置が中心になる(self):
+        page = new_project().pages[0]
+        rect = default_balloon_rect(page, 105.0, 148.0, SETTINGS)
+        assert rect.center == pytest.approx((105.0, 148.0))
+
+    @pytest.mark.parametrize("x,y", [(0.0, 0.0), (210.0, 297.0), (-40.0, 400.0)])
+    def test_用紙からはみ出さない(self, x, y):
+        page = new_project().pages[0]
+        rect = default_balloon_rect(page, x, y, SETTINGS)
+        assert rect.x >= 0.0 and rect.y >= 0.0
+        assert rect.right <= page.size.w and rect.bottom <= page.size.h

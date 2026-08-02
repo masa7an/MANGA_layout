@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import pathlib
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
@@ -21,7 +22,12 @@ from ..errors import MangaLayoutError
 from ..geometry import Rect
 from ..layout import (
     aspect_of,
+    attach_target,
+    balloon_at,
+    balloon_outline,
+    default_balloon_rect,
     default_panel_rect,
+    default_tail_tip,
     handle_at,
     handle_positions,
     image_at,
@@ -33,9 +39,17 @@ from ..layout import (
     snap_moved_rect,
     snap_point,
     split_panel,
+    tail_triangle,
 )
 from ..model import BalloonObject, ImageObject, Panel, TextObject
-from .state import TOOL_PANEL, TOOL_SELECT, TOOL_SPLIT_H, TOOL_SPLIT_V, EditorState
+from .state import (
+    BALLOON_TOOLS,
+    TOOL_PANEL,
+    TOOL_SELECT,
+    TOOL_SPLIT_H,
+    TOOL_SPLIT_V,
+    EditorState,
+)
 
 CANVAS_BG = QColor("#3C3F41")
 PAGE_BG = QColor("#FFFFFF")
@@ -47,6 +61,8 @@ ACCENT = QColor("#1E88E5")
 # 画像を選んでいるときの色。コマの選択（青）と見分けるために変える。
 # 同じ色だと、いま動かすのがコマなのか中の絵なのか分からない
 IMAGE_ACCENT = QColor("#FB8C00")
+# 吹き出しを選んでいるときの色。コマ（青）・画像（橙）と重ならない色にする
+BALLOON_ACCENT = QColor("#8E24AA")
 PLACEHOLDER = QColor("#9FB2BF")
 MISSING_IMAGE = QColor("#D9534F")
 
@@ -84,6 +100,11 @@ def _qrect(rect: Rect) -> QRectF:
     return QRectF(rect.x, rect.y, rect.w, rect.h)
 
 
+def _polygon(points) -> QPolygonF:
+    """mm の点列を Qt の多角形にする。座標はそのまま（シーン＝mm）。"""
+    return QPolygonF([QPointF(x, y) for x, y in points])
+
+
 def _cosmetic_pen(color: QColor, width: float = 1.0, style=Qt.PenStyle.SolidLine) -> QPen:
     """表示倍率によらず同じ太さで描かれる線。
 
@@ -104,6 +125,8 @@ class PageScene(QGraphicsScene):
         # 操作中の下書き。確定するまでモデルには触らない
         self.preview_rect: Rect | None = None
         self.split_preview: tuple[Rect, bool, float] | None = None
+        # しっぽの先端をドラッグ中の (吹き出しの id, 先端の位置)
+        self.tail_preview: tuple[str, tuple[float, float]] | None = None
         self.update_scene_rect()
 
     def update_scene_rect(self) -> None:
@@ -128,7 +151,7 @@ class PageScene(QGraphicsScene):
         self._draw_margin(painter, page)
         for panel in sorted(page.panels, key=lambda p: p.z):
             self._draw_panel(painter, panel)
-        self._draw_placeholders(painter, page)
+        self._draw_floating(painter, page)
 
     def _draw_margin(self, painter: QPainter, page) -> None:
         """基本枠（内側の目安線）。作品には出ない、置き場所の目印。"""
@@ -193,22 +216,66 @@ class PageScene(QGraphicsScene):
         painter.drawLine(QLineF(rect.topLeft(), rect.bottomRight()))
         painter.drawLine(QLineF(rect.topRight(), rect.bottomLeft()))
 
-    def _draw_placeholders(self, painter: QPainter, page) -> None:
-        """吹き出しとセリフの仮表示。
+    def _draw_floating(self, painter: QPainter, page) -> None:
+        """吹き出しとセリフ。z の小さい順に重ねる。
 
-        本来の描画は Day 18〜24。ここで何も出さないと、読み込んだ作品の
+        セリフはまだ仮表示（Day 22〜24）。何も出さないと、読み込んだ作品の
         セリフが消えたように見えてしまうため、位置だけ示しておく。
         """
-        painter.setPen(_cosmetic_pen(PLACEHOLDER, 1.0, Qt.PenStyle.DotLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        for obj in page.floating:
+        for obj in sorted(page.floating, key=lambda f: f.z):
             if isinstance(obj, BalloonObject):
-                painter.drawEllipse(_qrect(obj.rect))
-                if obj.tail.enabled:
-                    cx, cy = obj.rect.center
-                    painter.drawLine(QLineF(cx, cy, obj.tail.tip[0], obj.tail.tip[1]))
+                self._draw_balloon(painter, obj)
             elif isinstance(obj, TextObject):
+                painter.setPen(_cosmetic_pen(PLACEHOLDER, 1.0, Qt.PenStyle.DotLine))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawRect(_qrect(obj.rect))
+
+    def _with_preview_tail(self, balloon: BalloonObject) -> BalloonObject:
+        """先端をドラッグ中なら、その位置を当てはめた写しを返す。
+
+        モデルは確定するまで触らない。写しを描くことで、Undo の1手が
+        ドラッグの途中経過で埋まるのを避けられる。
+        """
+        if self.tail_preview is None or self.tail_preview[0] != balloon.id:
+            return balloon
+        tail = dataclasses.replace(balloon.tail, tip=self.tail_preview[1], enabled=True)
+        return dataclasses.replace(balloon, tail=tail)
+
+    def _balloon_path(self, balloon: BalloonObject) -> QPainterPath:
+        """本体としっぽを**1つの輪郭**にまとめた形。
+
+        別々に描くと継ぎ目に枠線が残り、しっぽが貼り付けた三角形に見える。
+        塗りを重ねて線を隠す手もあるが、半透明や色付きの塗りで破綻する。
+        図形を合成してから一度だけ縁取るほうが、どの配色でも正しい。
+        """
+        settings = self.state.balloon_settings
+        path = QPainterPath()
+        path.addPolygon(_polygon(balloon_outline(balloon, settings)))
+        path.closeSubpath()
+
+        triangle = tail_triangle(balloon, settings)
+        if triangle is None:
+            return path
+
+        tail = QPainterPath()
+        tail.addPolygon(_polygon(triangle))
+        tail.closeSubpath()
+        return path.united(tail)
+
+    def _draw_balloon(self, painter: QPainter, balloon: BalloonObject) -> None:
+        balloon = self._with_preview_tail(balloon)
+        path = self._balloon_path(balloon)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(balloon.fill)))
+        painter.drawPath(path)
+
+        if balloon.border.visible and balloon.border.width > 0:
+            # コマの枠線と同じく、太さは mm（作品の一部なので倍率で変わる）
+            pen = QPen(QColor(balloon.border.color), balloon.border.width)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(path)
 
     # -- 選択と下書き ------------------------------------------------------
 
@@ -218,9 +285,11 @@ class PageScene(QGraphicsScene):
             return
 
         bounds = self.state.selected_bounds
+        balloon = self.state.selected_balloon
         if bounds is not None and self.preview_rect is None:
-            color = IMAGE_ACCENT if self.state.selected_image is not None else ACCENT
-            self._draw_selection(painter, bounds, scale, color)
+            self._draw_selection(painter, bounds, scale, self._accent())
+        if balloon is not None:
+            self._draw_tail_handle(painter, balloon, scale)
 
         if self.preview_rect is not None:
             painter.setPen(_cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
@@ -236,6 +305,31 @@ class PageScene(QGraphicsScene):
             else:
                 line = QLineF(position, bounds.y, position, bounds.bottom)
             painter.drawLine(line)
+
+    def _accent(self) -> QColor:
+        """選択枠の色。何を選んでいるかで変える。"""
+        if self.state.selected_image is not None:
+            return IMAGE_ACCENT
+        if self.state.selected_balloon is not None:
+            return BALLOON_ACCENT
+        return ACCENT
+
+    def _draw_tail_handle(
+        self, painter: QPainter, balloon: BalloonObject, scale: float
+    ) -> None:
+        """しっぽの先端を掴む丸。
+
+        角を掴むつまみ（四角）と形を変える。同じ形だと、大きさを変える
+        つもりで先端を引っぱってしまう。
+        """
+        balloon = self._with_preview_tail(balloon)
+        if not balloon.tail.enabled:
+            return
+        size = HANDLE_PX / scale
+        tx, ty = balloon.tail.tip
+        painter.setPen(_cosmetic_pen(BALLOON_ACCENT, 1.2))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawEllipse(QPointF(tx, ty), size / 2.0, size / 2.0)
 
     def _draw_selection(
         self, painter: QPainter, bounds: Rect, scale: float, color: QColor = ACCENT
@@ -334,6 +428,7 @@ class PageView(QGraphicsView):
         self._origin_rect = None
         self._hint_shown = None
         self._scene.preview_rect = None
+        self._scene.tail_preview = None
 
     def fit_page(self) -> None:
         page = self.state.page
@@ -404,15 +499,36 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # 吹き出しはコマの上に置くものなので、下に何があっても作れる。
+        # コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で作れない
+        if tool in BALLOON_TOOLS:
+            self._mode = "create_balloon"
+            self._grab = (x, y)
+            self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
+            event.accept()
+            return
+
         handle = self._handle_at_point(x, y)
+        balloon = balloon_at(self.state.page, x, y)
         hit = panel_at(self.state.page, x, y)
 
         # コマ追加の道具でも、既にあるコマやそのつまみの上なら編集を優先する。
         # 何も無いところを押したときだけ新しいコマを作る
-        if tool == TOOL_PANEL and handle is None and hit is None:
+        if tool == TOOL_PANEL and handle is None and hit is None and balloon is None:
             self._mode = "create"
             self._grab = (x, y)
             self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
+            event.accept()
+            return
+
+        # しっぽの先端。つまみより先に見る。小さな吹き出しでは
+        # 先端の丸と角のつまみが近づくため、狙って掴んだほうを優先する
+        if self._tail_tip_at(x, y):
+            self._mode = "tail"
+            self._scene.tail_preview = (
+                self.state.selected_balloon.id,
+                self.state.selected_balloon.tail.tip,
+            )
             event.accept()
             return
 
@@ -424,6 +540,17 @@ class PageView(QGraphicsView):
             self._scene.preview_rect = self._origin_rect
             # 掴んだ時点で出す。動かし始めてからでは遅い
             self._update_aspect_hint(self._shift_held(event))
+            event.accept()
+            return
+
+        # 吹き出しはコマより手前にある。コマより先に拾わないと、
+        # 吹き出しを掴んだつもりで下のコマが動く
+        if balloon is not None:
+            self.state.select(balloon.id)
+            self._mode = "move"
+            self._origin_rect = balloon.rect
+            self._grab = (x, y)
+            self._scene.preview_rect = balloon.rect
             event.accept()
             return
 
@@ -445,6 +572,15 @@ class PageView(QGraphicsView):
             self._grab = (x, y)
             self._scene.preview_rect = self._origin_rect
         event.accept()
+
+    def _tail_tip_at(self, x: float, y: float) -> bool:
+        """選択中の吹き出しの、しっぽの先端を掴んでいるか。"""
+        balloon = self.state.selected_balloon
+        if balloon is None or not balloon.tail.enabled:
+            return False
+        tx, ty = balloon.tail.tip
+        half = HANDLE_PX / self.view_scale / 2.0
+        return abs(x - tx) <= half and abs(y - ty) <= half
 
     def mouseDoubleClickEvent(self, event) -> None:
         """コマの中に入って、画像そのものを選ぶ。
@@ -498,10 +634,20 @@ class PageView(QGraphicsView):
 
         threshold = self._snap_threshold()
 
-        if self._mode == "create":
+        if self._mode == "tail":
+            # 先端は吸着させない。人物の口元を指すもので、
+            # コマの辺に吸い付いても意味がない
+            if self._scene.tail_preview is not None:
+                self._scene.tail_preview = (self._scene.tail_preview[0], (x, y))
+
+        elif self._mode == "create":
             rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
             xs, ys = self._candidates(None)
             self._scene.preview_rect = snap_moved_rect(rect.normalized(), xs, ys, threshold)
+
+        elif self._mode == "create_balloon":
+            rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
+            self._scene.preview_rect = rect.normalized()
 
         elif self._mode == "move" and self._origin_rect is not None:
             moved = self._origin_rect.translated(x - self._grab[0], y - self._grab[1])
@@ -544,12 +690,18 @@ class PageView(QGraphicsView):
             return
 
         preview = self._scene.preview_rect
+        tail = self._scene.tail_preview
         mode, origin, press = self._mode, self._origin_rect, self._grab
         self._reset_drag()
 
-        if preview is not None:
+        if mode == "tail":
+            if tail is not None:
+                self._apply_tail(tail[0], tail[1])
+        elif preview is not None:
             if mode == "create":
                 self._apply_create(preview, press)
+            elif mode == "create_balloon":
+                self._apply_create_balloon(preview, press)
             elif mode == "move" and origin is not None:
                 self._apply_move(origin, preview)
             elif mode == "resize":
@@ -601,9 +753,16 @@ class PageView(QGraphicsView):
     def _update_cursor(self, x: float, y: float) -> None:
         handle = self._handle_at_point(x, y)
         image = self.state.selected_image
-        if handle is not None:
+        if self.state.tool in BALLOON_TOOLS:
+            # どこを押しても作れるので、常に十字
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        elif self._tail_tip_at(x, y):
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+        elif handle is not None:
             self.viewport().setCursor(_HANDLE_CURSORS[handle])
         elif image is not None and image.rect.contains(x, y):
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+        elif balloon_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif panel_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
@@ -636,6 +795,33 @@ class PageView(QGraphicsView):
             "位置と大きさを調整できます"
         )
 
+    def _apply_create_balloon(self, rect: Rect, press: tuple[float, float]) -> None:
+        """吹き出しを1つ作り、選択の道具に戻す。
+
+        コマ追加と同じ「1回きり」の扱い（要件定義 6.9）。置いたあとは
+        位置と大きさ、しっぽの向きを整えるほうが先に来る。
+        """
+        minimum = MIN_CREATE_PX / self.view_scale
+        if rect.w < minimum or rect.h < minimum:
+            rect = default_balloon_rect(
+                self.state.page, press[0], press[1], self.state.balloon_settings
+            )
+
+        style = BALLOON_TOOLS.get(self.state.tool, "ellipse")
+        balloon = self.state.add_balloon(rect, style)
+        self.state.set_tool(TOOL_SELECT)
+
+        where = "コマに紐づけました" if balloon.attached_panel_id else "コマの外です"
+        self.state.message.emit(
+            f"吹き出しを追加しました（{where}）。丸い印を引くとしっぽの向きが変わります"
+        )
+
+    def _apply_tail(self, balloon_id: str, tip: tuple[float, float]) -> None:
+        balloon = self.state.page.find(balloon_id)
+        if not isinstance(balloon, BalloonObject) or balloon.tail.tip == tip:
+            return
+        self.state.set_tail_tip(balloon_id, tip)
+
     def _apply_move(self, origin: Rect, final: Rect) -> None:
         dx, dy = final.x - origin.x, final.y - origin.y
         if dx == 0.0 and dy == 0.0:
@@ -651,6 +837,16 @@ class PageView(QGraphicsView):
                     image.rect = image.rect.translated(dx, dy)
             return
 
+        if self.state.selected_balloon is not None:
+            # **しっぽの先端は動かさない。** 先端はしゃべっている人物を
+            # 指すページ座標なので、吹き出しの置き場所を変えても
+            # 指す相手は変わらない（要件定義 4章）
+            with self.state.edit("吹き出しの移動") as project:
+                balloon = project.pages[self.state.page_index].find(object_id)
+                if isinstance(balloon, BalloonObject):
+                    balloon.rect = balloon.rect.translated(dx, dy)
+            return
+
         with self.state.edit("コマの移動") as project:
             project.pages[self.state.page_index].move_panel(object_id, dx, dy)
 
@@ -663,6 +859,18 @@ class PageView(QGraphicsView):
             with self.state.edit("画像の大きさ変更") as project:
                 target = project.pages[self.state.page_index].find(image_id)
                 if isinstance(target, ImageObject):
+                    target.rect = rect
+            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            return
+
+        balloon = self.state.selected_balloon
+        if balloon is not None:
+            if balloon.rect == rect:
+                return
+            balloon_id = balloon.id
+            with self.state.edit("吹き出しの大きさ変更") as project:
+                target = project.pages[self.state.page_index].find(balloon_id)
+                if isinstance(target, BalloonObject):
                     target.rect = rect
             self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
             return

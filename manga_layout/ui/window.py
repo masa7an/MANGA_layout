@@ -16,11 +16,13 @@ from PySide6.QtWidgets import (
 
 from ..errors import MangaLayoutError
 from ..images import to_png_bytes
-from ..layout import cover_rect_in, full_page_rect
+from ..layout import attach_target, cover_rect_in, full_page_rect
 from ..model import ImageObject, Panel
 from ..storage import is_project_dir, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .state import (
+    TOOL_BALLOON,
+    TOOL_BALLOON_JAGGED,
     TOOL_LABELS,
     TOOL_PANEL,
     TOOL_SELECT,
@@ -141,6 +143,25 @@ class MainWindow(QMainWindow):
         image_menu.addSeparator()
         image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
 
+        balloon_menu = self.menuBar().addMenu("吹き出し(&B)")
+        self.balloon_actions: list[QAction] = []
+        for label, slot in (
+            ("楕円にする", lambda: self.set_balloon_style("ellipse")),
+            ("ギザギザにする", lambda: self.set_balloon_style("jagged")),
+        ):
+            action = self._act(label, slot)
+            balloon_menu.addAction(action)
+            self.balloon_actions.append(action)
+        balloon_menu.addSeparator()
+
+        self.tail_action = self._act("しっぽを消す", self.toggle_tail)
+        balloon_menu.addAction(self.tail_action)
+        self.balloon_actions.append(self.tail_action)
+
+        self.attach_action = self._act("コマへの紐づけを解除", self.toggle_attachment)
+        balloon_menu.addAction(self.attach_action)
+        self.balloon_actions.append(self.attach_action)
+
         tool_menu = self.menuBar().addMenu("道具(&T)")
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -149,6 +170,8 @@ class MainWindow(QMainWindow):
             (TOOL_PANEL, "P"),
             (TOOL_SPLIT_H, "H"),
             (TOOL_SPLIT_V, "J"),
+            (TOOL_BALLOON, "B"),
+            (TOOL_BALLOON_JAGGED, "G"),
         ):
             action = QAction(f"{TOOL_LABELS[tool]} ({shortcut})", self)
             action.setCheckable(True)
@@ -209,6 +232,19 @@ class MainWindow(QMainWindow):
         self.delete_action.setEnabled(self.state.selected_object is not None)
         self.fit_action.setEnabled(self.state.selected_image is not None)
 
+        balloon = self.state.selected_balloon
+        for action in self.balloon_actions:
+            action.setEnabled(balloon is not None)
+        if balloon is not None:
+            self.tail_action.setText(
+                "しっぽを消す" if balloon.tail.enabled else "しっぽを出す"
+            )
+            self.attach_action.setText(
+                "コマへの紐づけを解除"
+                if balloon.attached_panel_id
+                else "重なっているコマに紐づける"
+            )
+
     def _hint(self) -> str:
         """いま何を選んでいるかを状態表示に出す。
 
@@ -220,6 +256,13 @@ class MainWindow(QMainWindow):
             r = image.rect
             w, h = image.src_px
             return f"画像を選択中: {r.w:.1f} × {r.h:.1f} mm（元 {w}×{h} px）"
+
+        balloon = self.state.selected_balloon
+        if balloon is not None:
+            r = balloon.rect
+            kind = "ギザギザ" if balloon.style == "jagged" else "楕円"
+            tied = "コマに紐づけ" if balloon.attached_panel_id else "紐づけなし"
+            return f"吹き出しを選択中: {kind} / {r.w:.1f} × {r.h:.1f} mm / {tied}"
 
         panel = self.state.selected_panel
         if panel is not None:
@@ -241,11 +284,24 @@ class MainWindow(QMainWindow):
     # -- 編集 --------------------------------------------------------------
 
     def delete_selected(self) -> None:
-        """Delete キー。選んでいるものに応じて、コマか画像を消す。"""
+        """Delete キー。選んでいるものに応じて消し分ける。"""
         if self.state.selected_image is not None:
             self.delete_image()
+        elif self.state.selected_balloon is not None:
+            self.delete_balloon()
         else:
             self.delete_panel()
+
+    def delete_balloon(self) -> None:
+        balloon = self.state.selected_balloon
+        if balloon is None:
+            return
+        balloon_id = balloon.id
+        with self.state.edit("吹き出しの削除") as project:
+            page = project.pages[self.state.page_index]
+            page.floating = [f for f in page.floating if f.id != balloon_id]
+        self.state.select(None)
+        self.state.message.emit("吹き出しを削除しました")
 
     def delete_panel(self) -> None:
         panel = self.state.selected_panel
@@ -353,6 +409,46 @@ class MainWindow(QMainWindow):
             if isinstance(target, ImageObject):
                 target.rect = rect
         self.state.message.emit(f"コマを埋めました（{rect.w:.1f} × {rect.h:.1f} mm）")
+
+    # -- 吹き出し ----------------------------------------------------------
+
+    def set_balloon_style(self, style: str) -> None:
+        balloon = self.state.selected_balloon
+        if balloon is None or balloon.style == style:
+            return
+        self.state.set_balloon_style(balloon.id, style)
+        self.state.message.emit(
+            "ギザギザにしました" if style == "jagged" else "楕円にしました"
+        )
+
+    def toggle_tail(self) -> None:
+        balloon = self.state.selected_balloon
+        if balloon is None:
+            return
+        enabled = not balloon.tail.enabled
+        self.state.set_tail_enabled(balloon.id, enabled)
+        self.state.message.emit("しっぽを出しました" if enabled else "しっぽを消しました")
+
+    def toggle_attachment(self) -> None:
+        """コマへの紐づけを付けたり外したり（要件定義 6.4「手動で解除可」）。
+
+        紐づいていれば外す。外れていれば、いま重なっているコマに付け直す。
+        """
+        balloon = self.state.selected_balloon
+        if balloon is None:
+            return
+
+        if balloon.attached_panel_id is not None:
+            self.state.set_attachment(balloon.id, None)
+            self.state.message.emit("紐づけを解除しました。コマを動かしても付いてきません")
+            return
+
+        panel_id = attach_target(self.state.page, balloon.rect)
+        if panel_id is None:
+            self.state.message.emit("重なっているコマがありません")
+            return
+        self.state.set_attachment(balloon.id, panel_id)
+        self.state.message.emit("コマに紐づけました。コマを動かすと付いてきます")
 
     def prune_assets(self) -> None:
         """どこからも使われていない画像を assets/_unused/ へ移す。

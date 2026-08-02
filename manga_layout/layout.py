@@ -11,10 +11,11 @@ Qt を使わないので画面なしでテストでき、操作の細かい挙�
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass
 
 from .geometry import Polygon, Rect
-from .model import ImageObject, Page, Panel, Project
+from .model import BalloonObject, ImageObject, Page, Panel, Project
 
 # 8方向のつまみ。n=上 s=下 w=左 e=右
 HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
@@ -36,6 +37,30 @@ class LayoutSettings:
 
 
 DEFAULT_SETTINGS = LayoutSettings()
+
+
+@dataclass(frozen=True)
+class BalloonSettings:
+    """吹き出しの形にかかわる設定。長さは mm。
+
+    コマ割りの設定（`LayoutSettings`）とは別にしてある。吹き出しの見た目は
+    作風で変えたくなる一方、コマの隙間や余白は紙面の決まりごとで、
+    調整したい場面がまったく違うため。
+    """
+
+    # クリックだけで置いたときの大きさ
+    default_size: tuple[float, float] = (40.0, 26.0)
+    # しっぽの付け根の幅
+    tail_width: float = 6.0
+    # ギザギザの山の数。増やすと細かく、減らすと荒くなる
+    jagged_spikes: int = 14
+    # ギザギザの谷の深さ。半径に対する割合（0.25 なら谷が 75% の位置）
+    jagged_depth: float = 0.22
+    # 楕円を何本の線分で近似するか。書き出しでも同じ値を使う
+    ellipse_segments: int = 72
+
+
+DEFAULT_BALLOON_SETTINGS = BalloonSettings()
 
 
 # --------------------------------------------------------------------------
@@ -356,6 +381,170 @@ def _distance_to(rect: Rect, x: float, y: float) -> float:
     dx = max(rect.x - x, 0.0, x - rect.right)
     dy = max(rect.y - y, 0.0, y - rect.bottom)
     return (dx * dx + dy * dy) ** 0.5
+
+
+# --------------------------------------------------------------------------
+# 吹き出しの形
+# --------------------------------------------------------------------------
+
+
+def _on_ellipse(rect: Rect, angle: float, radius_ratio: float = 1.0) -> tuple[float, float]:
+    """`rect` に内接する楕円の上の点。`angle` は媒介変数（ラジアン）。
+
+    真円でない限り媒介変数は見た目の角度と一致しないが、輪郭を等間隔に
+    刻む用途ではそれで足りる。
+    """
+    cx, cy = rect.center
+    return (
+        cx + rect.w / 2.0 * radius_ratio * math.cos(angle),
+        cy + rect.h / 2.0 * radius_ratio * math.sin(angle),
+    )
+
+
+def ellipse_points(
+    rect: Rect, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], ...]:
+    """楕円の輪郭。線分の集まりとして返す。
+
+    Qt の `drawEllipse` を使わないのは、ギザギザと同じ経路で塗り・枠線・
+    しっぽの合成ができるようにするため。形の生成をここに集めておくと、
+    PNG 書き出し（Day 27）でも同じ輪郭が使える。
+    """
+    n = max(8, settings.ellipse_segments)
+    step = 2.0 * math.pi / n
+    return tuple(_on_ellipse(rect, i * step) for i in range(n))
+
+
+def jagged_points(
+    rect: Rect, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], ...]:
+    """ギザギザ（叫び）の輪郭。
+
+    要件定義 9章のとおり、楕円の輪郭を角度で等分し、半径を交互に増減させて作る。
+    山と谷を対にするため頂点数は必ず偶数にする。奇数だと一周したときに
+    山が2つ隣り合い、そこだけ形が崩れる。
+    """
+    spikes = max(3, settings.jagged_spikes)
+    depth = min(max(settings.jagged_depth, 0.0), 0.9)
+    n = spikes * 2
+    step = 2.0 * math.pi / n
+    return tuple(
+        _on_ellipse(rect, i * step, 1.0 if i % 2 == 0 else 1.0 - depth) for i in range(n)
+    )
+
+
+def balloon_outline(
+    balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], ...]:
+    """吹き出し本体の輪郭。種類で切り替える。"""
+    if balloon.style == "jagged":
+        return jagged_points(balloon.rect, settings)
+    return ellipse_points(balloon.rect, settings)
+
+
+def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float:
+    """しっぽの付け根を、楕円の何割の位置に置くか。
+
+    輪郭より必ず内側に置く。外側だと、輪郭が凹んでいる箇所（ギザギザの谷）で
+    本体と三角形が離れ、継ぎ目に隙間が空く。
+    """
+    if balloon.style == "jagged":
+        return 1.0 - min(max(settings.jagged_depth, 0.0), 0.9)
+    return 0.95
+
+
+def tail_triangle(
+    balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None:
+    """しっぽの三角形（付け根の2点と先端）。しっぽ無しなら None。
+
+    先端の向きに合わせて付け根を回す。付け根の幅は `Tail.width`。
+    """
+    if not balloon.tail.enabled:
+        return None
+
+    rect = balloon.rect
+    if rect.w <= 0.0 or rect.h <= 0.0:
+        return None
+
+    cx, cy = rect.center
+    tip = balloon.tail.tip
+    dx, dy = tip[0] - cx, tip[1] - cy
+    if abs(dx) < 1e-9 and abs(dy) < 1e-9:
+        return None  # 先端が中心に重なっている。三角形にならない
+
+    # 先端を向く媒介変数。楕円の潰れ具合を打ち消してから角度を取る
+    angle = math.atan2(dy / (rect.h / 2.0), dx / (rect.w / 2.0))
+
+    ratio = _tail_base_ratio(balloon, settings)
+    base_center = _on_ellipse(rect, angle, ratio)
+    radius = math.hypot(base_center[0] - cx, base_center[1] - cy)
+    if radius < 1e-9:
+        return None
+
+    # 付け根の幅を角度に直す。小さい吹き出しで付け根が一周しないよう頭を押さえる
+    half = min(math.atan2(balloon.tail.width / 2.0, radius), math.pi / 3.0)
+    return (
+        _on_ellipse(rect, angle - half, ratio),
+        tip,
+        _on_ellipse(rect, angle + half, ratio),
+    )
+
+
+def default_tail_tip(rect: Rect) -> tuple[float, float]:
+    """作ったばかりの吹き出しのしっぽの先端。
+
+    真下に少し伸ばす。人物はコマの中央寄りに描かれることが多く、
+    吹き出しは上に置かれるため、下向きが当たりやすい。
+    """
+    cx, _ = rect.center
+    return (cx, rect.bottom + max(rect.h * 0.5, 4.0))
+
+
+def default_balloon_rect(
+    page: Page, x: float, y: float, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> Rect:
+    """クリックした位置に置く、既定の大きさの吹き出し。用紙の中へ収める。"""
+    w = min(settings.default_size[0], page.size.w)
+    h = min(settings.default_size[1], page.size.h)
+    left = min(max(x - w / 2.0, 0.0), page.size.w - w)
+    top = min(max(y - h / 2.0, 0.0), page.size.h - h)
+    return Rect(left, top, w, h)
+
+
+def balloon_contains(balloon: BalloonObject, x: float, y: float) -> bool:
+    """吹き出しの本体（楕円）の内側か。
+
+    外接矩形ではなく楕円で判定する。矩形だと四隅の何もない場所で
+    掴めてしまい、下のコマが選べなくなる。
+    """
+    rect = balloon.rect
+    if rect.w <= 0.0 or rect.h <= 0.0:
+        return False
+    cx, cy = rect.center
+    nx = (x - cx) / (rect.w / 2.0)
+    ny = (y - cy) / (rect.h / 2.0)
+    return nx * nx + ny * ny <= 1.0
+
+
+def balloon_at(page: Page, x: float, y: float) -> BalloonObject | None:
+    """その位置にある吹き出し。重なっていれば手前のものを返す。"""
+    balloons = [f for f in page.floating if isinstance(f, BalloonObject)]
+    for balloon in sorted(balloons, key=lambda b: b.z, reverse=True):
+        if balloon_contains(balloon, x, y):
+            return balloon
+    return None
+
+
+def attach_target(page: Page, rect: Rect) -> str | None:
+    """その吹き出しを紐づけるコマの id。重なっていなければ None。
+
+    中心が乗っているコマを選ぶ。作成時に自動で紐づけるのに使う
+    （要件定義 6.4）。
+    """
+    cx, cy = rect.center
+    panel = panel_at(page, cx, cy)
+    return panel.id if panel is not None else None
 
 
 def full_page_rect(page: Page, settings: LayoutSettings = DEFAULT_SETTINGS) -> Rect:
