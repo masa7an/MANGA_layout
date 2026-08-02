@@ -64,7 +64,7 @@ class TestRoundTrip:
         clone = sample_project.copy()
         clone.pages[0].panels[0].border.width = 99.0
         clone.pages[0].floating[0].rect = Rect(0.0, 0.0, 1.0, 1.0)
-        assert sample_project.pages[0].panels[0].border.width == 0.6
+        assert sample_project.pages[0].panels[0].border.width == 3.5
         assert sample_project.pages[0].floating[0].rect.w == 40.0
 
     def test_複製で採番の続きが保たれる(self, sample_project):
@@ -95,7 +95,7 @@ class TestRoundTrip:
                 "type": "text",
                 "content": "縦書き",
                 "rect": {"x": 0, "y": 0, "w": 10, "h": 10},
-                "font": {"family": "Yu Gothic UI", "size_mm": 3.5, "bold": False},
+                "font": {"family": "Yu Gothic UI", "size_px": 21.0, "bold": False},
                 "align": "center",
                 "direction": "vertical",
                 "attached_panel_id": None,
@@ -176,9 +176,9 @@ class TestPages:
 
     def test_ページごとに寸法を変えられる(self):
         project = new_project()
-        b5 = project.add_page(size=Size(182.0, 257.0))
-        assert project.pages[0].size == Size(210.0, 297.0)
-        assert b5.size == Size(182.0, 257.0)
+        b5 = project.add_page(size=Size(1075.0, 1518.0))
+        assert project.pages[0].size == Size(1240.0, 1754.0)
+        assert b5.size == Size(1075.0, 1518.0)
 
 
 class TestValidation:

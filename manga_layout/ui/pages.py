@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDoubleSpinBox,
+    QSpinBox,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -63,6 +63,11 @@ NUMBER_FIELD_WIDTH = 40
 ITEM_WIDTH = ITEM_PADDING * 2 + NUMBER_WIDTH + ITEM_GAP + THUMB_WIDTH
 
 CUSTOM_LABEL = "カスタム"
+
+# ページの大きさに許す範囲（px）。上限はメモリの都合。A4 相当を 600dpi で
+# 描いた 4961×7016 が収まる程度に取ってある
+PAGE_SIZE_MIN_PX = 50
+PAGE_SIZE_MAX_PX = 10000
 
 
 def thumbnail_box(pages: list[Page], width: int = THUMB_WIDTH) -> QSize:
@@ -431,7 +436,7 @@ class PageListPanel(QListWidget):
                 # 番号は並べ替えで変わる。中身が同じでも付け直す
                 item.setText(f"{row + 1}")
                 item.setToolTip(
-                    f"{row + 1} ページ / {page.size.w:.0f} × {page.size.h:.0f} mm"
+                    f"{row + 1} ページ / {page.size.w:.0f} × {page.size.h:.0f} px"
                     f" / コマ {len(page.panels)}"
                 )
             self.setCurrentRow(self.state.page_index)
@@ -494,19 +499,19 @@ class PageSizeDialog(QDialog):
 
         self.preset = QComboBox(self)
         for name, size in PAGE_SIZES.items():
-            self.preset.addItem(f"{name}（{size.w:.0f} × {size.h:.0f} mm）", name)
+            self.preset.addItem(f"{name} 相当（{size.w:.0f} × {size.h:.0f} px）", name)
         self.preset.addItem(CUSTOM_LABEL, None)
 
-        self.width_mm = self._spin(current.w)
-        self.height_mm = self._spin(current.h)
+        self.width_px = self._spin(current.w)
+        self.height_px = self._spin(current.h)
 
         self.all_pages = QCheckBox("すべてのページに適用", self)
         self.all_pages.setEnabled(page_count > 1)
 
         form = QFormLayout()
         form.addRow("用紙", self.preset)
-        form.addRow("幅", self.width_mm)
-        form.addRow("高さ", self.height_mm)
+        form.addRow("幅", self.width_px)
+        form.addRow("高さ", self.height_px)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -532,13 +537,17 @@ class PageSizeDialog(QDialog):
         self.preset.setCurrentIndex(self._index_of(current))
         self._on_preset_changed()
 
-    def _spin(self, value: float) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox(self)
-        spin.setRange(10.0, 2000.0)
-        spin.setDecimals(1)
-        spin.setSingleStep(1.0)
-        spin.setSuffix(" mm")
-        spin.setValue(value)
+    def _spin(self, value: float) -> QSpinBox:
+        """px は数えられる単位なので、小数は出さない。
+
+        1px 未満を指定できても書き出しで丸められるだけで、
+        「打った値と違う大きさになった」に見える。
+        """
+        spin = QSpinBox(self)
+        spin.setRange(PAGE_SIZE_MIN_PX, PAGE_SIZE_MAX_PX)
+        spin.setSingleStep(10)
+        spin.setSuffix(" px")
+        spin.setValue(round(value))
         return spin
 
     def _index_of(self, size: Size) -> int:
@@ -558,14 +567,14 @@ class PageSizeDialog(QDialog):
         """
         name = self.preset.currentData()
         size = PAGE_SIZES.get(name) if name else None
-        for spin in (self.width_mm, self.height_mm):
+        for spin in (self.width_px, self.height_px):
             spin.setEnabled(size is None)
         if size is not None:
-            self.width_mm.setValue(size.w)
-            self.height_mm.setValue(size.h)
+            self.width_px.setValue(size.w)
+            self.height_px.setValue(size.h)
 
     def chosen_size(self) -> Size:
-        return Size(round(self.width_mm.value(), 1), round(self.height_mm.value(), 1))
+        return Size(float(self.width_px.value()), float(self.height_px.value()))
 
     def apply_to_all(self) -> bool:
         return self.all_pages.isChecked()

@@ -6,8 +6,8 @@
    気づけず、クリスタで開いて初めてぼやけに気づく
 2. **画面の道具が出ないこと。** 用紙の縁・目安線・空のセリフの点線枠は
    作品ではない。書き出しに混ざると絵の一部として印刷される
-3. **dpi が画像に書き込まれること。** 抜けているとクリスタが 72dpi として
-   開き、原稿用紙に対して極端な大きさで貼られる
+3. **画像サイズが指定どおりになること。** 座標系が px なので、100% は
+   ページの寸法そのもの
 4. **上書きの前に必ず止まること。** 書き出しは既存ファイルを潰す操作
 """
 
@@ -21,33 +21,32 @@ from manga_layout import ExportError, Rect, Size
 from manga_layout.images import PREVIEW_MAX_PX
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.export import (
-    DEFAULT_DPI,
     DEFAULT_SCALE,
-    DPI_MAX,
     EXPORT_DIRNAME,
+    MAX_SIDE_PX,
+    REFERENCE_DPI,
     SCALE_CHOICES,
-    ExportDialog,
     FullImages,
     dots_per_meter,
-    page_px,
-    scale_label,
     existing_paths,
     export_dir_of,
     export_pages,
     missing_assets_in,
-    mm_to_px,
     page_filename,
+    page_px,
+    paper_hint,
     planned_paths,
     render_page,
+    scale_label,
     write_png,
 )
 from manga_layout.ui.render import PAGE_BG, PANEL_FILL, PageRenderer
 
-A4_AT_150 = (1240, 1754)
-A4_AT_72 = (595, 842)
+# 既定のページ（A4 相当）の画素数。座標系が px なので、これがそのまま原寸
+A4_PX = (1240, 1754)
 
-# 下のコマ（10,10〜100,70 mm）の内側、枠線から十分離れた点を 72dpi の画素で
-PANEL_INSIDE_AT_72 = (156, 113)
+# 下のコマ（60,60〜600,420 px）の内側で、枠線から十分に離れた点
+PANEL_INSIDE = (330, 240)
 
 
 @pytest.fixture
@@ -60,9 +59,9 @@ def saved_state(qapp, tmp_path):
 
 @pytest.fixture
 def with_panel(saved_state):
-    """コマを1つ置いた作品。`PANEL_INSIDE_AT_72` がその内側を指す。"""
+    """コマを1つ置いた作品。`PANEL_INSIDE` がその内側を指す。"""
     with saved_state.edit("コマ") as project:
-        project.add_panel(project.pages[0], Rect(10.0, 10.0, 90.0, 60.0))
+        project.add_panel(project.pages[0], Rect(60.0, 60.0, 540.0, 360.0))
     return saved_state
 
 
@@ -79,22 +78,17 @@ def blank_like(image: QImage) -> QImage:
     return empty
 
 
-class Test換算:
-    """mm と画素の行き来。ここがずれると出力の寸法が全部ずれる。"""
+class Test参考表示:
+    """紙の大きさは**出力に関わらない参考値**（要件定義 6.7）。"""
 
-    def test_A4を150dpiにすると(self):
-        assert (mm_to_px(210.0, 150), mm_to_px(297.0, 150)) == A4_AT_150
-
-    def test_dpiに比例する(self):
-        assert mm_to_px(210.0, 300) == pytest.approx(mm_to_px(210.0, 150) * 2, abs=1)
-
-    def test_極端に小さくても0にはならない(self):
-        # 0 幅の QImage は作れない。丸めて 0 になる経路を塞いでおく
-        assert mm_to_px(0.01, 36) == 1
+    def test_150dpi換算で紙の大きさを出す(self):
+        hint = paper_hint(Size(*A4_PX))
+        assert "210" in hint and "297" in hint
+        assert "150dpi" in hint
 
     def test_1メートルあたりの画素数に直す(self):
         # 150dpi ＝ 1インチ 150 画素 ＝ 1メートル 5905.5 画素
-        assert dots_per_meter(150) == 5906
+        assert dots_per_meter(REFERENCE_DPI) == 5906
 
 
 class Test画像サイズ:
@@ -111,52 +105,41 @@ class Test画像サイズ:
     def test_表示は百分率(self):
         assert [scale_label(s) for s in SCALE_CHOICES] == ["100%", "75%", "50%"]
 
+    def test_100パーセントはページの寸法そのもの(self, saved_state):
+        """座標系が px なので、換算を挟まない。"""
+        page = saved_state.page
+        image = render_page(saved_state, page, 1.0)
+        assert (image.width(), image.height()) == (round(page.size.w), round(page.size.h))
+        assert (image.width(), image.height()) == A4_PX
+
     def test_画素数が倍率どおりに減る(self, saved_state):
         page = saved_state.page
-        full = render_page(saved_state, page, 150, 1.0)
-        three_quarters = render_page(saved_state, page, 150, 0.75)
-        half = render_page(saved_state, page, 150, 0.5)
+        three_quarters = render_page(saved_state, page, 0.75)
+        half = render_page(saved_state, page, 0.5)
 
-        assert (full.width(), full.height()) == A4_AT_150
-        assert (three_quarters.width(), three_quarters.height()) == (930, 1315)
+        assert (three_quarters.width(), three_quarters.height()) == (930, 1316)
         assert (half.width(), half.height()) == (620, 877)
 
     def test_縦横比は保つ(self, saved_state):
         page = saved_state.page
-        full = render_page(saved_state, page, 150, 1.0)
-        half = render_page(saved_state, page, 150, 0.5)
+        full = render_page(saved_state, page, 1.0)
+        half = render_page(saved_state, page, 0.5)
 
         assert half.width() / half.height() == pytest.approx(
             full.width() / full.height(), abs=0.002
         )
 
-    def test_dpiは選んだ値のまま書き込む(self, saved_state):
-        """倍率のぶんを差し引かない。
-
-        印刷しないので、この値は覚え書きでしかない。「紙の大きさが同じに
-        見える」ように細工すると、選んだ dpi と書き込まれた値が食い違う。
-        """
-        half = render_page(saved_state, saved_state.page, 150, 0.5)
-        assert half.dotsPerMeterX() == dots_per_meter(150)
-
-    def test_倍率だけの違いは画素数に出る(self, saved_state):
-        """dpi を半分にするのと 50% にするのは、画素数としては同じ。"""
-        by_scale = render_page(saved_state, saved_state.page, 150, 0.5)
-        by_dpi = render_page(saved_state, saved_state.page, 75, 1.0)
-        assert (by_scale.width(), by_scale.height()) == (by_dpi.width(), by_dpi.height())
-
     def test_画素数を直に引ける(self):
-        assert page_px(Size(210.0, 297.0), 150) == A4_AT_150
-        assert page_px(Size(210.0, 297.0), 150, 0.5) == (620, 877)
+        assert page_px(Size(1240.0, 1754.0)) == A4_PX
+        assert page_px(Size(1240.0, 1754.0), 0.5) == (620, 877)
 
-    def test_小さいdpiとの組み合わせでも作れる(self, saved_state):
-        """36dpi の 50% は 149×210 画素。小さいが、作れないわけではない。"""
-        image = render_page(saved_state, saved_state.page, 36, 0.5)
-        assert (image.width(), image.height()) == (149, 210)
+    def test_0画素にはしない(self):
+        # 0 幅の QImage は作れない。丸めて 0 になる経路を塞いでおく
+        assert page_px(Size(1.0, 1.0), 0.5) == (1, 1)
 
     def test_倍率を省くと原寸(self, saved_state):
-        image = render_page(saved_state, saved_state.page, 150)
-        assert (image.width(), image.height()) == A4_AT_150
+        image = render_page(saved_state, saved_state.page)
+        assert (image.width(), image.height()) == A4_PX
 
 
 class Testファイル名:
@@ -192,44 +175,43 @@ class Test書き出し先:
 class Test描画:
     """画面と同じ経路を通しつつ、書き出しに要らないものを外す。"""
 
-    def test_指定dpiの大きさになる(self, saved_state):
-        image = render_page(saved_state, saved_state.page, 150)
-        assert (image.width(), image.height()) == A4_AT_150
+    def test_参考用のdpiを書き込む(self, saved_state):
+        """入れないとクリスタが 72dpi の画像として開く。
 
-    def test_dpiが画像に書き込まれる(self, saved_state):
-        image = render_page(saved_state, saved_state.page, 300)
-        assert image.dotsPerMeterX() == dots_per_meter(300)
-        assert image.dotsPerMeterY() == dots_per_meter(300)
+        印刷しないので覚え書きでしかないが、抜けると原稿用紙に対して
+        極端な大きさで貼られる。
+        """
+        image = render_page(saved_state, saved_state.page)
+        assert image.dotsPerMeterX() == dots_per_meter(REFERENCE_DPI)
+        assert image.dotsPerMeterY() == dots_per_meter(REFERENCE_DPI)
 
-    def test_範囲外のdpiは断る(self, saved_state):
-        with pytest.raises(ExportError, match="dpi は"):
-            render_page(saved_state, saved_state.page, DPI_MAX + 1)
+    def test_大きすぎるページは断る(self, saved_state):
+        with saved_state.edit("巨大なページ") as project:
+            project.pages[0].size = Size(MAX_SIDE_PX + 1.0, 100.0)
+        with pytest.raises(ExportError, match="大きすぎます"):
+            render_page(saved_state, saved_state.page)
 
     def test_用紙の縁も目安線も描かない(self, saved_state):
         """何も置いていないページは、真っ白な1枚になる。
 
         用紙の縁（灰色の輪郭）が残ると、四辺に線の入った下敷きができる。
         """
-        image = render_page(saved_state, saved_state.page, 72)
+        image = render_page(saved_state, saved_state.page, 0.5)
         assert image == blank_like(image)
 
     def test_空のセリフの点線枠を描かない(self, saved_state):
-        saved_state.add_text(Rect(20.0, 20.0, 40.0, 20.0), "")
-        image = render_page(saved_state, saved_state.page, 72)
+        saved_state.add_text(Rect(120.0, 120.0, 240.0, 120.0), "")
+        image = render_page(saved_state, saved_state.page, 0.5)
         assert image == blank_like(image)
 
     def test_画面には点線枠が出る(self, saved_state):
         """上の2つが「そもそも何も描いていない」で通っていないことの裏取り。"""
-        saved_state.add_text(Rect(20.0, 20.0, 40.0, 20.0), "")
-        image = QImage(*A4_AT_150, QImage.Format.Format_ARGB32)
-        image.fill(PAGE_BG)
-        painter = _painter(image, saved_state)
-        PageRenderer(saved_state).draw(painter, saved_state.page)
-        painter.end()
+        saved_state.add_text(Rect(120.0, 120.0, 240.0, 120.0), "")
+        image = _screen_render(saved_state)
         assert image != blank_like(image)
 
     def test_コマの枠線は描かれる(self, with_panel):
-        image = render_page(with_panel, with_panel.page, 72)
+        image = render_page(with_panel, with_panel.page)
         assert image != blank_like(image)
 
     def test_コマの下地を塗らない(self, with_panel):
@@ -239,24 +221,25 @@ class Test描画:
         コマの中は白。下敷きに敷いたときに灰色が乗ると、絵と紙の白の
         境目が分からなくなる。
         """
-        image = render_page(with_panel, with_panel.page, 72)
-        assert image.pixelColor(*PANEL_INSIDE_AT_72) == PAGE_BG
+        image = render_page(with_panel, with_panel.page)
+        assert image.pixelColor(*PANEL_INSIDE) == PAGE_BG
 
     def test_画面では下地を塗る(self, with_panel):
-        image = QImage(*A4_AT_72, QImage.Format.Format_ARGB32)
-        image.fill(PAGE_BG)
-        painter = _painter(image, with_panel)
-        PageRenderer(with_panel).draw(painter, with_panel.page)
-        painter.end()
-        assert image.pixelColor(*PANEL_INSIDE_AT_72) == PANEL_FILL
+        image = _screen_render(with_panel)
+        assert image.pixelColor(*PANEL_INSIDE) == PANEL_FILL
 
 
-def _painter(image: QImage, state):
+def _screen_render(state) -> QImage:
+    """画面と同じ設定（補助表示あり）で、原寸に描いた1枚。"""
     from PySide6.QtGui import QPainter
 
+    page = state.page
+    image = QImage(round(page.size.w), round(page.size.h), QImage.Format.Format_ARGB32)
+    image.fill(PAGE_BG)
     painter = QPainter(image)
-    painter.scale(image.width() / state.page.size.w, image.height() / state.page.size.h)
-    return painter
+    PageRenderer(state).draw(painter, page)
+    painter.end()
+    return image
 
 
 class Test原寸:
@@ -301,7 +284,7 @@ class Test書き出しの実行:
         saved_state.add_page()
         dest = export_dir_of(saved_state)
 
-        written = export_pages(saved_state, [0, 1], dest, 72)
+        written = export_pages(saved_state, [0, 1], dest, 0.5)
 
         assert [p.name for p in written] == ["p01.png", "p02.png"]
         assert all(p.is_file() for p in written)
@@ -309,28 +292,28 @@ class Test書き出しの実行:
     def test_フォルダが無ければ作る(self, saved_state):
         dest = export_dir_of(saved_state)
         assert not dest.exists()
-        export_pages(saved_state, [0], dest, 72)
+        export_pages(saved_state, [0], dest, 0.5)
         assert dest.is_dir()
 
     def test_一時ファイルを残さない(self, saved_state):
         dest = export_dir_of(saved_state)
-        export_pages(saved_state, [0], dest, 72)
+        export_pages(saved_state, [0], dest, 0.5)
         assert [p.name for p in dest.iterdir()] == ["p01.png"]
 
     def test_書き出したPNGを読み直せる(self, saved_state):
         dest = export_dir_of(saved_state)
-        path = export_pages(saved_state, [0], dest, 150)[0]
+        path = export_pages(saved_state, [0], dest)[0]
 
         loaded = QImage(str(path))
-        assert (loaded.width(), loaded.height()) == A4_AT_150
-        assert loaded.dotsPerMeterX() == dots_per_meter(150)
+        assert (loaded.width(), loaded.height()) == A4_PX
+        assert loaded.dotsPerMeterX() == dots_per_meter(REFERENCE_DPI)
 
     def test_上書きしても壊れない(self, saved_state):
         dest = export_dir_of(saved_state)
-        path = export_pages(saved_state, [0], dest, 72)[0]
+        path = export_pages(saved_state, [0], dest, 0.5)[0]
         before = path.stat().st_size
 
-        export_pages(saved_state, [0], dest, 150)
+        export_pages(saved_state, [0], dest, 1.0)
 
         assert path.stat().st_size != before
         assert not QImage(str(path)).isNull()
@@ -340,7 +323,7 @@ class Test書き出しの実行:
         blocked = tmp_path / "ふさがっている"
         (blocked / "p01.png").mkdir(parents=True)
         with pytest.raises(ExportError):
-            write_png(render_page(saved_state, saved_state.page, 72), blocked / "p01.png")
+            write_png(render_page(saved_state, saved_state.page, 0.5), blocked / "p01.png")
 
 
 class Test上書きの検出:
@@ -353,7 +336,7 @@ class Test上書きの検出:
     def test_あれば挙げる(self, saved_state):
         saved_state.add_page()
         dest = export_dir_of(saved_state)
-        export_pages(saved_state, [0], dest, 72)
+        export_pages(saved_state, [0], dest, 0.5)
 
         found = existing_paths(planned_paths(dest, [0, 1], 2))
 
@@ -371,8 +354,8 @@ class Test画面からの書き出し:
         win.state.history.mark_saved()
         win.close()
 
-    def test_既定のdpiで始まる(self, window):
-        assert window._export_dpi == DEFAULT_DPI
+    def test_既定は原寸(self, window):
+        assert window._export_scale == DEFAULT_SCALE
 
     def test_このページだけ書き出す(self, window, monkeypatch):
         window.add_page()
@@ -421,8 +404,8 @@ class Test画面からの書き出し:
         path = export_dir_of(window.state) / "p01.png"
         before = path.read_bytes()
 
-        # 2回目は dpi を上げるが、上書きの確認で断る
-        window._export_dpi = 300
+        # 2回目は原寸に上げるが、上書きの確認で断る
+        window._export_scale = 1.0
         monkeypatch.setattr(
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel
         )
@@ -431,12 +414,12 @@ class Test画面からの書き出し:
         assert path.read_bytes() == before
 
     def test_上書きを承知すれば書き換える(self, window, monkeypatch):
-        _accept_dialog(monkeypatch, all_pages=False, dpi=72)
+        _accept_dialog(monkeypatch, all_pages=False, scale=0.5)
         window.export_png()
         path = export_dir_of(window.state) / "p01.png"
         before = path.read_bytes()
 
-        _accept_dialog(monkeypatch, all_pages=False, dpi=150)
+        _accept_dialog(monkeypatch, all_pages=False, scale=1.0)
         monkeypatch.setattr(
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
         )
@@ -458,7 +441,7 @@ class Test画面からの書き出し:
         assert not export_dir_of(window.state).exists()
 
 
-def _accept_dialog(monkeypatch, *, all_pages: bool, dpi: int = 72) -> None:
+def _accept_dialog(monkeypatch, *, all_pages: bool, scale: float = 0.5) -> None:
     """設定の窓を出さずに、選んだことにして進める。"""
     monkeypatch.setattr(
         "manga_layout.ui.window.ExportDialog.exec",
@@ -468,5 +451,5 @@ def _accept_dialog(monkeypatch, *, all_pages: bool, dpi: int = 72) -> None:
         "manga_layout.ui.window.ExportDialog.wants_all_pages", lambda self: all_pages
     )
     monkeypatch.setattr(
-        "manga_layout.ui.window.ExportDialog.chosen_dpi", lambda self: dpi
+        "manga_layout.ui.window.ExportDialog.chosen_scale", lambda self: scale
     )

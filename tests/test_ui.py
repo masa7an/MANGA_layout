@@ -103,7 +103,7 @@ class TestPanelEditing:
         window.add_full_page_panel()
         window.state.set_tool(TOOL_SPLIT_H)
 
-        window.view._apply_split(100.0, 150.0)
+        window.view._apply_split(620.0, 877.0)
 
         assert len(window.state.page.panels) == 2
         upper, lower = window.state.page.panels
@@ -113,7 +113,7 @@ class TestPanelEditing:
         window.add_full_page_panel()
         window.state.set_tool(TOOL_SPLIT_V)
 
-        window.view._apply_split(105.0, 150.0)
+        window.view._apply_split(620.0, 877.0)
 
         left, right = window.state.page.panels
         assert left.shape.bounds().right < right.shape.bounds().x
@@ -129,7 +129,7 @@ class TestPanelEditing:
 
     def test_コマの外での分割は何も起きない(self, window):
         window.state.set_tool(TOOL_SPLIT_H)
-        window.view._apply_split(100.0, 150.0)
+        window.view._apply_split(620.0, 877.0)
         assert window.state.page.panels == []
 
 
@@ -753,7 +753,7 @@ class TestFile:
     def test_保存して開き直せる(self, window, tmp_path):
         window.add_full_page_panel()
         window.state.set_tool(TOOL_SPLIT_H)
-        window.view._apply_split(100.0, 150.0)
+        window.view._apply_split(620.0, 877.0)
 
         window.state.save(tmp_path)
         assert not window.state.is_dirty
@@ -797,12 +797,18 @@ class TestFile:
         assert window._confirm_discard() is True
 
     def test_サンプル作品を開ける(self, window):
+        """`samples/basic` は version 1（mm）のまま置いてある。
+
+        **移行が効いていることの実地確認を兼ねている。** 変換したうえで
+        「換算して開いた」と知らせる。
+        """
         from tests.conftest import REPO_ROOT
 
         sample = REPO_ROOT / "samples" / "basic"
         warnings = window.state.load(sample)
 
-        assert warnings == []
+        assert any("px に換算" in w for w in warnings)
+        assert window.state.page.size.w == pytest.approx(1240.157, abs=0.01)
         assert window.state.page_count == 2
         assert len(window.state.page.panels) == 4
 
@@ -814,10 +820,10 @@ class TestSlantSplitUI:
     「道具 → 分割 → 履歴 → 選択」がつながっているかを見る。
     """
 
-    def _split(self, window, x: float = 105.0):
+    def _split(self, window, x: float = 620.0):
         window.add_full_page_panel()
         window.state.set_tool(TOOL_SPLIT_SLANT)
-        window.view._apply_split(x, 150.0)
+        window.view._apply_split(x, 877.0)
         return window.state.page
 
     def test_斜めに割れて組ができる(self, window):
@@ -911,7 +917,7 @@ class TestSlantSlideUI:
     def _split(self, window):
         window.add_full_page_panel()
         window.state.set_tool(TOOL_SPLIT_SLANT)
-        window.view._apply_split(105.0, 150.0)
+        window.view._apply_split(620.0, 877.0)
         # 分割の道具は使ったあとも残る。押下の検証では選択に戻しておく
         window.state.set_tool(TOOL_SELECT)
         page = window.state.page
@@ -988,7 +994,8 @@ class TestSlantSlideUI:
         assert page.slant_pairs[0].ratio == pytest.approx(0.35)
         assert page.slant_pairs[0].ratio != before
         # 外側の矩形は動かない
-        assert page.slant_bounds(page.slant_pairs[0]).w == pytest.approx(180.0)
+        # 基本枠いっぱい（1240 - 余白 89 × 2）
+        assert page.slant_bounds(page.slant_pairs[0]).w == pytest.approx(1062.0)
 
     def test_ずらしたあと履歴で戻せる(self, window):
         page = self._split(window)

@@ -66,9 +66,9 @@ TOOL_LABELS = {
     TOOL_TEXT: "セリフを追加",
 }
 
-# クリックだけでセリフを置いたときの大きさ（mm）。
+# クリックだけでセリフを置いたときの大きさ（px）。
 # 吹き出しの既定より一回り小さくして、中に収まるようにしてある
-DEFAULT_TEXT_SIZE = (34.0, 18.0)
+DEFAULT_TEXT_SIZE = (201.0, 106.0)
 
 # どの道具がどの種類の吹き出しを作るか
 BALLOON_TOOLS = {TOOL_BALLOON: "ellipse", TOOL_BALLOON_JAGGED: "jagged"}
@@ -485,7 +485,7 @@ class EditorState(QObject):
         text_id: str,
         *,
         family: str | None = None,
-        size_mm: float | None = None,
+        size_px: float | None = None,
         bold: bool | None = None,
     ) -> None:
         with self._edit_text(text_id, "セリフの書式") as text:
@@ -495,7 +495,7 @@ class EditorState(QObject):
                     key: value
                     for key, value in (
                         ("family", family),
-                        ("size_mm", size_mm),
+                        ("size_px", size_px),
                         ("bold", bold),
                     )
                     if value is not None

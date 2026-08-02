@@ -137,6 +137,10 @@ class TestTail:
 
     def test_付け根の幅が反映される(self, balloon):
         balloon.tail.tip = (30.0, 90.0)
+        # 既定（BalloonSettings.tail_width）ではなく、この吹き出し（40×26）に
+        # 対して収まる幅を明示する。既定より狭い値を「太い側」に使うと、
+        # 比べる向きが逆になって意味が消える
+        balloon.tail.width = 6.0
         narrow = tail_triangle(balloon, SETTINGS)
         balloon.tail.width = 12.0
         wide = tail_triangle(balloon, SETTINGS)
@@ -322,8 +326,8 @@ class TestAttach:
 class TestDefaultRect:
     def test_クリック位置が中心になる(self):
         page = new_project().pages[0]
-        rect = default_balloon_rect(page, 105.0, 148.0, SETTINGS)
-        assert rect.center == pytest.approx((105.0, 148.0))
+        rect = default_balloon_rect(page, 620.0, 877.0, SETTINGS)
+        assert rect.center == pytest.approx((620.0, 877.0))
 
     @pytest.mark.parametrize("x,y", [(0.0, 0.0), (210.0, 297.0), (-40.0, 400.0)])
     def test_用紙からはみ出さない(self, x, y):

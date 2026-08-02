@@ -193,7 +193,7 @@ class TestRealisticProject:
     def test_保存した内容を人が読める(self, tmp_path, sample_project):
         save_project(sample_project, tmp_path)
         data = json.loads((tmp_path / PROJECT_FILENAME).read_text(encoding="utf-8"))
-        assert data["format_version"] == 1
+        assert data["format_version"] == 2
         assert data["app"] == "MANGA_layout"
         assert data["pages"][0]["panels"][0]["shape"]["kind"] == "polygon"
 
@@ -222,7 +222,7 @@ class TestUndoFoundation:
 class TestProjectFromDictDirect:
     def test_最小限のJSONから開ける(self):
         # 手書きの project.json でも開けること
-        project = Project.from_dict({"format_version": 1, "pages": []})
+        project = Project.from_dict({"format_version": 2, "pages": []})
         assert project.pages == []
         assert project.reading_direction == "rtl"
-        assert project.default_page_size.w == 210.0
+        assert project.default_page_size.w == 1240.0

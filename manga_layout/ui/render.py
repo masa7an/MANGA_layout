@@ -7,7 +7,7 @@
 選択枠・つまみ・下書きの矩形といった「画面の道具」はここに入れない。
 それらは作品の一部ではないので、サムネイルにも書き出しにも出したくない。
 
-シーンの座標はそのまま mm（要件定義 3章）。倍率は呼ぶ側が painter に
+シーンの座標はそのまま px（要件定義 3章）。表示倍率は呼ぶ側が painter に
 掛けてから渡す。
 """
 
@@ -26,15 +26,12 @@ from ..model import BalloonObject, Font, ImageObject, Page, Panel, TextObject
 PAGE_BG = QColor("#FFFFFF")
 PAGE_EDGE = QColor("#8A8A8A")
 PAGE_SHADOW = QColor(0, 0, 0, 70)
+# 用紙の影のずらし幅（px）。座標系と同じ単位なので、拡大すると影も大きくなる
+PAGE_SHADOW_OFFSET = 9.0
 MARGIN_GUIDE = QColor("#B7CEE8")
 PANEL_FILL = QColor("#F4F4F4")
 PLACEHOLDER = QColor("#9FB2BF")
 MISSING_IMAGE = QColor("#D9534F")
-
-# 文字の大きさは mm で持っているが、Qt のフォントは**整数の画素数**でしか
-# 指定できない。3.5mm をそのまま渡すと 3 か 4 に丸められ、狙った大きさに
-# ならない。いったんこの倍率で大きく作り、描くときに同じ倍率で縮めて合わせる
-TEXT_FONT_SCALE = 20.0
 
 TEXT_ALIGN_FLAGS = {
     "left": Qt.AlignmentFlag.AlignLeft,
@@ -48,7 +45,7 @@ def qrect(rect: Rect) -> QRectF:
 
 
 def polygon_of(points) -> QPolygonF:
-    """mm の点列を Qt の多角形にする。座標はそのまま（シーン＝mm）。"""
+    """px の点列を Qt の多角形にする。座標はそのまま（シーン＝px）。"""
     return QPolygonF([QPointF(x, y) for x, y in points])
 
 
@@ -58,21 +55,22 @@ def cosmetic_pen(
     """表示倍率によらず同じ太さで描かれる線。
 
     目安線や選択枠のような「画面の道具」に使う。作品の一部である
-    コマ枠には使わない（そちらは mm で太さが決まる）。
+    コマ枠には使わない（そちらは px で太さが決まる）。
     """
     pen = QPen(color, width, style)
     pen.setCosmetic(True)
     return pen
 
 
-def text_font(font: Font, scale: float = TEXT_FONT_SCALE) -> QFont:
-    """mm 指定の書式から Qt のフォントを作る。
+def text_font(font: Font) -> QFont:
+    """書式から Qt のフォントを作る。
 
-    `scale` 倍の大きさで作る。使う側は同じ倍率で縮めてから描くこと。
-    そうしないと文字が `scale` 倍で出る。
+    Qt が受け取れるのは**整数の画素数**だけ。座標系が px なので、
+    そのまま丸めて渡せる（mm だった頃は 3.5 のような小さな値になり、
+    3 か 4 に丸められて狙った大きさにならなかった）。
     """
     qfont = QFont(font.family)
-    qfont.setPixelSize(max(1, round(font.size_mm * scale)))
+    qfont.setPixelSize(max(1, round(font.size_px)))
     qfont.setBold(font.bold)
     return qfont
 
@@ -166,7 +164,9 @@ class PageRenderer:
     ) -> None:
         rect = QRectF(0.0, 0.0, page.size.w, page.size.h)
         if shadow:
-            painter.fillRect(rect.translated(1.5, 1.5), PAGE_SHADOW)
+            painter.fillRect(
+                rect.translated(PAGE_SHADOW_OFFSET, PAGE_SHADOW_OFFSET), PAGE_SHADOW
+            )
         painter.fillRect(rect, PAGE_BG)
         if edge:
             painter.setPen(cosmetic_pen(PAGE_EDGE))
@@ -226,7 +226,7 @@ class PageRenderer:
             self._draw_children(painter, panel, polygon)
 
         if panel.border.visible and panel.border.width > 0:
-            # 枠線は作品の一部なので、太さは mm のまま（倍率で見た目が変わる）
+            # 枠線は作品の一部なので、太さは px のまま（表示倍率で見た目が変わる）
             # 画像より後に描く。先に描くと、はみ出した絵が枠線を覆ってしまう
             painter.setPen(QPen(QColor(panel.border.color), panel.border.width))
             painter.setBrush(Qt.BrushStyle.NoBrush)
@@ -306,12 +306,9 @@ class PageRenderer:
             painter.drawRect(qrect(obj.rect))
             return
 
-        scale = TEXT_FONT_SCALE
         painter.save()
-        painter.setFont(text_font(obj.font, scale))
+        painter.setFont(text_font(obj.font))
         painter.setPen(QPen(QColor("#000000")))
-        # 大きく作ったフォントを縮めて mm に合わせる。矩形も同じ倍率で拡げる
-        painter.scale(1.0 / scale, 1.0 / scale)
         flags = (
             TEXT_ALIGN_FLAGS.get(obj.align, Qt.AlignmentFlag.AlignHCenter)
             | Qt.AlignmentFlag.AlignVCenter
@@ -319,16 +316,7 @@ class PageRenderer:
             # 枠に収まらない字も隠さずに出し、はみ出しに気づけるようにする
             | Qt.TextFlag.TextDontClip
         )
-        painter.drawText(
-            QRectF(
-                obj.rect.x * scale,
-                obj.rect.y * scale,
-                obj.rect.w * scale,
-                obj.rect.h * scale,
-            ),
-            flags,
-            obj.content,
-        )
+        painter.drawText(qrect(obj.rect), flags, obj.content)
         painter.restore()
 
     def with_preview_tail(
@@ -379,7 +367,7 @@ class PageRenderer:
         painter.drawPath(path)
 
         if balloon.border.visible and balloon.border.width > 0:
-            # コマの枠線と同じく、太さは mm（作品の一部なので倍率で変わる）
+            # コマの枠線と同じく、太さは px（作品の一部なので表示倍率で変わる）
             pen = QPen(QColor(balloon.border.color), balloon.border.width)
             pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
             painter.setPen(pen)

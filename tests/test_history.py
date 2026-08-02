@@ -80,7 +80,7 @@ class TestSnapshotFidelity:
             balloon.tail.tip,
             balloon.style,
             text.content,
-            text.font.size_mm,
+            text.font.size_px,
             page.panels[0].border.width,
         )
 
@@ -91,7 +91,7 @@ class TestSnapshotFidelity:
             b.tail = b.tail.translated(100.0, 100.0)
             b.style = "jagged"
             t.content = "書き換えた"
-            t.font.size_mm = 9.0
+            t.font.size_px = 54.0
             p.panels[0].border.width = 2.0
 
         history.undo()
@@ -103,7 +103,7 @@ class TestSnapshotFidelity:
             balloon.tail.tip,
             balloon.style,
             text.content,
-            text.font.size_mm,
+            text.font.size_px,
             page.panels[0].border.width,
         ) == before
 

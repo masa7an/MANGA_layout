@@ -397,7 +397,7 @@ class TestPageSize:
     def test_状態表示に大きさが出る(self, window):
         window.state.set_page_size(PAGE_SIZES["B5"])
         window._refresh()
-        assert "182 × 257 mm" in window.page_label.text()
+        assert "1075 × 1518 px" in window.page_label.text()
 
 
 class TestOutsidePage:
@@ -416,26 +416,26 @@ class TestPageSizeDialog:
         dialog = PageSizeDialog(PAGE_SIZES["A4"], page_count=1)
         try:
             assert dialog.preset.currentData() == "A4"
-            assert not dialog.width_mm.isEnabled()
+            assert not dialog.width_px.isEnabled()
             assert dialog.chosen_size() == PAGE_SIZES["A4"]
         finally:
             dialog.deleteLater()
 
     def test_合う用紙が無ければカスタムになる(self, qapp):
-        dialog = PageSizeDialog(Size(120.0, 180.0), page_count=1)
+        dialog = PageSizeDialog(Size(700.0, 1000.0), page_count=1)
         try:
             assert dialog.preset.currentData() is None
-            assert dialog.width_mm.isEnabled()
-            assert dialog.chosen_size() == Size(120.0, 180.0)
+            assert dialog.width_px.isEnabled()
+            assert dialog.chosen_size() == Size(700.0, 1000.0)
         finally:
             dialog.deleteLater()
 
     def test_用紙を選ぶと寸法が入る(self, qapp):
-        dialog = PageSizeDialog(Size(120.0, 180.0), page_count=1)
+        dialog = PageSizeDialog(Size(700.0, 1000.0), page_count=1)
         try:
             dialog.preset.setCurrentIndex(dialog.preset.findData("B5"))
             assert dialog.chosen_size() == PAGE_SIZES["B5"]
-            assert not dialog.height_mm.isEnabled()
+            assert not dialog.height_px.isEnabled()
         finally:
             dialog.deleteLater()
 
@@ -490,7 +490,7 @@ class TestPageSizeMenu:
         three_pages.change_page_size()
 
         assert three_pages.state.page.size == PAGE_SIZES["B5"]
-        assert any("182 × 257 mm" in m for m in seen)
+        assert any("1075 × 1518 px" in m for m in seen)
 
     def test_取り消すと変わらない(self, three_pages, monkeypatch):
         self._dialog(monkeypatch, accepted=False)

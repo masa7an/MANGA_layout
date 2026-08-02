@@ -4,7 +4,7 @@
 Qt を使わないので画面なしでテストでき、操作の細かい挙動（最小の大きさ、
 吸着の優先順位、分割時の画像の行き先）を目で確かめずに固定できる。
 
-座標は要件定義 3章のとおりすべて mm。画面の倍率が変わっても、
+座標は要件定義 3章のとおりすべて px。画面の倍率が変わっても、
 ここの計算は一切変わらない。
 """
 
@@ -38,14 +38,14 @@ DEFAULT_PANEL_RATIO = 1.0 / 3.0
 
 @dataclass(frozen=True)
 class LayoutSettings:
-    """コマ割りの操作にかかわる設定。単位はすべて mm。"""
+    """コマ割りの操作にかかわる設定。単位はすべて px。"""
 
     # コマとコマの隙間。分割したときにこの幅を空ける
-    gutter: float = 6.0
+    gutter: float = 35.0
     # ページの余白。吸着の目安線としても使う
-    margin: float = 15.0
+    margin: float = 89.0
     # コマの最小の辺。これ以下には縮まない
-    min_panel_size: float = 5.0
+    min_panel_size: float = 30.0
     # 斜め割りの傾き。垂直から何度倒すか（12° ＝ 水平の辺から 78°）。
     # 角度を固定にしてあるので、コマの大小によらず傾きが揃って見える。
     # 保存済みのペアは自分の角度を持つので、ここを変えても変形しない
@@ -57,7 +57,7 @@ DEFAULT_SETTINGS = LayoutSettings()
 
 @dataclass(frozen=True)
 class BalloonSettings:
-    """吹き出しの形にかかわる設定。長さは mm。
+    """吹き出しの形にかかわる設定。長さは px。
 
     コマ割りの設定（`LayoutSettings`）とは別にしてある。吹き出しの見た目は
     作風で変えたくなる一方、コマの隙間や余白は紙面の決まりごとで、
@@ -65,9 +65,9 @@ class BalloonSettings:
     """
 
     # クリックだけで置いたときの大きさ
-    default_size: tuple[float, float] = (40.0, 26.0)
+    default_size: tuple[float, float] = (236.0, 154.0)
     # しっぽの付け根の幅
-    tail_width: float = 6.0
+    tail_width: float = 35.0
     # ギザギザの山の数。増やすと細かく、減らすと荒くなる
     jagged_spikes: int = 14
     # ギザギザの谷の深さ。半径に対する割合（0.25 なら谷が 75% の位置）
@@ -124,7 +124,7 @@ def handle_positions(rect: Rect) -> dict[str, tuple[float, float]]:
 def handle_at(rect: Rect, x: float, y: float, size: float) -> str | None:
     """その位置にあるつまみの名前。
 
-    `size` はつまみの一辺（mm）。画面上で常に同じ大きさに見せるため、
+    `size` はつまみの一辺（px）。画面上で常に同じ大きさに見せるため、
     呼ぶ側が表示倍率から換算して渡す。
     """
     half = size / 2.0
@@ -351,7 +351,7 @@ def split_panel(
     """コマを2つに割る。
 
     `horizontal=True` なら横線で切って上下に、`False` なら縦線で切って左右に
-    分ける。`position` は切る線の座標（mm）で、その前後に隙間ぶんを空ける。
+    分ける。`position` は切る線の座標（px）で、その前後に隙間ぶんを空ける。
 
     元のコマは前半（上または左）として id ごと残る。紐づいた吹き出しは
     元のコマを指したままなので、追随先が変わらない。
@@ -376,8 +376,8 @@ def split_panel(
 
     if min(sizes) < settings.min_panel_size:
         raise ValueError(
-            f"分割すると幅 {min(sizes):.1f}mm のコマができます"
-            f"（最小 {settings.min_panel_size:.1f}mm）"
+            f"分割すると幅 {min(sizes):.0f}px のコマができます"
+            f"（最小 {settings.min_panel_size:.0f}px）"
         )
 
     set_panel_rect(panel, first)
@@ -402,7 +402,7 @@ def split_panel(
 # --------------------------------------------------------------------------
 
 def slant_offset(height: float, angle: float) -> float:
-    """斜めの境界が、上端と下端でどれだけ横にずれるか（片側ぶん、mm）。
+    """斜めの境界が、上端と下端でどれだけ横にずれるか（片側ぶん、px）。
 
     角度が固定なので、ずれ幅は高さに比例する。コマを縦に伸ばすと
     自動で斜めも寝る、という追従はこの式ひとつで効いている。
@@ -411,7 +411,7 @@ def slant_offset(height: float, angle: float) -> float:
 
 
 def slant_gap(gutter: float, angle: float) -> float:
-    """隙間を保つために境界の左右へずらす量（片側ぶん、mm）。
+    """隙間を保つために境界の左右へずらす量（片側ぶん、px）。
 
     真横に `gutter/2` ずらすだけだと、傾けたぶん**見た目の隙間が細くなる**
     （12° で約 2% ）。角度で割り戻し、垂直に測った隙間が `gutter` に
@@ -421,7 +421,7 @@ def slant_gap(gutter: float, angle: float) -> float:
 
 
 def slant_narrowest(rect: Rect, ratio: float, angle: float, gutter: float) -> float:
-    """斜めに割ったとき、細いほうのコマの**一番細い箇所**の幅（mm）。
+    """斜めに割ったとき、細いほうのコマの**一番細い箇所**の幅（px）。
 
     斜めのコマは上端と下端で幅が違う。狭いほうの端がここで返る値になり、
     分割してよいか・これ以上縮めてよいかの判定はすべてこの1本で足りる。
@@ -479,7 +479,7 @@ def slant_polygons(
 def slant_min_width(
     height: float, ratio: float, angle: float, settings: LayoutSettings = DEFAULT_SETTINGS
 ) -> float:
-    """その高さで斜めに割れる、外側の矩形の最小の幅（mm）。
+    """その高さで斜めに割れる、外側の矩形の最小の幅（px）。
 
     リサイズを止める位置に使う。高さを伸ばすほど斜めの振れ幅が増えるので、
     必要な幅も一緒に増える。
@@ -494,7 +494,7 @@ def slant_min_width(
 def slant_max_height(
     width: float, ratio: float, angle: float, settings: LayoutSettings = DEFAULT_SETTINGS
 ) -> float:
-    """その幅で斜めに割れる、外側の矩形の最大の高さ（mm）。
+    """その幅で斜めに割れる、外側の矩形の最大の高さ（px）。
 
     `slant_min_width` の裏返し。上下のつまみを引いたときの止め位置に使う。
     """
@@ -523,10 +523,10 @@ def check_slant(
     if narrowest >= settings.min_panel_size - EPS:
         return
     raise ValueError(
-        f"そこで斜めに割ると幅 {max(narrowest, 0.0):.1f}mm のコマができます"
-        f"（最小 {settings.min_panel_size:.1f}mm）。"
-        f"高さ {rect.h:.0f}mm なら幅 "
-        f"{slant_min_width(rect.h, ratio, angle, settings):.0f}mm 以上必要です"
+        f"そこで斜めに割ると幅 {max(narrowest, 0.0):.0f}px のコマができます"
+        f"（最小 {settings.min_panel_size:.0f}px）。"
+        f"高さ {rect.h:.0f}px なら幅 "
+        f"{slant_min_width(rect.h, ratio, angle, settings):.0f}px 以上必要です"
     )
 
 
@@ -560,7 +560,7 @@ def split_panel_slant(
 ) -> tuple[Panel, Panel]:
     """コマを斜めの縦線で2つに割り、`SlantPair` として結び付ける。
 
-    `position` は割る位置（mm）。ここで割合に直して覚えるので、あとから
+    `position` は割る位置（px）。ここで割合に直して覚えるので、あとから
     外側を拡大縮小しても境界が付いてくる。角度は `settings.slant_angle`
     を使い、**その値をペアに焼き付ける**。既定の角度を変えても、
     すでに作ったコマは変形しない。

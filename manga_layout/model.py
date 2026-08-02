@@ -31,13 +31,21 @@ from . import validation as v
 from .errors import ProjectFormatError, UnsupportedVersionError
 from .geometry import Polygon, Rect, Size
 
-FORMAT_VERSION = 1
+# 2 で単位を mm から px に変えた（要件定義 3章）。version 1 の作品は
+# 読み込み時に換算する（`_scale_lengths`）
+FORMAT_VERSION = 2
 APP_NAME = "MANGA_layout"
 
-# よく使うページ寸法（mm）
+# version 1（mm）を px に直すときの倍率。150dpi 換算。
+# **この値を後から変えてはいけない。** 変えると、まだ変換していない
+# 古い作品だけが違う大きさで開く
+MM_TO_PX = 150.0 / 25.4
+
+# よく使うページ寸法（px）。紙の寸法を 150dpi で換算した値で、
+# 印刷はしないので「A4 相当」という目安でしかない（要件定義 1章）
 PAGE_SIZES: dict[str, Size] = {
-    "A4": Size(210.0, 297.0),
-    "B5": Size(182.0, 257.0),
+    "A4": Size(1240.0, 1754.0),
+    "B5": Size(1075.0, 1518.0),
 }
 DEFAULT_PAGE_SIZE = PAGE_SIZES["A4"]
 
@@ -71,9 +79,9 @@ FLOATING_BASE_Z = 10
 
 @dataclass
 class Border:
-    """枠線。コマ枠と吹き出しの輪郭に共通で使う。"""
+    """枠線。コマ枠と吹き出しの輪郭に共通で使う。太さは px。"""
 
-    width: float = 0.6
+    width: float = 3.5
     color: str = "#000000"
     visible: bool = True
 
@@ -84,7 +92,7 @@ class Border:
     def from_dict(cls, data: Any, where: str) -> "Border":
         d = v.req_mapping(data, where)
         return cls(
-            width=v.number(d, "width", where, 0.6),
+            width=v.number(d, "width", where, 3.5),
             color=v.color(d, "color", where, "#000000"),
             visible=v.flag(d, "visible", where, True),
         )
@@ -92,25 +100,33 @@ class Border:
 
 @dataclass
 class Font:
-    """セリフの書式。サイズは mm で持つ（ポイントではない）。
+    """セリフの書式。サイズは px で持つ（ポイントでも mm でもない）。
 
-    座標系が mm に統一されているので、書き出し dpi を変えても
-    文字の大きさが用紙に対して一定に保たれる。
+    座標系が px に統一されているので、Qt へそのまま渡せる。**mm だった頃は
+    3.5 のような小さな値になり、Qt が整数の画素数しか受け取らないせいで
+    3 か 4 に丸められていた。** それを避けるための倍率合わせ（旧
+    `TEXT_FONT_SCALE`）は、px にしたことで要らなくなった。
     """
 
     family: str = "Yu Gothic UI"
-    size_mm: float = 3.5
+    size_px: float = 21.0
     bold: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {"family": self.family, "size_mm": self.size_mm, "bold": self.bold}
+        return {"family": self.family, "size_px": self.size_px, "bold": self.bold}
 
     @classmethod
     def from_dict(cls, data: Any, where: str) -> "Font":
+        """`size_px` を読む。**version 1 の `size_mm` も受ける。**
+
+        値の換算は `Project.from_dict` がまとめて行う。ここは
+        「どの名前で入っているか」だけを吸収する。
+        """
         d = v.req_mapping(data, where)
+        legacy = "size_px" not in d and "size_mm" in d
         return cls(
             family=v.text(d, "family", where, "Yu Gothic UI"),
-            size_mm=v.positive(d, "size_mm", where, 3.5),
+            size_px=v.positive(d, "size_mm" if legacy else "size_px", where, 21.0),
             bold=v.flag(d, "bold", where, False),
         )
 
@@ -124,14 +140,14 @@ class Tail:
     先端が付いて回らないほうが自然に扱える。
 
     `root_y` は付け根の縦位置を、吹き出しの高さに対する割合で持つ
-    （-1.0 が上端、0.0 が中央、+1.0 が下端）。**mm ではなく割合**なのは、
+    （-1.0 が上端、0.0 が中央、+1.0 が下端）。**長さではなく割合**なのは、
     吹き出しの大きさを変えても付け根が同じ場所に残るようにするため。
     `None` は自動＝先端の向きに合わせる。
     """
 
     enabled: bool = True
     tip: tuple[float, float] = (0.0, 0.0)
-    width: float = 6.0
+    width: float = 35.0
     root_y: float | None = None
 
     def translated(self, dx: float, dy: float) -> "Tail":
@@ -157,7 +173,7 @@ class Tail:
         return cls(
             enabled=v.flag(d, "enabled", where, True),
             tip=tip,
-            width=v.positive(d, "width", where, 6.0),
+            width=v.positive(d, "width", where, 35.0),
             # 項目が無い作品は自動として読む。root_y を足す前に保存した
             # ファイルでも、それまでと同じ形で開ける
             root_y=v.opt_ratio(d, "root_y", where),
@@ -187,7 +203,8 @@ class ImageObject(SceneObject):
 
     asset: str = ""
     rect: Rect = field(default_factory=lambda: Rect(0.0, 0.0, 0.0, 0.0))
-    # 元画像のピクセル寸法。縦横比の維持に使う（mm への換算には使わない）
+    # 元画像のピクセル寸法。縦横比の維持だけに使う。
+    # **単位の換算では触らない。** 最初から px なので、掛けると比が狂う
     src_px: tuple[int, int] = (0, 0)
     # MVP では常に 0。将来の回転対応のために場所だけ確保している
     rotation: float = 0.0
@@ -276,7 +293,7 @@ class BalloonObject(SceneObject):
     style: str = "ellipse"
     rect: Rect = field(default_factory=lambda: Rect(0.0, 0.0, 0.0, 0.0))
     fill: str = "#FFFFFF"
-    border: Border = field(default_factory=lambda: Border(width=0.4))
+    border: Border = field(default_factory=lambda: Border(width=2.5))
     tail: Tail = field(default_factory=Tail)
     attached_panel_id: str | None = None
 
@@ -304,7 +321,7 @@ class BalloonObject(SceneObject):
             style=v.choice(d, "style", where, BALLOON_STYLES, "ellipse"),
             rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
             fill=v.color(d, "fill", where, "#FFFFFF"),
-            border=Border.from_dict(d.get("border", {"width": 0.4}), f"{where}.border"),
+            border=Border.from_dict(d.get("border", {"width": 2.5}), f"{where}.border"),
             tail=Tail.from_dict(d.get("tail", {}), f"{where}.tail"),
             attached_panel_id=v.opt_text(d, "attached_panel_id", where),
         )
@@ -815,8 +832,49 @@ class Project:
             pages=[Page.from_dict(p, f"{where}.pages[{i}]") for i, p in enumerate(pages_raw)],
             next_id=v.integer(d, "next_id", where, 1),
         )
+        if version < 2:
+            # version 1 は mm。組み立て終えた**型のあるオブジェクトを走査**して
+            # 換算する。読み込む前の辞書を書き換える手もあるが、入れ子の
+            # どの数値が長さなのかを名前で見分けることになり、1つ取りこぼすと
+            # そこだけ 1/5.9 の大きさで残る
+            project.scale_lengths(MM_TO_PX)
+            project.load_warnings.append(
+                "古い形式（mm）の作品を px に換算して開きました。"
+                "上書き保存すると新しい形式になります"
+            )
         project._repair_after_load()
         return project
+
+    # -- 単位の換算 --------------------------------------------------------
+
+    def scale_lengths(self, factor: float) -> None:
+        """長さを持つ値をまとめて `factor` 倍する。
+
+        **割合と角度には触らない。** `SlantPair.ratio`（0〜1）、
+        `Tail.root_y`（-1〜1）、`angle`（度）、`opacity` は単位を持たないので、
+        掛けると意味が壊れる。`src_px` も元画像の実寸なので対象外。
+        """
+        self.default_page_size = self.default_page_size.scaled(factor)
+        for page in self.pages:
+            page.size = page.size.scaled(factor)
+            for panel in page.panels:
+                panel.shape = panel.shape.scaled(factor)
+                panel.border.width *= factor
+                for image in panel.children:
+                    image.rect = image.rect.scaled(factor)
+            for obj in page.floating:
+                obj.rect = obj.rect.scaled(factor)
+                if isinstance(obj, BalloonObject):
+                    obj.border.width *= factor
+                    obj.tail = dataclasses.replace(
+                        obj.tail,
+                        tip=(obj.tail.tip[0] * factor, obj.tail.tip[1] * factor),
+                        width=obj.tail.width * factor,
+                    )
+                elif isinstance(obj, TextObject):
+                    obj.font = dataclasses.replace(
+                        obj.font, size_px=obj.font.size_px * factor
+                    )
 
     def copy(self) -> "Project":
         """完全な複製を作る。

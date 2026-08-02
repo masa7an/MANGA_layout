@@ -19,7 +19,8 @@ from manga_layout.ui.state import (
     TOOL_SELECT,
 )
 
-PANEL = Rect(20.0, 20.0, 120.0, 90.0)
+# 座標は px（要件定義 3章）。既定の吹き出し 236×154 が中に収まる大きさ
+PANEL = Rect(120.0, 120.0, 720.0, 540.0)
 
 
 @pytest.fixture
@@ -41,7 +42,7 @@ def window_with_panel(window):
 @pytest.fixture
 def window_with_balloon(window_with_panel):
     """コマの中に吹き出しを1つ置いた状態。吹き出しが選ばれている。"""
-    window_with_panel.state.add_balloon(Rect(30.0, 30.0, 40.0, 26.0))
+    window_with_panel.state.add_balloon(Rect(180.0, 180.0, 240.0, 156.0))
     return window_with_panel
 
 
@@ -160,38 +161,38 @@ class TestBalloonMenu:
 class TestAdd:
     def test_クリックで置ける(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_BALLOON)
-        click(window_with_panel.view, 60.0, 50.0)
+        click(window_with_panel.view, 400.0, 320.0)
 
         floating = window_with_panel.state.page.floating
         assert len(floating) == 1
         assert isinstance(floating[0], BalloonObject)
-        assert floating[0].rect.center == pytest.approx((60.0, 50.0))
+        assert floating[0].rect.center == pytest.approx((400.0, 320.0))
 
     def test_ドラッグで大きさを決められる(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_BALLOON)
-        drag(window_with_panel.view, 40.0, 40.0, 90.0, 75.0)
+        drag(window_with_panel.view, 240.0, 240.0, 540.0, 450.0)
 
         rect = window_with_panel.state.page.floating[0].rect
-        assert rect.w == pytest.approx(50.0, abs=1.0)
-        assert rect.h == pytest.approx(35.0, abs=1.0)
+        assert rect.w == pytest.approx(300.0, abs=6.0)
+        assert rect.h == pytest.approx(210.0, abs=6.0)
 
     def test_置いたら選択の道具に戻る(self, window_with_panel):
         """コマ追加と同じ「1回きり」（要件定義 6.9）。"""
         window_with_panel.state.set_tool(TOOL_BALLOON)
-        click(window_with_panel.view, 60.0, 50.0)
+        click(window_with_panel.view, 360.0, 300.0)
 
         assert window_with_panel.state.tool == TOOL_SELECT
         assert window_with_panel.state.selected_balloon is not None
 
     def test_続けてクリックしても増えない(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_BALLOON)
-        click(window_with_panel.view, 60.0, 50.0)
-        click(window_with_panel.view, 100.0, 80.0)
+        click(window_with_panel.view, 360.0, 300.0)
+        click(window_with_panel.view, 600.0, 480.0)
         assert len(window_with_panel.state.page.floating) == 1
 
     def test_ギザギザの道具で種類が変わる(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_BALLOON_JAGGED)
-        click(window_with_panel.view, 60.0, 50.0)
+        click(window_with_panel.view, 360.0, 300.0)
         assert window_with_panel.state.page.floating[0].style == "jagged"
 
     def test_コマの上でも作れる(self, window_with_panel):
@@ -217,7 +218,7 @@ class TestAttach:
         assert window_with_balloon.state.selected_balloon.attached_panel_id == panel_id
 
     def test_コマの外なら紐づかない(self, window_with_panel):
-        window_with_panel.state.add_balloon(Rect(160.0, 250.0, 30.0, 20.0))
+        window_with_panel.state.add_balloon(Rect(960.0, 1500.0, 180.0, 120.0))
         assert window_with_panel.state.selected_balloon.attached_panel_id is None
 
     def test_解除できる(self, window_with_balloon):
@@ -303,8 +304,8 @@ class TestSelectAndMove:
         assert state.selected_balloon.tail.tip == tip
 
     def test_大きさを変えられる(self, window_with_balloon):
-        window_with_balloon.view._apply_resize(Rect(25.0, 25.0, 60.0, 40.0))
-        assert window_with_balloon.state.selected_balloon.rect == Rect(25.0, 25.0, 60.0, 40.0)
+        window_with_balloon.view._apply_resize(Rect(150.0, 150.0, 360.0, 240.0))
+        assert window_with_balloon.state.selected_balloon.rect == Rect(150.0, 150.0, 360.0, 240.0)
 
 
 class TestTail:
@@ -389,9 +390,9 @@ class TestBalloonDrawing:
     @pytest.fixture
     def drawn(self, window_with_panel):
         """しっぽを真下へ長く伸ばした吹き出し。選択枠は描かせない。"""
-        rect = Rect(50.0, 40.0, 60.0, 36.0)
+        rect = Rect(300.0, 240.0, 360.0, 216.0)
         balloon = window_with_panel.state.add_balloon(rect)
-        window_with_panel.state.set_tail_tip(balloon.id, (80.0, 120.0))
+        window_with_panel.state.set_tail_tip(balloon.id, (480.0, 720.0))
         window_with_panel.state.select(None)
         return window_with_panel, rect, balloon
 
@@ -482,7 +483,9 @@ class TestBalloonDrawing:
     def test_しっぽが先端まで届く(self, drawn):
         window, rect, _ = drawn
         image = render_page(window)
-        assert is_ink(image.pixelColor(int(rect.center[0]), 117))
+        # 先端（y=720）のすぐ手前。しっぽの内側は白なので、輪郭が寄り合う
+        # 先端近くを見る。ここが白なら、しっぽが途中で切れている
+        assert is_ink(image.pixelColor(int(rect.center[0]), 718))
 
     def test_しっぽを消すと三角形も消える(self, drawn):
         window, rect, balloon = drawn
@@ -490,7 +493,7 @@ class TestBalloonDrawing:
         window.state.select(None)
         image = render_page(window)
         assert not is_fill(
-            image.pixelColor(int(rect.center[0]), int(rect.bottom) + 12)
+            image.pixelColor(int(rect.center[0]), int(rect.bottom) + 72)
         )
 
     def test_種類を変えると見た目が変わる(self, drawn):

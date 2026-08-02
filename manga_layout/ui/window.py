@@ -25,7 +25,6 @@ from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import is_project_dir, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .export import (
-    DEFAULT_DPI,
     DEFAULT_SCALE,
     EXPORT_DIRNAME,
     ExportDialog,
@@ -33,6 +32,7 @@ from .export import (
     export_dir_of,
     export_pages,
     missing_assets_in,
+    page_px,
     planned_paths,
     scale_label,
 )
@@ -59,11 +59,11 @@ PAGES_MENU_LABEL = "ページ一覧"
 
 TEXT_ALIGN_LABELS = {"left": "左寄せ", "center": "中央寄せ", "right": "右寄せ"}
 
-# 文字の大きさを1段階変える幅（mm）と、行き過ぎを止める範囲。
+# 文字の大きさを1段階変える幅（px）と、行き過ぎを止める範囲。
 # 数値を打ち込ませるより、押して確かめるほうが速い
-TEXT_SIZE_STEP_MM = 0.5
-TEXT_SIZE_MIN_MM = 1.5
-TEXT_SIZE_MAX_MM = 30.0
+TEXT_SIZE_STEP_PX = 2.0
+TEXT_SIZE_MIN_PX = 9.0
+TEXT_SIZE_MAX_PX = 180.0
 
 # 起動時の希望サイズ。画面に入らなければ後述の作業領域に合わせて縮める
 WINDOW_SIZE = (1100, 860)
@@ -92,9 +92,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.view)
         self._apply_initial_geometry()
 
-        # 書き出しの dpi は作品ではなく好みなので、project.json には入れない。
-        # ただし1回の作業中は同じ値を使い続けるのが普通なので覚えておく
-        self._export_dpi = DEFAULT_DPI
+        # 書き出す画像サイズは作品ではなく好みなので、project.json には
+        # 入れない。ただし1回の作業中は同じ値を使い続けるのが普通なので覚えておく
         self._export_scale = DEFAULT_SCALE
 
         # settings.json は手で書き換える前提のファイル。実物が無いと
@@ -369,7 +368,7 @@ class MainWindow(QMainWindow):
         page_menu.addSeparator()
 
         page_menu.addAction(
-            self._act("ページサイズ...", self.change_page_size, None, "A4 / B5 / mm 指定")
+            self._act("ページサイズ...", self.change_page_size, None, "A4 相当 / B5 相当 / px 指定")
         )
         page_menu.addSeparator()
         page_menu.addAction(self._act("前のページ", self.prev_page, "PgUp"))
@@ -420,7 +419,7 @@ class MainWindow(QMainWindow):
     def zoom_actual(self) -> None:
         """紙に刷ったときと同じ大きさで表示する。
 
-        mm で作る道具なので、実際の大きさで一度確かめられると
+        px で作る道具なので、原寸（1シーンpx＝1画面px）で一度確かめられると
         文字の詰まり具合や余白の判断がしやすい。
         """
         percent = self.view.zoom_percent()
@@ -435,7 +434,7 @@ class MainWindow(QMainWindow):
         size = self.state.page.size
         self.page_label.setText(
             f"ページ {self.state.page_index + 1} / {self.state.page_count}"
-            f"（{size.w:.0f} × {size.h:.0f} mm）"
+            f"（{size.w:.0f} × {size.h:.0f} px）"
         )
 
         self.hint_label.setText(self._hint())
@@ -487,7 +486,7 @@ class MainWindow(QMainWindow):
         if image is not None:
             r = image.rect
             w, h = image.src_px
-            return f"画像を選択中: {r.w:.1f} × {r.h:.1f} mm（元 {w}×{h} px）"
+            return f"画像を選択中: {r.w:.0f} × {r.h:.0f} px（元 {w}×{h} px）"
 
         text = self.state.selected_text
         if text is not None:
@@ -497,7 +496,7 @@ class MainWindow(QMainWindow):
             lines = text.content.count("\n") + 1 if text.content else 0
             body = f"{lines} 行" if lines else "（未入力）"
             return (
-                f"セリフを選択中: {body} / {font.family} {font.size_mm:.1f}mm{weight}"
+                f"セリフを選択中: {body} / {font.family} {font.size_px:.0f}px{weight}"
                 f" / {TEXT_ALIGN_LABELS.get(text.align, text.align)} / {tied}"
             )
 
@@ -506,14 +505,14 @@ class MainWindow(QMainWindow):
             r = balloon.rect
             kind = "ギザギザ" if balloon.style == "jagged" else "楕円"
             tied = "コマに紐づけ" if balloon.attached_panel_id else "紐づけなし"
-            return f"吹き出しを選択中: {kind} / {r.w:.1f} × {r.h:.1f} mm / {tied}"
+            return f"吹き出しを選択中: {kind} / {r.w:.0f} × {r.h:.0f} px / {tied}"
 
         panel = self.state.selected_panel
         if panel is not None:
             b = panel.shape.bounds()
             count = len(panel.children)
             inside = f" / 画像 {count} 枚" if count else ""
-            return f"コマを選択中: {b.w:.1f} × {b.h:.1f} mm{inside}"
+            return f"コマを選択中: {b.w:.0f} × {b.h:.0f} px{inside}"
 
         return "コマ未選択"
 
@@ -662,7 +661,7 @@ class MainWindow(QMainWindow):
             target = project.pages[self.state.page_index].find(image_id)
             if isinstance(target, ImageObject):
                 target.rect = rect
-        self.state.message.emit(f"コマを埋めました（{rect.w:.1f} × {rect.h:.1f} mm）")
+        self.state.message.emit(f"コマを埋めました（{rect.w:.0f} × {rect.h:.0f} px）")
 
     # -- 吹き出し ----------------------------------------------------------
 
@@ -740,12 +739,12 @@ class MainWindow(QMainWindow):
         text = self.state.selected_text
         if text is None:
             return
-        size = round(text.font.size_mm + direction * TEXT_SIZE_STEP_MM, 2)
-        size = min(max(size, TEXT_SIZE_MIN_MM), TEXT_SIZE_MAX_MM)
-        if size == text.font.size_mm:
+        size = round(text.font.size_px + direction * TEXT_SIZE_STEP_PX, 2)
+        size = min(max(size, TEXT_SIZE_MIN_PX), TEXT_SIZE_MAX_PX)
+        if size == text.font.size_px:
             return
-        self.state.set_text_font(text.id, size_mm=size)
-        self.state.message.emit(f"文字の大きさ: {size:.1f} mm")
+        self.state.set_text_font(text.id, size_px=size)
+        self.state.message.emit(f"文字の大きさ: {size:.0f} px")
 
     def toggle_bold(self) -> None:
         text = self.state.selected_text
@@ -889,7 +888,7 @@ class MainWindow(QMainWindow):
         self.view.fit_page()
 
         where = "すべてのページ" if all_pages else f"{self.state.page_index + 1} ページ目"
-        message = f"{where}を {size.w:.0f} × {size.h:.0f} mm にしました"
+        message = f"{where}を {size.w:.0f} × {size.h:.0f} px にしました"
         if outside:
             # 勝手に動かさない。どう直すかは場面ごとに違う（要件定義 6.1）
             message += f"。{len(outside)} 個が用紙からはみ出しています"
@@ -1012,7 +1011,6 @@ class MainWindow(QMainWindow):
             dest,
             self.state.page_index,
             self.state.page_count,
-            self._export_dpi,
             self,
             self.state.page.size,
             self._export_scale,
@@ -1020,7 +1018,6 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
 
-        self._export_dpi = dialog.chosen_dpi()
         self._export_scale = dialog.chosen_scale()
         indexes = (
             list(range(self.state.page_count))
@@ -1101,9 +1098,7 @@ class MainWindow(QMainWindow):
     def _run_export(self, dest: pathlib.Path, indexes: list[int]) -> bool:
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            written = export_pages(
-                self.state, indexes, dest, self._export_dpi, self._export_scale
-            )
+            written = export_pages(self.state, indexes, dest, self._export_scale)
         except (MangaLayoutError, OSError) as e:
             QMessageBox.critical(self, "書き出せません", str(e))
             return False
@@ -1111,9 +1106,10 @@ class MainWindow(QMainWindow):
             QGuiApplication.restoreOverrideCursor()
 
         where = written[0].name if len(written) == 1 else f"{len(written)} 枚"
-        size = "" if self._export_scale == 1.0 else f"・{scale_label(self._export_scale)}"
+        px = page_px(self.state.page.size, self._export_scale)
         self.state.message.emit(
-            f"{dest} に {where} を書き出しました（{self._export_dpi} dpi{size}）"
+            f"{dest} に {where} を書き出しました"
+            f"（{scale_label(self._export_scale)}・{px[0]:,} × {px[1]:,} 画素）"
         )
         return True
 

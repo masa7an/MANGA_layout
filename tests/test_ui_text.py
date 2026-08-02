@@ -16,8 +16,9 @@ from manga_layout.model import TextObject
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import TOOL_SELECT, TOOL_TEXT
 
-PANEL = Rect(20.0, 20.0, 140.0, 110.0)
-BALLOON = Rect(40.0, 40.0, 60.0, 40.0)
+# 座標は px（要件定義 3章）。既定のセリフ 201×106 が中に収まる大きさにしてある
+PANEL = Rect(120.0, 120.0, 840.0, 660.0)
+BALLOON = Rect(240.0, 240.0, 360.0, 240.0)
 
 
 @pytest.fixture
@@ -42,7 +43,7 @@ def window_with_balloon(window):
 @pytest.fixture
 def window_with_text(window_with_balloon):
     """吹き出しの上にセリフを1つ置いた状態。セリフが選ばれている。"""
-    window_with_balloon.state.add_text(Rect(45.0, 50.0, 50.0, 20.0), "セリフ")
+    window_with_balloon.state.add_text(Rect(300.0, 300.0, 240.0, 120.0), "セリフ")
     return window_with_balloon
 
 
@@ -139,13 +140,13 @@ class TestAdd:
         assert window_with_text.state.selected_text.attached_balloon_id == balloon.id
 
     def test_吹き出しの外ならコマに紐づく(self, window_with_balloon):
-        window_with_balloon.state.add_text(Rect(120.0, 100.0, 30.0, 15.0))
+        window_with_balloon.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
         text = window_with_balloon.state.selected_text
         assert text.attached_balloon_id is None
         assert text.attached_panel_id == window_with_balloon.state.page.panels[0].id
 
     def test_どこにも重ならなければ紐づかない(self, window_with_balloon):
-        window_with_balloon.state.add_text(Rect(170.0, 250.0, 30.0, 15.0))
+        window_with_balloon.state.add_text(Rect(1020.0, 1500.0, 120.0, 60.0))
         text = window_with_balloon.state.selected_text
         assert text.attached_balloon_id is None
         assert text.attached_panel_id is None
@@ -315,21 +316,21 @@ class TestFormat:
         assert window_with_text.state.history.depth == depth
 
     def test_大きさを段階で変えられる(self, window_with_text):
-        before = window_with_text.state.selected_text.font.size_mm
+        before = window_with_text.state.selected_text.font.size_px
         window_with_text.step_text_size(1)
-        assert window_with_text.state.selected_text.font.size_mm > before
+        assert window_with_text.state.selected_text.font.size_px > before
         window_with_text.step_text_size(-1)
-        assert window_with_text.state.selected_text.font.size_mm == pytest.approx(before)
+        assert window_with_text.state.selected_text.font.size_px == pytest.approx(before)
 
     def test_小さくしすぎない(self, window_with_text):
         for _ in range(50):
             window_with_text.step_text_size(-1)
-        assert window_with_text.state.selected_text.font.size_mm >= 1.5
+        assert window_with_text.state.selected_text.font.size_px >= 9.0
 
     def test_大きくしすぎない(self, window_with_text):
         for _ in range(200):
             window_with_text.step_text_size(1)
-        assert window_with_text.state.selected_text.font.size_mm <= 30.0
+        assert window_with_text.state.selected_text.font.size_px <= 180.0
 
     def test_太字にできる(self, window_with_text):
         window_with_text.toggle_bold()

@@ -1,8 +1,8 @@
-"""ページ座標の図形。単位はミリメートル（mm、浮動小数）。
+"""ページ座標の図形。単位はピクセル（px、浮動小数）。
 
 要件定義 3章のとおり、ページ左上を原点とする絶対座標だけを扱う。
-表示倍率や書き出し dpi をあとから変えても、ここの値は変わらない。
-画面ピクセルへの換算はこの層では行わない（表示側の責務）。
+表示倍率をあとから変えても、ここの値は変わらない。画面上の位置への
+換算はこの層では行わない（表示側の責務）。
 
 `Rect` も `Polygon` も**書き換え不可**にしてある。
 1つの矩形を複数のオブジェクトが共有してしまうと、片方を動かしたつもりが
@@ -18,17 +18,20 @@ from typing import Any, Sequence
 from . import validation as v
 from .errors import ProjectFormatError
 
-# 座標の比較に使う許容誤差（mm）。0.000001mm＝1ナノメートル相当で、
-# 浮動小数の丸め誤差だけを吸収し、意味のある差は潰さない大きさ。
+# 座標の比較に使う許容誤差（px）。1px の 100 万分の 1 で、浮動小数の
+# 丸め誤差だけを吸収し、意味のある差は潰さない大きさ。
 EPS = 1e-6
 
 
 @dataclass(frozen=True)
 class Size:
-    """幅と高さ（mm）。ページ寸法に使う。"""
+    """幅と高さ（px）。ページ寸法に使う。"""
 
     w: float
     h: float
+
+    def scaled(self, factor: float) -> "Size":
+        return Size(self.w * factor, self.h * factor)
 
     def to_dict(self) -> dict[str, float]:
         return {"w": self.w, "h": self.h}
@@ -41,7 +44,7 @@ class Size:
 
 @dataclass(frozen=True)
 class Rect:
-    """左上の座標と大きさ（mm）。画像・吹き出し・テキストの配置に使う。"""
+    """左上の座標と大きさ（px）。画像・吹き出し・テキストの配置に使う。"""
 
     x: float
     y: float
@@ -71,6 +74,10 @@ class Rect:
 
     def translated(self, dx: float, dy: float) -> "Rect":
         return Rect(self.x + dx, self.y + dy, self.w, self.h)
+
+    def scaled(self, factor: float) -> "Rect":
+        """原点を軸に拡大縮小する。単位の換算（mm → px）に使う。"""
+        return Rect(self.x * factor, self.y * factor, self.w * factor, self.h * factor)
 
     def contains(self, x: float, y: float) -> bool:
         return self.x <= x <= self.right and self.y <= y <= self.bottom
@@ -146,6 +153,10 @@ class Polygon:
                 (r.x, r.bottom),
             )
         )
+
+    def scaled(self, factor: float) -> "Polygon":
+        """原点を軸に拡大縮小する。単位の換算（mm → px）に使う。"""
+        return Polygon(tuple((x * factor, y * factor) for x, y in self.points))
 
     def bounds(self) -> Rect:
         """外接する矩形。当たり判定の粗い絞り込みや、コマの寸法表示に使う。"""

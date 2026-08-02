@@ -25,6 +25,8 @@ from manga_layout.layout import (
     split_panel,
 )
 
+# 座標の計算そのものは単位に依らないので、値は px 化の前から変えていない。
+# ページの寸法（A4 相当 1240×1754px）だけが px になっている
 SETTINGS = LayoutSettings(gutter=6.0, margin=15.0, min_panel_size=5.0)
 
 
@@ -124,9 +126,9 @@ class TestSnap:
     def test_ページの端と余白が候補になる(self, page_with_panels):
         _, page = page_with_panels
         xs, ys = snap_candidates(page, None, SETTINGS)
-        assert 0.0 in xs and 210.0 in xs
-        assert 15.0 in xs and 195.0 in xs
-        assert 0.0 in ys and 297.0 in ys
+        assert 0.0 in xs and 1240.0 in xs
+        assert 15.0 in xs and 1225.0 in xs
+        assert 0.0 in ys and 1754.0 in ys
 
     def test_隙間ぶん離れた位置も候補になる(self, page_with_panels):
         # コマを並べるときに隙間を目分量で合わせずに済む
@@ -399,7 +401,7 @@ class TestFullPage:
     def test_余白を除いた全面(self):
         project = new_project()
         rect = full_page_rect(project.pages[0], SETTINGS)
-        assert rect == Rect(15.0, 15.0, 180.0, 267.0)
+        assert rect == Rect(15.0, 15.0, 1210.0, 1724.0)
 
 
 class TestDefaultPanel:
@@ -407,8 +409,8 @@ class TestDefaultPanel:
 
     def test_クリック位置が中心になる(self):
         page = new_project().pages[0]
-        rect = default_panel_rect(page, 105.0, 148.5, SETTINGS)
-        assert rect.center == pytest.approx((105.0, 148.5))
+        rect = default_panel_rect(page, 620.0, 877.0, SETTINGS)
+        assert rect.center == pytest.approx((620.0, 877.0))
 
     def test_基本枠のおよそ3分の1(self):
         page = new_project().pages[0]

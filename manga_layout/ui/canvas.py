@@ -1,6 +1,6 @@
 """ページの表示と、コマの操作。
 
-**シーンの座標をそのまま mm として使う。** 拡大縮小は表示側の変換だけで行い、
+**シーンの座標をそのまま px として使う。** 拡大縮小は表示側の変換だけで行い、
 モデルの値は一切触らない。おかげでどの倍率でも同じ計算が使え、
 当たり判定も `manga_layout.layout`（Qt を使わない側）に任せられる。
 
@@ -62,7 +62,6 @@ from ..layout import (
 from ..model import SLANT_RIGHT, BalloonObject, ImageObject, Panel, TextObject
 from .render import (
     TEXT_ALIGN_FLAGS,
-    TEXT_FONT_SCALE,
     DragPreview,
     PageRenderer,
     cosmetic_pen,
@@ -93,7 +92,7 @@ IMAGE_ACCENT = QColor("#FB8C00")
 # 吹き出しを選んでいるときの色。コマ（青）・画像（橙）と重ならない色にする
 BALLOON_ACCENT = QColor("#8E24AA")
 
-# 画面上での大きさ（ピクセル）。表示倍率で割って mm に直して使う
+# 画面上での大きさ（画面ピクセル）。表示倍率で割ってシーンの px に直して使う
 HANDLE_PX = 9.0
 # 斜めの境界を掴める範囲（ピクセル）。**描く印の大きさは `HANDLE_PX` のまま。**
 # 印を大きく描くとコマの上に居座って絵の邪魔になるので、
@@ -105,14 +104,19 @@ MIN_CREATE_PX = 6.0
 # 吸着が効き始める距離（ピクセル）
 SNAP_PX = 8.0
 
+# ページ全体を表示するときに、用紙の外に残す余白（シーンの px）
+FIT_MARGIN_PX = 30.0
+
 # ホイール1目盛り／キー1回あたりの倍率。キーのほうが回数を稼ぎにくいので大きめ
 WHEEL_ZOOM_STEP = 1.15
 KEY_ZOOM_STEP = 1.25
 
-# 表示倍率の下限・上限（画面のピクセル数 ÷ mm）。
-# 際限なく縮小・拡大できると、行き過ぎたときに戻ってこられなくなる
-MIN_VIEW_SCALE = 0.3
-MAX_VIEW_SCALE = 40.0
+# 表示倍率の下限・上限（画面のピクセル数 ÷ シーンの px）。
+# 際限なく縮小・拡大できると、行き過ぎたときに戻ってこられなくなる。
+# 1.0 が原寸（シーンの 1px が画面の 1px）。A4 相当は 1240×1754 なので、
+# 1ページ全体を見るには 0.4 前後まで縮む必要がある
+MIN_VIEW_SCALE = 0.05
+MAX_VIEW_SCALE = 8.0
 
 # 拡大・縮小のキー。`+` は配列によって Shift+= になるので `=` も拾う
 ZOOM_IN_KEYS = (Qt.Key.Key_Plus, Qt.Key.Key_Equal)
@@ -305,7 +309,7 @@ class PageScene(QGraphicsScene):
             painter.drawRect(QRectF(cx - size / 2, cy - size / 2, size, size))
 
     def _draw_size_hint(self, painter: QPainter, rect: Rect) -> None:
-        """操作中のコマの寸法を、その場に mm で出す。
+        """操作中のコマの寸法を、その場に px で出す。
 
         文字は表示倍率の影響を受けないよう、変換を外してから描く。
         位置だけは外す前の変換で求めておく。
@@ -315,7 +319,7 @@ class PageScene(QGraphicsScene):
         painter.resetTransform()
         painter.setPen(QPen(QColor("#FFFFFF")))
         painter.drawText(
-            QPointF(corner.x() + 4, corner.y() - 6), f"{rect.w:.1f} × {rect.h:.1f} mm"
+            QPointF(corner.x() + 4, corner.y() - 6), f"{rect.w:.0f} × {rect.h:.0f} px"
         )
         painter.restore()
 
@@ -333,8 +337,10 @@ class TextEditorItem(QGraphicsTextItem):
         self._view = view
         self._closing = False
 
-        scale = TEXT_FONT_SCALE
-        self.setFont(text_font(text.font, scale))
+        # 座標系が px なので、フォントの画素数をそのまま渡せる。
+        # mm だった頃は、小さすぎて丸められるのを避けるために 20 倍で作って
+        # 1/20 に縮めていた（旧 TEXT_FONT_SCALE）
+        self.setFont(text_font(text.font))
         self.setDefaultTextColor(QColor("#000000"))
 
         option = self.document().defaultTextOption()
@@ -346,16 +352,15 @@ class TextEditorItem(QGraphicsTextItem):
         option.setWrapMode(QTextOption.WrapMode.NoWrap)
         self.document().setDefaultTextOption(option)
         self.document().setDocumentMargin(0.0)
-        self.setTextWidth(text.rect.w * scale)
+        self.setTextWidth(text.rect.w)
 
-        self.setScale(1.0 / scale)
         self.setZValue(1000)
         self._center_in(text.rect)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
 
     def _center_in(self, rect: Rect) -> None:
         """確定後の描画（上下中央）に合わせて置く。"""
-        height = self.boundingRect().height() / TEXT_FONT_SCALE
+        height = self.boundingRect().height()
         self.setPos(rect.x, rect.y + max(0.0, (rect.h - height) / 2.0))
 
     def keyPressEvent(self, event) -> None:
@@ -386,7 +391,7 @@ class TextEditorItem(QGraphicsTextItem):
 
 
 class PageView(QGraphicsView):
-    """マウスとキーの受け口。当たり判定は mm 空間で行う。"""
+    """マウスとキーの受け口。当たり判定はシーンの px 空間で行う。"""
 
     def __init__(self, state: EditorState):
         # Qt の初期化より先に属性を持たせない（基底の __init__ が済むまで代入できない）
@@ -427,7 +432,7 @@ class PageView(QGraphicsView):
     def view_scale(self) -> float:
         return self.transform().m11()
 
-    def _mm(self, event) -> tuple[float, float]:
+    def _scene_px(self, event) -> tuple[float, float]:
         point = self.mapToScene(event.position().toPoint())
         return point.x(), point.y()
 
@@ -460,20 +465,26 @@ class PageView(QGraphicsView):
 
     def fit_page(self) -> None:
         page = self.state.page
-        self.fitInView(QRectF(-5, -5, page.size.w + 10, page.size.h + 10), Qt.AspectRatioMode.KeepAspectRatio)
+        self.fitInView(
+            QRectF(
+                -FIT_MARGIN_PX,
+                -FIT_MARGIN_PX,
+                page.size.w + FIT_MARGIN_PX * 2,
+                page.size.h + FIT_MARGIN_PX * 2,
+            ),
+            Qt.AspectRatioMode.KeepAspectRatio,
+        )
 
     # -- 拡大縮小・画面移動 ------------------------------------------------
 
     def zoom_percent(self) -> float:
-        """いまの表示倍率（%）。100% で用紙が原寸に見える。
+        """いまの表示倍率（%）。**100% でシーンの 1px が画面の 1px。**
 
-        画面の物理的な解像度から求める。mm で作る道具なので、
-        「紙に刷ったときの大きさ」を基準にできるほうが分かりやすい。
+        画面の物理的な解像度は見ない。この道具の出力はウェブで読む絵で、
+        紙に刷ったときの大きさを基準にしても意味がない（要件定義 1章）。
+        「100% ＝ 書き出した PNG を等倍で見たときの見え方」になる。
         """
-        screen = self.screen()
-        if screen is None or screen.physicalDotsPerInch() <= 0:
-            return self.view_scale * 100.0
-        return self.view_scale / (screen.physicalDotsPerInch() / 25.4) * 100.0
+        return self.view_scale * 100.0
 
     def zoom_by(self, factor: float, *, at_mouse: bool = True) -> bool:
         """表示倍率を `factor` 倍する。上下限で止める。変わったら True。
@@ -587,7 +598,7 @@ class PageView(QGraphicsView):
             super().mousePressEvent(event)
             return
 
-        x, y = self._mm(event)
+        x, y = self._scene_px(event)
         tool = self.state.tool
 
         # 入力中に画面を触ったら、そこで確定してから次の操作へ移る
@@ -820,7 +831,7 @@ class PageView(QGraphicsView):
             super().mouseDoubleClickEvent(event)
             return
 
-        x, y = self._mm(event)
+        x, y = self._scene_px(event)
 
         text = text_at(self.state.page, x, y)
         if text is not None:
@@ -855,7 +866,7 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        x, y = self._mm(event)
+        x, y = self._scene_px(event)
 
         if self.state.tool in SPLIT_TOOLS:
             self._update_split_preview(x, y)
@@ -1071,7 +1082,7 @@ class PageView(QGraphicsView):
         self.state.select(panel.id)
         self.state.set_tool(TOOL_SELECT)
         self.state.message.emit(
-            f"コマを追加しました（{rect.w:.1f} × {rect.h:.1f} mm）。"
+            f"コマを追加しました（{rect.w:.0f} × {rect.h:.0f} px）。"
             "位置と大きさを調整できます"
         )
 
@@ -1194,7 +1205,7 @@ class PageView(QGraphicsView):
                 target = project.pages[self.state.page_index].find(image_id)
                 if isinstance(target, ImageObject):
                     target.rect = rect
-            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return
 
         text = self.state.selected_text
@@ -1206,7 +1217,7 @@ class PageView(QGraphicsView):
                 target = project.pages[self.state.page_index].find(text_id)
                 if isinstance(target, TextObject):
                     target.rect = rect
-            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return
 
         balloon = self.state.selected_balloon
@@ -1218,7 +1229,7 @@ class PageView(QGraphicsView):
                 target = project.pages[self.state.page_index].find(balloon_id)
                 if isinstance(target, BalloonObject):
                     target.rect = rect
-            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return
 
         panel = self.state.selected_panel
@@ -1237,14 +1248,14 @@ class PageView(QGraphicsView):
                 set_slant_pair_rect(
                     page, page.slant_pair_of(panel_id), rect, self.state.settings
                 )
-            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return
 
         if panel.shape.bounds() == rect:
             return
         with self.state.edit("コマの大きさ変更") as project:
             set_panel_rect(project.pages[self.state.page_index].panel(panel_id), rect)
-        self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+        self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
 
     # -- 分割 --------------------------------------------------------------
 
