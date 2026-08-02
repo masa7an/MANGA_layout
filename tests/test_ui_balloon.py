@@ -107,6 +107,56 @@ def click(view, x: float, y: float) -> None:
     release(view, x, y)
 
 
+def balloon_menu_items(window):
+    """「吹き出し」メニューの項目（区切り線を除く）。"""
+    for action in window.menuBar().actions():
+        if action.text().startswith("吹き出し"):
+            return [a for a in action.menu().actions() if not a.isSeparator()]
+    raise AssertionError("吹き出しメニューが見つかりません")
+
+
+class TestBalloonMenu:
+    """メニューから何もできない状態を作らないこと。
+
+    一時期、選択中の吹き出しに対する操作しか置いていなかったため、
+    1つも作っていない間はメニュー全体がグレーになり、
+    どこから作るのか分からなくなっていた。
+    """
+
+    def test_何も選んでいなくても作れる項目がある(self, window):
+        usable = [a for a in balloon_menu_items(window) if a.isEnabled()]
+        assert usable, "吹き出しメニューが全部グレーになっている"
+
+    def test_追加の項目が先頭にある(self, window):
+        items = balloon_menu_items(window)
+        assert items[0].isEnabled() and items[1].isEnabled()
+        assert "追加" in items[0].text()
+        assert "追加" in items[1].text()
+
+    def test_追加の項目から道具に切り替わる(self, window):
+        items = balloon_menu_items(window)
+        items[0].trigger()
+        assert window.state.tool == TOOL_BALLOON
+        items[1].trigger()
+        assert window.state.tool == TOOL_BALLOON_JAGGED
+
+    def test_道具バーと同じ項目を指す(self, window):
+        """別々の項目にすると、選ばれている印が片方にしか付かない。"""
+        items = balloon_menu_items(window)
+        assert items[0] is window._tool_actions[TOOL_BALLOON]
+        assert items[1] is window._tool_actions[TOOL_BALLOON_JAGGED]
+
+    def test_選択中だけ使える項目もある(self, window_with_balloon):
+        items = balloon_menu_items(window_with_balloon)
+        assert all(a.isEnabled() for a in items)
+
+    def test_選択を外すと編集の項目は戻る(self, window_with_balloon):
+        window_with_balloon.state.select(None)
+        labels = {a.text(): a.isEnabled() for a in balloon_menu_items(window_with_balloon)}
+        assert labels["楕円にする"] is False
+        assert labels["しっぽを消す"] is False
+
+
 class TestAdd:
     def test_クリックで置ける(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_BALLOON)

@@ -51,8 +51,10 @@ TOOL_LABELS = {
     TOOL_PANEL: "コマ追加",
     TOOL_SPLIT_H: "横に分割",
     TOOL_SPLIT_V: "縦に分割",
-    TOOL_BALLOON: "吹き出し",
-    TOOL_BALLOON_JAGGED: "吹き出し（ギザ）",
+    # 「吹き出し」メニューの中にも並べるので、そこで
+    # 「吹き出し > 吹き出し」と重ならない言い方にしてある
+    TOOL_BALLOON: "楕円を追加",
+    TOOL_BALLOON_JAGGED: "ギザギザを追加",
 }
 
 # どの道具がどの種類の吹き出しを作るか

@@ -106,7 +106,34 @@ class MainWindow(QMainWindow):
         self.addAction(action)
         return action
 
+    def _build_tool_actions(self) -> None:
+        """道具の切り替え。メニューより先に作る。
+
+        道具メニューと吹き出しメニューの両方から同じ項目を出すため。
+        別々の項目にすると、選ばれている印がどちらか片方にしか付かない。
+        """
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for tool, shortcut in (
+            (TOOL_SELECT, "V"),
+            (TOOL_PANEL, "P"),
+            (TOOL_SPLIT_H, "H"),
+            (TOOL_SPLIT_V, "J"),
+            (TOOL_BALLOON, "B"),
+            (TOOL_BALLOON_JAGGED, "G"),
+        ):
+            action = QAction(f"{TOOL_LABELS[tool]} ({shortcut})", self)
+            action.setCheckable(True)
+            action.setShortcut(QKeySequence(shortcut))
+            action.triggered.connect(lambda _checked=False, t=tool: self.state.set_tool(t))
+            group.addAction(action)
+            self.addAction(action)
+            self._tool_actions[tool] = action
+        self._tool_actions[TOOL_SELECT].setChecked(True)
+
     def _build_menus(self) -> None:
+        self._build_tool_actions()
+
         file_menu = self.menuBar().addMenu("ファイル(&F)")
         file_menu.addAction(self._act("新規作成", self.new_project, "Ctrl+N"))
         file_menu.addAction(self._act("開く...", self.open_project, "Ctrl+O"))
@@ -144,6 +171,13 @@ class MainWindow(QMainWindow):
         image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
 
         balloon_menu = self.menuBar().addMenu("吹き出し(&B)")
+        # まず「作る」を置く。これが無いと、吹き出しを1つも選んでいない間は
+        # メニュー全体がグレーになり、どこから作るのか分からなくなる
+        balloon_menu.addAction(self._tool_actions[TOOL_BALLOON])
+        balloon_menu.addAction(self._tool_actions[TOOL_BALLOON_JAGGED])
+        balloon_menu.addSeparator()
+
+        # ここから下は選択中の吹き出しに対する操作
         self.balloon_actions: list[QAction] = []
         for label, slot in (
             ("楕円にする", lambda: self.set_balloon_style("ellipse")),
@@ -163,25 +197,8 @@ class MainWindow(QMainWindow):
         self.balloon_actions.append(self.attach_action)
 
         tool_menu = self.menuBar().addMenu("道具(&T)")
-        group = QActionGroup(self)
-        group.setExclusive(True)
-        for tool, shortcut in (
-            (TOOL_SELECT, "V"),
-            (TOOL_PANEL, "P"),
-            (TOOL_SPLIT_H, "H"),
-            (TOOL_SPLIT_V, "J"),
-            (TOOL_BALLOON, "B"),
-            (TOOL_BALLOON_JAGGED, "G"),
-        ):
-            action = QAction(f"{TOOL_LABELS[tool]} ({shortcut})", self)
-            action.setCheckable(True)
-            action.setShortcut(QKeySequence(shortcut))
-            action.triggered.connect(lambda _checked=False, t=tool: self.state.set_tool(t))
-            group.addAction(action)
+        for action in self._tool_actions.values():
             tool_menu.addAction(action)
-            self.addAction(action)
-            self._tool_actions[tool] = action
-        self._tool_actions[TOOL_SELECT].setChecked(True)
 
         page_menu = self.menuBar().addMenu("ページ(&P)")
         page_menu.addAction(self._act("ページを追加", self.add_page, "Ctrl+Shift+N"))
@@ -198,7 +215,14 @@ class MainWindow(QMainWindow):
         bar = QToolBar("道具", self)
         bar.setMovable(False)
         self.addToolBar(bar)
-        for tool in (TOOL_SELECT, TOOL_PANEL, TOOL_SPLIT_H, TOOL_SPLIT_V):
+        for tool in (
+            TOOL_SELECT,
+            TOOL_PANEL,
+            TOOL_SPLIT_H,
+            TOOL_SPLIT_V,
+            TOOL_BALLOON,
+            TOOL_BALLOON_JAGGED,
+        ):
             bar.addAction(self._tool_actions[tool])
         bar.addSeparator()
         bar.addAction(self._act("← 前ページ", self.prev_page))
