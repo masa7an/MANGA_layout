@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
 from ..geometry import Rect
 from ..layout import (
+    default_panel_rect,
     handle_at,
     handle_positions,
     panel_at,
@@ -41,7 +42,8 @@ PLACEHOLDER = QColor("#9FB2BF")
 
 # 画面上での大きさ（ピクセル）。表示倍率で割って mm に直して使う
 HANDLE_PX = 9.0
-# これ以下の大きさで離した場合、コマ追加を取り消す（誤クリック対策）
+# これ以下の大きさで離した場合、ドラッグではなくクリックとみなして
+# 既定の大きさのコマを置く
 MIN_CREATE_PX = 6.0
 # 吸着が効き始める距離（ピクセル）
 SNAP_PX = 8.0
@@ -254,6 +256,8 @@ class PageView(QGraphicsView):
     def _on_tool_changed(self) -> None:
         self._scene.split_preview = None
         self._reset_drag()
+        # 道具ごとに形が変わるので、次に動かすまで前の形が残らないようにする
+        self.viewport().unsetCursor()
         self.viewport().update()
 
     def _reset_drag(self) -> None:
@@ -313,26 +317,26 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        if tool == TOOL_PANEL:
+        handle = self._handle_at_point(x, y)
+        hit = panel_at(self.state.page, x, y)
+
+        # コマ追加の道具でも、既にあるコマやそのつまみの上なら編集を優先する。
+        # 何も無いところを押したときだけ新しいコマを作る
+        if tool == TOOL_PANEL and handle is None and hit is None:
             self._mode = "create"
             self._grab = (x, y)
             self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
             event.accept()
             return
 
-        # 選択の道具
-        panel = self.state.selected_panel
-        if panel is not None:
-            handle = handle_at(panel.shape.bounds(), x, y, HANDLE_PX / self.view_scale)
-            if handle is not None:
-                self._mode = "resize"
-                self._handle = handle
-                self._origin_rect = panel.shape.bounds()
-                self._scene.preview_rect = self._origin_rect
-                event.accept()
-                return
+        if handle is not None and self.state.selected_panel is not None:
+            self._mode = "resize"
+            self._handle = handle
+            self._origin_rect = self.state.selected_panel.shape.bounds()
+            self._scene.preview_rect = self._origin_rect
+            event.accept()
+            return
 
-        hit = panel_at(self.state.page, x, y)
         self.state.select(hit.id if hit is not None else None)
         if hit is not None:
             self._mode = "move"
@@ -404,12 +408,12 @@ class PageView(QGraphicsView):
             return
 
         preview = self._scene.preview_rect
-        mode, origin = self._mode, self._origin_rect
+        mode, origin, press = self._mode, self._origin_rect, self._grab
         self._reset_drag()
 
         if preview is not None:
             if mode == "create":
-                self._apply_create(preview)
+                self._apply_create(preview, press)
             elif mode == "move" and origin is not None:
                 self._apply_move(origin, preview)
             elif mode == "resize":
@@ -418,29 +422,47 @@ class PageView(QGraphicsView):
         self.viewport().update()
         event.accept()
 
-    def _update_cursor(self, x: float, y: float) -> None:
+    def _handle_at_point(self, x: float, y: float) -> str | None:
+        """その位置にある、選択中のコマのつまみ。無ければ None。"""
         panel = self.state.selected_panel
-        if panel is not None:
-            handle = handle_at(panel.shape.bounds(), x, y, HANDLE_PX / self.view_scale)
-            if handle is not None:
-                self.viewport().setCursor(_HANDLE_CURSORS[handle])
-                return
-        if panel_at(self.state.page, x, y) is not None:
+        if panel is None:
+            return None
+        return handle_at(panel.shape.bounds(), x, y, HANDLE_PX / self.view_scale)
+
+    def _update_cursor(self, x: float, y: float) -> None:
+        handle = self._handle_at_point(x, y)
+        if handle is not None:
+            self.viewport().setCursor(_HANDLE_CURSORS[handle])
+        elif panel_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+        elif self.state.tool == TOOL_PANEL:
+            # ここを押せばコマが作られる、と分かるようにする
+            self.viewport().setCursor(Qt.CursorShape.CrossCursor)
         else:
             self.viewport().unsetCursor()
 
     # -- 確定 --------------------------------------------------------------
 
-    def _apply_create(self, rect: Rect) -> None:
+    def _apply_create(self, rect: Rect, press: tuple[float, float]) -> None:
+        """コマを1つ作り、選択して編集できる状態にする。
+
+        作り終えたら選択の道具に戻す。追加のあとは位置と大きさを整える
+        のが普通で、続けて追加することは少ない。道具を残しておくと、
+        整えようとした操作が次のコマの追加になってしまう（要件定義 6.9）。
+        """
         minimum = MIN_CREATE_PX / self.view_scale
         if rect.w < minimum or rect.h < minimum:
-            # 誤クリックでの極小コマを作らない
-            return
+            # ドラッグと呼べない動き。クリックで置いたものとして扱う
+            rect = default_panel_rect(self.state.page, press[0], press[1], self.state.settings)
+
         with self.state.edit("コマの追加") as project:
             panel = project.add_panel(self.state.page, rect)
         self.state.select(panel.id)
-        self.state.message.emit(f"コマを追加しました（{rect.w:.1f} × {rect.h:.1f} mm）")
+        self.state.set_tool(TOOL_SELECT)
+        self.state.message.emit(
+            f"コマを追加しました（{rect.w:.1f} × {rect.h:.1f} mm）。"
+            "位置と大きさを調整できます"
+        )
 
     def _apply_move(self, origin: Rect, final: Rect) -> None:
         dx, dy = final.x - origin.x, final.y - origin.y

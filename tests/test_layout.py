@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from manga_layout import Rect, new_project
+from manga_layout import Rect, Size, new_project
 from manga_layout.layout import (
     LayoutSettings,
+    default_panel_rect,
     full_page_rect,
     handle_at,
     handle_positions,
@@ -304,3 +305,42 @@ class TestFullPage:
         project = new_project()
         rect = full_page_rect(project.pages[0], SETTINGS)
         assert rect == Rect(15.0, 15.0, 180.0, 267.0)
+
+
+class TestDefaultPanel:
+    """クリックだけでコマを置いたときの大きさと位置。"""
+
+    def test_クリック位置が中心になる(self):
+        page = new_project().pages[0]
+        rect = default_panel_rect(page, 105.0, 148.5, SETTINGS)
+        assert rect.center == pytest.approx((105.0, 148.5))
+
+    def test_基本枠のおよそ3分の1(self):
+        page = new_project().pages[0]
+        inner = full_page_rect(page, SETTINGS)
+        rect = default_panel_rect(page, 105.0, 148.5, SETTINGS)
+        assert rect.w == pytest.approx(inner.w / 3.0)
+        assert rect.h == pytest.approx(inner.h / 3.0)
+
+    @pytest.mark.parametrize(
+        "x,y",
+        [(0.0, 0.0), (210.0, 297.0), (-50.0, 500.0)],
+        ids=["左上の角", "右下の角", "用紙の外"],
+    )
+    def test_用紙からはみ出さない(self, x, y):
+        # はみ出したまま作ると、つまみが画面外に出て掴めなくなる
+        page = new_project().pages[0]
+        rect = default_panel_rect(page, x, y, SETTINGS)
+        assert rect.x >= 0.0 and rect.y >= 0.0
+        assert rect.right <= page.size.w and rect.bottom <= page.size.h
+
+    def test_余白のほうが大きい用紙でも潰れない(self):
+        """基本枠が0以下になる用紙。3分の1では消えてしまう。
+
+        名刺のような小さな用紙で余白の設定をそのまま使うと起こる。
+        """
+        page = new_project(size=Size(20.0, 20.0)).pages[0]
+        rect = default_panel_rect(page, 10.0, 10.0, SETTINGS)
+        assert rect.w >= SETTINGS.min_panel_size
+        assert rect.h >= SETTINGS.min_panel_size
+        assert rect.right <= page.size.w and rect.bottom <= page.size.h

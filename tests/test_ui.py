@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import Rect
-from manga_layout.layout import full_page_rect
+from manga_layout.layout import default_panel_rect, full_page_rect
 from manga_layout.storage import load_project
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import TOOL_PANEL, TOOL_SELECT, TOOL_SPLIT_H, TOOL_SPLIT_V
@@ -54,15 +54,24 @@ class TestPanelEditing:
         assert window.state.selected_id == page.panels[0].id
 
     def test_ドラッグでコマを作れる(self, window):
-        window.view._apply_create(Rect(20.0, 20.0, 80.0, 60.0))
+        window.view._apply_create(Rect(20.0, 20.0, 80.0, 60.0), (20.0, 20.0))
         assert len(window.state.page.panels) == 1
         assert window.state.page.panels[0].shape.as_rect() == Rect(20.0, 20.0, 80.0, 60.0)
 
-    def test_極小のコマは作らない(self, window):
-        # 誤クリックで見えないコマができると、選択も削除もできなくなる
+    def test_クリックだけなら既定の大きさで作る(self, window):
+        """ドラッグと呼べない動きは「そこに置く」とみなす。
+
+        以前はここで何も作らなかった。作られないと、押したのに
+        反応が無いように見える
+        """
         tiny = 1.0 / window.view.view_scale
-        window.view._apply_create(Rect(20.0, 20.0, tiny, tiny))
-        assert window.state.page.panels == []
+        window.view._apply_create(Rect(60.0, 90.0, tiny, tiny), (60.0, 90.0))
+
+        assert len(window.state.page.panels) == 1
+        rect = window.state.page.panels[0].shape.as_rect()
+        assert rect == default_panel_rect(window.state.page, 60.0, 90.0, window.state.settings)
+        # 見えない大きさのコマは作らない（選択も削除もできなくなるため）
+        assert rect.w > 1.0 and rect.h > 1.0
 
     def test_コマを動かせる(self, window):
         window.add_full_page_panel()
@@ -116,6 +125,76 @@ class TestPanelEditing:
         window.state.set_tool(TOOL_SPLIT_H)
         window.view._apply_split(100.0, 150.0)
         assert window.state.page.panels == []
+
+
+def press(view, x: float, y: float) -> None:
+    """mm 座標を画面座標に直して、左ボタンの押下を送る。"""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    position = QPointF(view.mapFromScene(QPointF(x, y)))
+    view.mousePressEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            position,
+            view.viewport().mapToGlobal(position),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
+class TestAddPanelMode:
+    """コマ追加は1回きり。追加したらすぐ編集に移る（要件定義 6.9）。
+
+    ここが崩れると、位置や大きさを整えようとした操作が
+    次のコマの追加になってしまう。
+    """
+
+    def test_追加すると選択の道具に戻る(self, window):
+        window.state.set_tool(TOOL_PANEL)
+        window.view._apply_create(Rect(20.0, 20.0, 60.0, 40.0), (20.0, 20.0))
+        assert window.state.tool == TOOL_SELECT
+
+    def test_追加したコマが選ばれている(self, window):
+        window.state.set_tool(TOOL_PANEL)
+        window.view._apply_create(Rect(20.0, 20.0, 60.0, 40.0), (20.0, 20.0))
+        assert window.state.selected_id == window.state.page.panels[0].id
+
+    def test_続けて空白を押しても追加されない(self, window):
+        window.state.set_tool(TOOL_PANEL)
+        window.view._apply_create(Rect(20.0, 20.0, 60.0, 40.0), (20.0, 20.0))
+
+        press(window.view, 160.0, 250.0)  # 何も無いところ
+
+        assert window.view._mode is None
+        assert len(window.state.page.panels) == 1
+
+    def test_空白を押すと作成が始まる(self, window):
+        window.state.set_tool(TOOL_PANEL)
+        press(window.view, 160.0, 250.0)
+        assert window.view._mode == "create"
+
+    def test_コマの上を押すと移動になる(self, window):
+        # 追加の道具のままでも、既にあるコマは掴んで動かせる
+        window.add_full_page_panel()
+        window.state.set_tool(TOOL_PANEL)
+
+        press(window.view, 105.0, 150.0)  # ページ中央＝コマの中
+
+        assert window.view._mode == "move"
+        assert len(window.state.page.panels) == 1
+
+    def test_つまみを押すと大きさ変更になる(self, window):
+        window.add_full_page_panel()
+        bounds = window.state.selected_panel.shape.bounds()
+        window.state.set_tool(TOOL_PANEL)
+
+        press(window.view, bounds.x, bounds.y)  # 左上のつまみ
+
+        assert window.view._mode == "resize"
+        assert window.view._handle == "nw"
 
 
 class TestHistoryWiring:

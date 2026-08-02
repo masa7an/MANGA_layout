@@ -19,6 +19,9 @@ from .model import ImageObject, Page, Panel, Project
 # 8方向のつまみ。n=上 s=下 w=左 e=右
 HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
 
+# クリックだけでコマを置いたときの大きさ。基本枠の何割にするか
+DEFAULT_PANEL_RATIO = 1.0 / 3.0
+
 
 @dataclass(frozen=True)
 class LayoutSettings:
@@ -264,3 +267,23 @@ def full_page_rect(page: Page, settings: LayoutSettings = DEFAULT_SETTINGS) -> R
     """余白を除いたページ全面の矩形。最初の1コマを作るときに使う。"""
     m = settings.margin
     return Rect(m, m, page.size.w - m * 2, page.size.h - m * 2)
+
+
+def default_panel_rect(
+    page: Page, x: float, y: float, settings: LayoutSettings = DEFAULT_SETTINGS
+) -> Rect:
+    """クリックした位置に置く、既定の大きさのコマ。
+
+    ドラッグせずにクリックしただけのときに使う。大きさは基本枠のおよそ
+    `DEFAULT_PANEL_RATIO`。あとから位置と大きさを整える前提の仮置きなので、
+    厳密な値である必要はない。
+
+    クリック位置を中心に置き、用紙からはみ出す場合は用紙の中へ寄せる。
+    はみ出したまま作ると、つまみが画面外に出て掴めなくなる。
+    """
+    inner = full_page_rect(page, settings)
+    w = min(max(inner.w * DEFAULT_PANEL_RATIO, settings.min_panel_size), page.size.w)
+    h = min(max(inner.h * DEFAULT_PANEL_RATIO, settings.min_panel_size), page.size.h)
+    left = min(max(x - w / 2.0, 0.0), page.size.w - w)
+    top = min(max(y - h / 2.0, 0.0), page.size.h - h)
+    return Rect(left, top, w, h)
