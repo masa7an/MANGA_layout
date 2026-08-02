@@ -24,6 +24,7 @@ from .model import (
     Page,
     Panel,
     Project,
+    SceneObject,
     SlantPair,
     TextObject,
 )
@@ -983,6 +984,32 @@ def full_page_rect(page: Page, settings: LayoutSettings = DEFAULT_SETTINGS) -> R
     """余白を除いたページ全面の矩形。最初の1コマを作るときに使う。"""
     m = settings.margin
     return Rect(m, m, page.size.w - m * 2, page.size.h - m * 2)
+
+
+def outside_page(page: Page) -> list[SceneObject]:
+    """用紙からはみ出しているコマ・吹き出し・セリフ。
+
+    ページの大きさを変えたあとに数えて知らせるためのもの（要件定義 6.1）。
+    小さい用紙に変えると、それまで紙の上にあったものが黙って外へ出る。
+    **勝手に動かして詰め直したりはしない。** 位置は利用者が決めたもので、
+    直し方（縮める／動かす／サイズを戻す）も場面ごとに違う。
+
+    コマの中の画像は数えない。コマ枠で切り抜かれるので、コマが紙の中に
+    あるかぎり画像が紙からはみ出して見えることはない。
+    """
+    paper = Rect(0.0, 0.0, page.size.w, page.size.h)
+
+    def sticks_out(r: Rect) -> bool:
+        return (
+            r.x < -EPS
+            or r.y < -EPS
+            or r.right > paper.right + EPS
+            or r.bottom > paper.bottom + EPS
+        )
+
+    found: list[SceneObject] = [p for p in page.panels if sticks_out(p.shape.bounds())]
+    found.extend(f for f in page.floating if sticks_out(f.rect))
+    return found
 
 
 def default_panel_rect(

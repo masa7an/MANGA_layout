@@ -7,6 +7,8 @@ import pathlib
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
+    QDialog,
+    QDockWidget,
     QFileDialog,
     QFontDialog,
     QLabel,
@@ -21,6 +23,7 @@ from ..layout import attach_target, cover_rect_in, full_page_rect
 from ..model import ImageObject, Panel
 from ..storage import is_project_dir, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
+from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .state import (
     TOOL_BALLOON,
     TOOL_BALLOON_JAGGED,
@@ -35,6 +38,10 @@ from .state import (
 )
 
 APP_TITLE = "漫画レイアウタ"
+
+# 表示メニューに出す、ページ一覧の開け閉め項目の名前。
+# 一覧の見出し（「ページ 1/9」）とは別に持つ（理由は `_refresh`）
+PAGES_MENU_LABEL = "ページ一覧"
 
 TEXT_ALIGN_LABELS = {"left": "左寄せ", "center": "中央寄せ", "right": "右寄せ"}
 
@@ -68,6 +75,7 @@ class MainWindow(QMainWindow):
         self._apply_initial_geometry()
 
         self._tool_actions: dict[str, QAction] = {}
+        self._build_pages_dock()
         self._build_menus()
         self._build_toolbar()
         self._build_status_bar()
@@ -106,6 +114,26 @@ class MainWindow(QMainWindow):
             width,
             height,
         )
+
+    def _build_pages_dock(self) -> None:
+        """ページ一覧。左に置く（要件定義 6.1）。
+
+        右に置くと、右綴じ（`reading_direction` が `rtl`）で読む向きと
+        ページ送りの向きが画面の中でぶつかる。作品の並びは一覧の縦方向で
+        表しているので、道具の置き場所として素直な左に寄せる。
+        """
+        self.pages_panel = PageListPanel(self.state)
+        self.pages_dock = QDockWidget("ページ", self)
+        self.pages_dock.setObjectName("pages")
+        self.pages_dock.setWidget(self.pages_panel)
+        self.pages_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        # 見出しは自前の部品にする。番号を押すと入力欄になり、そのページへ
+        # 飛べる（要件定義 6.1）。既定の題名では入力欄を置けない
+        self.pages_title = PageJumpBar(self.state, self.pages_dock)
+        self.pages_dock.setTitleBarWidget(self.pages_title)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.pages_dock)
 
     def _act(self, text: str, slot, shortcut: str | None = None, tip: str = "") -> QAction:
         action = QAction(text, self)
@@ -275,12 +303,45 @@ class MainWindow(QMainWindow):
             tool_menu.addAction(action)
 
         page_menu = self.menuBar().addMenu("ページ(&P)")
-        page_menu.addAction(self._act("ページを追加", self.add_page, "Ctrl+Shift+N"))
+        # 「追加」は必ず末尾、「挿入」は表示中のページの前。行き先の決まった
+        # ほうを別の項目にしてある（要件定義 6.1）
+        page_menu.addAction(
+            self._act("ページを追加", self.add_page, "Ctrl+Shift+N", "末尾に1枚足す")
+        )
+        page_menu.addAction(
+            self._act(
+                "ページを挿入",
+                self.insert_page,
+                "Ctrl+Shift+I",
+                "表示中のページの前に1枚差し込む",
+            )
+        )
+        self.delete_page_action = self._act("ページを削除...", self.delete_page)
+        page_menu.addAction(self.delete_page_action)
+        page_menu.addSeparator()
+
+        self.move_page_up_action = self._act(
+            "ページを前へ移動", lambda: self.move_page_by(-1), "Ctrl+Shift+PgUp"
+        )
+        self.move_page_down_action = self._act(
+            "ページを後ろへ移動", lambda: self.move_page_by(1), "Ctrl+Shift+PgDown"
+        )
+        page_menu.addAction(self.move_page_up_action)
+        page_menu.addAction(self.move_page_down_action)
+        page_menu.addSeparator()
+
+        page_menu.addAction(
+            self._act("ページサイズ...", self.change_page_size, None, "A4 / B5 / mm 指定")
+        )
         page_menu.addSeparator()
         page_menu.addAction(self._act("前のページ", self.prev_page, "PgUp"))
         page_menu.addAction(self._act("次のページ", self.next_page, "PgDown"))
 
         view_menu = self.menuBar().addMenu("表示(&V)")
+        self.pages_toggle_action = self.pages_dock.toggleViewAction()
+        self.pages_toggle_action.setText(PAGES_MENU_LABEL)
+        view_menu.addAction(self.pages_toggle_action)
+        view_menu.addSeparator()
         # 素の + / - とホイールでも拡大縮小できる（PageView 側で拾う）。
         # メニューには修飾キー付きのほうを出す。素のキーを割り当てると
         # 文字入力中に横取りしてしまうため
@@ -333,11 +394,19 @@ class MainWindow(QMainWindow):
 
     def _refresh(self) -> None:
         self.setWindowTitle(self._title())
+        size = self.state.page.size
         self.page_label.setText(
             f"ページ {self.state.page_index + 1} / {self.state.page_count}"
+            f"（{size.w:.0f} × {size.h:.0f} mm）"
         )
 
         self.hint_label.setText(self._hint())
+
+        # 「ページ [n]/総数」の見出しは PageJumpBar が自分で追いかける
+        index, count = self.state.page_index, self.state.page_count
+        self.delete_page_action.setEnabled(count > 1)
+        self.move_page_up_action.setEnabled(index > 0)
+        self.move_page_down_action.setEnabled(index < count - 1)
 
         history = self.state.history
         self.undo_action.setEnabled(history.can_undo)
@@ -706,10 +775,87 @@ class MainWindow(QMainWindow):
             panel = project.add_panel(project.pages[self.state.page_index], rect)
         self.state.select(panel.id)
 
+    # -- ページ ------------------------------------------------------------
+
     def add_page(self) -> None:
-        with self.state.edit("ページの追加") as project:
-            project.add_page(index=self.state.page_index + 1)
-        self.state.set_page_index(self.state.page_index + 1)
+        """**末尾**に1枚足して、そこへ移る。
+
+        以前は「表示中のページの次」に足していたが、一覧のカーソルが
+        どこにあるかを常に意識しているわけではないので、**思っていない
+        場所にページができる**ことがあった。行き先の決まった「追加」と、
+        位置を狙う「挿入」に分けてある（要件定義 6.1）。
+        """
+        at = self.state.add_page()
+        self.state.message.emit(f"末尾に {at + 1} ページ目を追加しました")
+
+    def insert_page(self) -> None:
+        """表示中のページの**前**に1枚差し込んで、そこへ移る。
+
+        差し込んだページがその番号を引き継ぎ、それまでのページは1つ
+        後ろへ下がる（表計算の「行の挿入」と同じ向き）。
+        """
+        at = self.state.insert_page()
+        self.state.message.emit(
+            f"表示中のページの前に差し込みました（{at + 1} ページ目）"
+        )
+
+    def delete_page(self) -> None:
+        """ページを消す。**必ず確認する**（要件定義 6.1）。
+
+        コマ1つの削除と違い、ページ1枚には積み上げた作業がまるごと乗る。
+        Delete キーには割り当てず、メニューからだけにしてあるのも同じ理由。
+        """
+        if self.state.page_count <= 1:
+            self.state.message.emit("最後の1ページは削除できません")
+            return
+
+        page = self.state.page
+        count = len(page.panels) + len(page.floating)
+        placed = f"コマ・吹き出し・セリフが {count} 個置かれています。\n" if count else ""
+        answer = QMessageBox.question(
+            self,
+            "ページを削除しますか",
+            f"{self.state.page_index + 1} ページ目を削除します。\n"
+            f"{placed}元に戻す（Ctrl+Z）で戻せます。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if self.state.delete_page():
+            self.state.message.emit("ページを削除しました")
+
+    def move_page_by(self, offset: int) -> None:
+        """表示中のページを前後へ1枚ぶん動かす。
+
+        一覧のドラッグと同じことをキーからも行えるようにしてある。
+        並べ替えのために一度マウスへ持ち替えなくて済む。
+        """
+        index = self.state.page_index
+        if not self.state.move_page(index, index + offset):
+            self.state.message.emit("これ以上動かせません")
+            return
+        self.state.message.emit(
+            f"{index + 1} ページ目を {index + offset + 1} ページ目へ移しました"
+        )
+
+    def change_page_size(self) -> None:
+        """ページの大きさを変える（A4 / B5 / カスタム）。"""
+        dialog = PageSizeDialog(self.state.page.size, self.state.page_count, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        size = dialog.chosen_size()
+        all_pages = dialog.apply_to_all()
+        outside = self.state.set_page_size(size, all_pages=all_pages)
+        self.view.fit_page()
+
+        where = "すべてのページ" if all_pages else f"{self.state.page_index + 1} ページ目"
+        message = f"{where}を {size.w:.0f} × {size.h:.0f} mm にしました"
+        if outside:
+            # 勝手に動かさない。どう直すかは場面ごとに違う（要件定義 6.1）
+            message += f"。{len(outside)} 個が用紙からはみ出しています"
+        self.state.message.emit(message)
 
     def prev_page(self) -> None:
         self.state.set_page_index(self.state.page_index - 1)

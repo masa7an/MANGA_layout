@@ -7,22 +7,22 @@
 コマを `QGraphicsItem` にはせず、その都度描いている。Undo でモデルの実体が
 差し替わるため、部品を保持すると古い `Panel` を掴んだままになりやすい。
 描き直しの費用は1ページぶんなので、素直に毎回描くほうが安全で速い。
+
+用紙の中身そのものは `render.PageRenderer` が描く。ページ一覧のサムネイルと
+**同じ経路**を通すため。ここに残っているのは選択枠・つまみ・下書きといった
+「画面の道具」で、作品には出ない。
 """
 
 from __future__ import annotations
 
-import dataclasses
 import pathlib
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
-    QFont,
     QPainter,
-    QPainterPath,
     QPen,
-    QPolygonF,
     QTextCursor,
     QTextOption,
 )
@@ -34,7 +34,6 @@ from ..layout import (
     aspect_of,
     attach_target,
     balloon_at,
-    balloon_outline,
     default_balloon_rect,
     default_panel_rect,
     default_tail_tip,
@@ -52,17 +51,25 @@ from ..layout import (
     root_y_at,
     slant_boundary_x,
     slant_handle_point,
-    slant_polygons,
     slant_ratio_at,
     snap_moved_rect,
     snap_point,
     split_panel,
     split_panel_slant,
     tail_root_point,
-    tail_triangle,
     text_at,
 )
-from ..model import SLANT_RIGHT, BalloonObject, Font, ImageObject, Panel, TextObject
+from ..model import SLANT_RIGHT, BalloonObject, ImageObject, Panel, TextObject
+from .render import (
+    TEXT_ALIGN_FLAGS,
+    TEXT_FONT_SCALE,
+    DragPreview,
+    PageRenderer,
+    cosmetic_pen,
+    polygon_of,
+    qrect,
+    text_font,
+)
 from .state import (
     BALLOON_TOOLS,
     DEFAULT_TEXT_SIZE,
@@ -79,19 +86,12 @@ from .state import (
 SPLIT_TOOLS = (TOOL_SPLIT_H, TOOL_SPLIT_V, TOOL_SPLIT_SLANT)
 
 CANVAS_BG = QColor("#3C3F41")
-PAGE_BG = QColor("#FFFFFF")
-PAGE_EDGE = QColor("#8A8A8A")
-PAGE_SHADOW = QColor(0, 0, 0, 70)
-MARGIN_GUIDE = QColor("#B7CEE8")
-PANEL_FILL = QColor("#F4F4F4")
 ACCENT = QColor("#1E88E5")
 # 画像を選んでいるときの色。コマの選択（青）と見分けるために変える。
 # 同じ色だと、いま動かすのがコマなのか中の絵なのか分からない
 IMAGE_ACCENT = QColor("#FB8C00")
 # 吹き出しを選んでいるときの色。コマ（青）・画像（橙）と重ならない色にする
 BALLOON_ACCENT = QColor("#8E24AA")
-PLACEHOLDER = QColor("#9FB2BF")
-MISSING_IMAGE = QColor("#D9534F")
 
 # 画面上での大きさ（ピクセル）。表示倍率で割って mm に直して使う
 HANDLE_PX = 9.0
@@ -123,17 +123,6 @@ ZOOM_OUT_KEYS = (Qt.Key.Key_Minus,)
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 IMAGE_FILE_FILTER = "画像 (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;すべてのファイル (*)"
 
-# 文字の大きさは mm で持っているが、Qt のフォントは**整数の画素数**でしか
-# 指定できない。3.5mm をそのまま渡すと 3 か 4 に丸められ、狙った大きさに
-# ならない。いったんこの倍率で大きく作り、描くときに同じ倍率で縮めて合わせる
-TEXT_FONT_SCALE = 20.0
-
-_TEXT_ALIGN_FLAGS = {
-    "left": Qt.AlignmentFlag.AlignLeft,
-    "center": Qt.AlignmentFlag.AlignHCenter,
-    "right": Qt.AlignmentFlag.AlignRight,
-}
-
 # 縦と横が同時に変わるつまみ。ここでだけ等比かどうかが問題になる
 CORNER_HANDLES = ("nw", "ne", "se", "sw")
 ASPECT_HINT = "Shift キーを押しながらドラッグで縦横比率を維持"
@@ -151,44 +140,13 @@ _HANDLE_CURSORS = {
 }
 
 
-def _qrect(rect: Rect) -> QRectF:
-    return QRectF(rect.x, rect.y, rect.w, rect.h)
-
-
-def _polygon(points) -> QPolygonF:
-    """mm の点列を Qt の多角形にする。座標はそのまま（シーン＝mm）。"""
-    return QPolygonF([QPointF(x, y) for x, y in points])
-
-
-def text_font(font: Font, scale: float = TEXT_FONT_SCALE) -> QFont:
-    """mm 指定の書式から Qt のフォントを作る。
-
-    `scale` 倍の大きさで作る。使う側は同じ倍率で縮めてから描くこと。
-    そうしないと文字が `scale` 倍で出る。
-    """
-    qfont = QFont(font.family)
-    qfont.setPixelSize(max(1, round(font.size_mm * scale)))
-    qfont.setBold(font.bold)
-    return qfont
-
-
-def _cosmetic_pen(color: QColor, width: float = 1.0, style=Qt.PenStyle.SolidLine) -> QPen:
-    """表示倍率によらず同じ太さで描かれる線。
-
-    目安線や選択枠のような「画面の道具」に使う。作品の一部である
-    コマ枠には使わない（そちらは mm で太さが決まる）。
-    """
-    pen = QPen(color, width, style)
-    pen.setCosmetic(True)
-    return pen
-
-
 class PageScene(QGraphicsScene):
     """1ページぶんの描画。部品を持たず、その場で描く。"""
 
     def __init__(self, state: EditorState):
         super().__init__()
         self.state = state
+        self.renderer = PageRenderer(state)
         # 操作中の下書き。確定するまでモデルには触らない
         self.preview_rect: Rect | None = None
         # 分割線の下見。両端の座標で持つ。斜め・横・縦を同じ描き方で扱える
@@ -210,213 +168,18 @@ class PageScene(QGraphicsScene):
 
     # -- 用紙とコマ --------------------------------------------------------
 
+    def drag_preview(self) -> DragPreview:
+        """いまドラッグ中の下見を、描画側へ渡せる形にまとめる。"""
+        return DragPreview(
+            slant=self.slant_preview,
+            tail=self.tail_preview,
+            root=self.root_preview,
+            editing_text_id=self.editing_text_id,
+        )
+
     def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         painter.fillRect(rect, CANVAS_BG)
-
-        page = self.state.page
-        page_rect = QRectF(0.0, 0.0, page.size.w, page.size.h)
-
-        painter.fillRect(page_rect.translated(1.5, 1.5), PAGE_SHADOW)
-        painter.fillRect(page_rect, PAGE_BG)
-        painter.setPen(_cosmetic_pen(PAGE_EDGE))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(page_rect)
-
-        self._draw_margin(painter, page)
-        for panel in sorted(page.panels, key=lambda p: p.z):
-            self._draw_panel(painter, panel)
-        self._draw_floating(painter, page)
-
-    def _draw_margin(self, painter: QPainter, page) -> None:
-        """基本枠（内側の目安線）。作品には出ない、置き場所の目印。"""
-        m = self.state.settings.margin
-        if m <= 0:
-            return
-        painter.setPen(_cosmetic_pen(MARGIN_GUIDE, 1.0, Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(QRectF(m, m, page.size.w - m * 2, page.size.h - m * 2))
-
-    def _preview_shape(self, panel: Panel):
-        """境界をドラッグ中のコマの、下見の形。関係なければ None。
-
-        モデルには触らずここで作り直す。確定するまで履歴を汚さない。
-        """
-        if self.slant_preview is None:
-            return None
-        held_id, ratio = self.slant_preview
-        page = self.state.page
-        pair = page.slant_pair_of(held_id)
-        if pair is None or panel.id not in pair.members():
-            return None
-        left, right = slant_polygons(
-            page.slant_bounds(pair),
-            ratio,
-            pair.angle,
-            pair.direction,
-            self.state.settings.gutter,
-        )
-        return left if panel.id == pair.left_id else right
-
-    def _draw_panel(self, painter: QPainter, panel: Panel) -> None:
-        shape = self._preview_shape(panel)
-        if shape is None:
-            shape = panel.shape
-        polygon = QPolygonF([QPointF(x, y) for x, y in shape.points])
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(PANEL_FILL))
-        painter.drawPolygon(polygon)
-
-        if panel.children:
-            self._draw_children(painter, panel, polygon)
-
-        if panel.border.visible and panel.border.width > 0:
-            # 枠線は作品の一部なので、太さは mm のまま（倍率で見た目が変わる）
-            # 画像より後に描く。先に描くと、はみ出した絵が枠線を覆ってしまう
-            painter.setPen(QPen(QColor(panel.border.color), panel.border.width))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPolygon(polygon)
-
-    def _draw_children(self, painter: QPainter, panel: Panel, polygon: QPolygonF) -> None:
-        """コマの中の画像を、コマの形で切り抜いて描く。
-
-        切り抜きはコマのポリゴンそのものに対して行う。斜めのコマでも
-        そのまま効く（要件定義 4章でポリゴン保存にした狙いのひとつ）。
-        """
-        path = QPainterPath()
-        path.addPolygon(polygon)
-        path.closeSubpath()
-
-        painter.save()
-        painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
-        for image in sorted(panel.children, key=lambda i: i.z):
-            self._draw_image(painter, image)
-        painter.restore()
-
-    def _draw_image(self, painter: QPainter, image: ImageObject) -> None:
-        preview = self.state.preview(image.asset)
-        if preview is None:
-            self._draw_missing(painter, image)
-            return
-        painter.setOpacity(image.opacity)
-        painter.drawImage(_qrect(image.rect), preview.image)
-        painter.setOpacity(1.0)
-
-    def _draw_missing(self, painter: QPainter, image: ImageObject) -> None:
-        """実体が無い・壊れている画像の場所。
-
-        何も描かないと、絵が消えたのか最初から無かったのか分からない。
-        枠だけ出して「ここに1枚あるはず」と示す。
-        """
-        painter.setPen(_cosmetic_pen(MISSING_IMAGE, 1.0, Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        rect = _qrect(image.rect)
-        painter.drawRect(rect)
-        painter.drawLine(QLineF(rect.topLeft(), rect.bottomRight()))
-        painter.drawLine(QLineF(rect.topRight(), rect.bottomLeft()))
-
-    def _draw_floating(self, painter: QPainter, page) -> None:
-        """吹き出しとセリフ。z の小さい順に重ねる。
-
-        セリフはまだ仮表示（Day 22〜24）。何も出さないと、読み込んだ作品の
-        セリフが消えたように見えてしまうため、位置だけ示しておく。
-        """
-        for obj in sorted(page.floating, key=lambda f: f.z):
-            if isinstance(obj, BalloonObject):
-                self._draw_balloon(painter, obj)
-            elif isinstance(obj, TextObject):
-                self._draw_text(painter, obj)
-
-    def _draw_text(self, painter: QPainter, obj: TextObject) -> None:
-        """セリフ。横書き・手動改行のみ（要件定義 6.5、9章）。
-
-        その場編集の最中は描かない。編集中の文字が二重に見えてしまう。
-        """
-        if self.editing_text_id == obj.id:
-            return
-
-        if not obj.content:
-            # 空のセリフは枠だけ出す。何も描かないと、作った直後に
-            # 見失って選び直せなくなる
-            painter.setPen(_cosmetic_pen(PLACEHOLDER, 1.0, Qt.PenStyle.DotLine))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(_qrect(obj.rect))
-            return
-
-        scale = TEXT_FONT_SCALE
-        painter.save()
-        painter.setFont(text_font(obj.font, scale))
-        painter.setPen(QPen(QColor("#000000")))
-        # 大きく作ったフォントを縮めて mm に合わせる。矩形も同じ倍率で拡げる
-        painter.scale(1.0 / scale, 1.0 / scale)
-        flags = (
-            _TEXT_ALIGN_FLAGS.get(obj.align, Qt.AlignmentFlag.AlignHCenter)
-            | Qt.AlignmentFlag.AlignVCenter
-            # 折り返さない（要件定義 9章: MVP は手動改行のみ）。
-            # 枠に収まらない字も隠さずに出し、はみ出しに気づけるようにする
-            | Qt.TextFlag.TextDontClip
-        )
-        painter.drawText(
-            QRectF(
-                obj.rect.x * scale,
-                obj.rect.y * scale,
-                obj.rect.w * scale,
-                obj.rect.h * scale,
-            ),
-            flags,
-            obj.content,
-        )
-        painter.restore()
-
-    def _with_preview_tail(self, balloon: BalloonObject) -> BalloonObject:
-        """しっぽをドラッグ中なら、その値を当てはめた写しを返す。
-
-        モデルは確定するまで触らない。写しを描くことで、Undo の1手が
-        ドラッグの途中経過で埋まるのを避けられる。
-        """
-        tail = balloon.tail
-        if self.tail_preview is not None and self.tail_preview[0] == balloon.id:
-            tail = dataclasses.replace(tail, tip=self.tail_preview[1], enabled=True)
-        if self.root_preview is not None and self.root_preview[0] == balloon.id:
-            tail = dataclasses.replace(tail, root_y=self.root_preview[1], enabled=True)
-        if tail is balloon.tail:
-            return balloon
-        return dataclasses.replace(balloon, tail=tail)
-
-    def _balloon_path(self, balloon: BalloonObject) -> QPainterPath:
-        """本体としっぽを**1つの輪郭**にまとめた形。
-
-        別々に描くと継ぎ目に枠線が残り、しっぽが貼り付けた三角形に見える。
-        塗りを重ねて線を隠す手もあるが、半透明や色付きの塗りで破綻する。
-        図形を合成してから一度だけ縁取るほうが、どの配色でも正しい。
-        """
-        settings = self.state.balloon_settings
-        path = QPainterPath()
-        path.addPolygon(_polygon(balloon_outline(balloon, settings)))
-        path.closeSubpath()
-
-        triangle = tail_triangle(balloon, settings)
-        if triangle is None:
-            return path
-
-        tail = QPainterPath()
-        tail.addPolygon(_polygon(triangle))
-        tail.closeSubpath()
-        return path.united(tail)
-
-    def _draw_balloon(self, painter: QPainter, balloon: BalloonObject) -> None:
-        balloon = self._with_preview_tail(balloon)
-        path = self._balloon_path(balloon)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(balloon.fill)))
-        painter.drawPath(path)
-
-        if balloon.border.visible and balloon.border.width > 0:
-            # コマの枠線と同じく、太さは mm（作品の一部なので倍率で変わる）
-            pen = QPen(QColor(balloon.border.color), balloon.border.width)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawPath(path)
+        self.renderer.draw(painter, self.state.page, self.drag_preview())
 
     # -- 選択と下書き ------------------------------------------------------
 
@@ -434,14 +197,14 @@ class PageScene(QGraphicsScene):
         self._draw_slant_handle(painter, scale)
 
         if self.preview_rect is not None:
-            painter.setPen(_cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
+            painter.setPen(cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
             painter.setBrush(QBrush(QColor(30, 136, 229, 30)))
-            painter.drawRect(_qrect(self.preview_rect))
+            painter.drawRect(qrect(self.preview_rect))
             self._draw_size_hint(painter, self.preview_rect)
 
         if self.split_preview is not None:
             (x1, y1), (x2, y2) = self.split_preview
-            painter.setPen(_cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
+            painter.setPen(cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
             painter.drawLine(QLineF(x1, y1, x2, y2))
 
     def _accent(self) -> QColor:
@@ -461,12 +224,12 @@ class PageScene(QGraphicsScene):
         つもりで引っぱってしまう。先端と付け根も互いに別の形にして、
         どちらを動かすのか掴む前に分かるようにする。
         """
-        balloon = self._with_preview_tail(balloon)
+        balloon = self.renderer.with_preview_tail(balloon, self.drag_preview())
         if not balloon.tail.enabled:
             return
 
         size = HANDLE_PX / scale
-        painter.setPen(_cosmetic_pen(BALLOON_ACCENT, 1.2))
+        painter.setPen(cosmetic_pen(BALLOON_ACCENT, 1.2))
         painter.setBrush(QBrush(QColor("#FFFFFF")))
 
         tx, ty = balloon.tail.tip
@@ -477,7 +240,7 @@ class PageScene(QGraphicsScene):
             return
         half = size / 2.0
         painter.drawPolygon(
-            _polygon(
+            polygon_of(
                 (
                     (root[0], root[1] - half),
                     (root[0] + half, root[1]),
@@ -513,10 +276,10 @@ class PageScene(QGraphicsScene):
         size = HANDLE_PX / scale
         half = size / 2.0
         x, y = point
-        painter.setPen(_cosmetic_pen(ACCENT, 1.2))
+        painter.setPen(cosmetic_pen(ACCENT, 1.2))
         painter.setBrush(QBrush(QColor("#FFFFFF")))
         painter.drawPolygon(
-            _polygon(
+            polygon_of(
                 (
                     (x - size, y),
                     (x - half, y - half),
@@ -531,12 +294,12 @@ class PageScene(QGraphicsScene):
     def _draw_selection(
         self, painter: QPainter, bounds: Rect, scale: float, color: QColor = ACCENT
     ) -> None:
-        painter.setPen(_cosmetic_pen(color, 1.5))
+        painter.setPen(cosmetic_pen(color, 1.5))
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(_qrect(bounds))
+        painter.drawRect(qrect(bounds))
 
         size = HANDLE_PX / scale
-        painter.setPen(_cosmetic_pen(color, 1.2))
+        painter.setPen(cosmetic_pen(color, 1.2))
         painter.setBrush(QBrush(QColor("#FFFFFF")))
         for cx, cy in handle_positions(bounds).values():
             painter.drawRect(QRectF(cx - size / 2, cy - size / 2, size, size))
@@ -576,7 +339,7 @@ class TextEditorItem(QGraphicsTextItem):
 
         option = self.document().defaultTextOption()
         option.setAlignment(
-            _TEXT_ALIGN_FLAGS.get(text.align, Qt.AlignmentFlag.AlignHCenter)
+            TEXT_ALIGN_FLAGS.get(text.align, Qt.AlignmentFlag.AlignHCenter)
         )
         # 折り返さない。確定後の描画と食い違うと、入力中と結果で
         # 改行位置が変わって驚く（要件定義 9章: 手動改行のみ）

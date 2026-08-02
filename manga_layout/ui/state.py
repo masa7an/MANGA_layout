@@ -15,7 +15,7 @@ from typing import Iterator
 from PySide6.QtCore import QObject, Signal
 
 from ..assets import AssetStore, PendingAssets
-from ..geometry import Rect
+from ..geometry import Rect, Size
 from ..history import History
 from ..images import ImageCache, Preview, preview_from_bytes
 from ..layout import (
@@ -26,6 +26,7 @@ from ..layout import (
     contain_rect_in,
     default_tail_tip,
     flip_slant_pair,
+    outside_page,
     slide_slant_pair,
 )
 from ..model import (
@@ -200,7 +201,16 @@ class EditorState(QObject):
         index = max(0, min(index, self.page_count - 1))
         if index == self._page_index:
             return
-        self._page_index = index
+        self._go_to_page(index)
+
+    def _go_to_page(self, index: int) -> None:
+        """表示するページを変える。**同じ番号でも必ず知らせる。**
+
+        ページを消したり並べ替えたりすると、番号は同じでも中身が別の
+        ページになる。`set_page_index` の「同じなら何もしない」を通すと、
+        画面が前のページを描いたまま残る。
+        """
+        self._page_index = max(0, min(index, self.page_count - 1))
         self._selected_id = None
         self.page_changed.emit()
         self.selection_changed.emit()
@@ -236,6 +246,97 @@ class EditorState(QObject):
         self.selection_changed.emit()
         self.page_changed.emit()
         self.message.emit(message)
+
+    # -- ページ ------------------------------------------------------------
+
+    def add_page(self, index: int | None = None, size: Size | None = None) -> int:
+        """ページを1枚足して、そこへ移る。足した位置を返す。
+
+        `index` を渡さなければ**末尾**に足す。行き先が表示中のページに
+        左右されないので、どこを見ていても結果が変わらない。途中へ
+        差し込みたいときは `insert_page()`（要件定義 6.1）。
+        """
+        at = self.page_count if index is None else max(0, min(index, self.page_count))
+        label = "ページの追加" if index is None else "ページの挿入"
+        with self.edit(label) as project:
+            project.add_page(index=at, size=size)
+        self._go_to_page(at)
+        return at
+
+    def insert_page(self, size: Size | None = None) -> int:
+        """表示中のページの**前**に1枚差し込んで、そこへ移る。
+
+        差し込んだページが表示中のページの番号を引き継ぎ、それまでの
+        ページは1つ後ろへ下がる。表計算の「行の挿入」と同じ向き。
+        """
+        return self.add_page(self._page_index, size)
+
+    def delete_page(self, index: int | None = None) -> bool:
+        """ページを1枚消す。消したら True。
+
+        **最後の1ページは消さない。** ページが 0 枚になると表示するものが
+        無くなり、コマも吹き出しも置き場所を失う。
+        """
+        at = self._page_index if index is None else index
+        if not 0 <= at < self.page_count:
+            return False
+        if self.page_count <= 1:
+            self.message.emit("最後の1ページは削除できません")
+            return False
+
+        page_id = self.project.pages[at].id
+        with self.edit("ページの削除") as project:
+            project.remove_page(page_id)
+        # 消した位置に繰り上がってきたページを表示する。末尾を消したときだけ
+        # 1つ前へ戻る（存在しない番号が残らないようにする）
+        self._go_to_page(min(at, self.page_count - 1))
+        return True
+
+    def move_page(self, from_index: int, to_index: int) -> bool:
+        """ページの並びを変える。動いたら True。
+
+        **表示中のページは id で追いかける。** 並べ替えると番号がずれるので、
+        番号のまま留まると、動かした直後に別のページが表示される。
+        """
+        count = self.page_count
+        if not (0 <= from_index < count and 0 <= to_index < count):
+            return False
+        if from_index == to_index:
+            return False
+
+        showing = self.page.id
+        with self.edit("ページの並べ替え") as project:
+            project.move_page(from_index, to_index)
+        moved = [p.id for p in self.project.pages].index(showing)
+        self._go_to_page(moved)
+        return True
+
+    def set_page_size(self, size: Size, *, all_pages: bool = False) -> list[SceneObject]:
+        """ページの大きさを変える。用紙からはみ出したものを返す。
+
+        **次に追加するページも同じ大きさになる**（`default_page_size` を
+        合わせる）。選んだ直後に足した1枚だけ前の大きさ、という食い違いを
+        作らないため。
+
+        はみ出したものは動かさない。位置は利用者が決めたもので、直し方も
+        場面ごとに違う（要件定義 6.1）。数だけ知らせる。
+        """
+        label = "ページサイズの変更（全ページ）" if all_pages else "ページサイズの変更"
+        with self.edit(label) as project:
+            targets = project.pages if all_pages else [project.pages[self._page_index]]
+            for page in targets:
+                page.size = size
+            project.default_page_size = size
+        # 用紙の大きさが変わるとシーンの範囲も変わる
+        self.page_changed.emit()
+
+        # 全ページに適用したなら、全ページを見て数える。表示中のページだけ
+        # 見ると、見えていないページのはみ出しを黙って通すことになる
+        changed = self.project.pages if all_pages else [self.page]
+        found: list[SceneObject] = []
+        for page in changed:
+            found.extend(outside_page(page))
+        return found
 
     # -- 画像 --------------------------------------------------------------
 
