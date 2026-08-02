@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 仮想環境
+venv/
+.venv/
+
+# エディタ / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 作業用の一時ファイル
+*.log
+tmp/
+scratch/
+
+# 漫画プロジェクトの実データ（作品データはこのリポジトリに入れない）
+# アプリのソースだけを管理し、原稿は別フォルダで扱う
+/projects/
+/samples/*/assets/
+/samples/*/backup/

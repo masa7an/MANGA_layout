@@ -1,0 +1,8 @@
+# 2台のPC間で改行コードの差分が出ないよう、リポジトリ内はLFに統一する
+* text=auto eol=lf
+
+# バイナリ（差分を取らない）
+*.png binary
+*.jpg binary
+*.psd binary
+*.ico binary
