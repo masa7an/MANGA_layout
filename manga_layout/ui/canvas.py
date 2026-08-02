@@ -89,6 +89,19 @@ MIN_CREATE_PX = 6.0
 # 吸着が効き始める距離（ピクセル）
 SNAP_PX = 8.0
 
+# ホイール1目盛り／キー1回あたりの倍率。キーのほうが回数を稼ぎにくいので大きめ
+WHEEL_ZOOM_STEP = 1.15
+KEY_ZOOM_STEP = 1.25
+
+# 表示倍率の下限・上限（画面のピクセル数 ÷ mm）。
+# 際限なく縮小・拡大できると、行き過ぎたときに戻ってこられなくなる
+MIN_VIEW_SCALE = 0.3
+MAX_VIEW_SCALE = 40.0
+
+# 拡大・縮小のキー。`+` は配列によって Shift+= になるので `=` も拾う
+ZOOM_IN_KEYS = (Qt.Key.Key_Plus, Qt.Key.Key_Equal)
+ZOOM_OUT_KEYS = (Qt.Key.Key_Minus,)
+
 # ファイル選択ダイアログとドロップ受け入れで共通の対象。
 # assets.sniff_format が見分けられる形式に合わせてある
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -606,29 +619,88 @@ class PageView(QGraphicsView):
 
     # -- 拡大縮小・画面移動 ------------------------------------------------
 
+    def zoom_percent(self) -> float:
+        """いまの表示倍率（%）。100% で用紙が原寸に見える。
+
+        画面の物理的な解像度から求める。mm で作る道具なので、
+        「紙に刷ったときの大きさ」を基準にできるほうが分かりやすい。
+        """
+        screen = self.screen()
+        if screen is None or screen.physicalDotsPerInch() <= 0:
+            return self.view_scale * 100.0
+        return self.view_scale / (screen.physicalDotsPerInch() / 25.4) * 100.0
+
+    def zoom_by(self, factor: float, *, at_mouse: bool = True) -> bool:
+        """表示倍率を `factor` 倍する。上下限で止める。変わったら True。
+
+        ホイールならマウスの位置を、キーなら画面の中心を動かさない。
+        キーで押したときにカーソルの下を軸にすると、画面外へ飛んでいく。
+        """
+        target = self.view_scale * factor
+        clamped = min(max(target, MIN_VIEW_SCALE), MAX_VIEW_SCALE)
+        factor = clamped / self.view_scale
+        if abs(factor - 1.0) < 1e-9:
+            return False
+
+        previous = self.transformationAnchor()
+        self.setTransformationAnchor(
+            QGraphicsView.ViewportAnchor.AnchorUnderMouse
+            if at_mouse
+            else QGraphicsView.ViewportAnchor.AnchorViewCenter
+        )
+        self.scale(factor, factor)
+        self.setTransformationAnchor(previous)
+        self.state.message.emit(f"表示倍率 {self.zoom_percent():.0f}%")
+        return True
+
+    def zoom_in(self, *, at_mouse: bool = False) -> bool:
+        return self.zoom_by(KEY_ZOOM_STEP, at_mouse=at_mouse)
+
+    def zoom_out(self, *, at_mouse: bool = False) -> bool:
+        return self.zoom_by(1.0 / KEY_ZOOM_STEP, at_mouse=at_mouse)
+
     def wheelEvent(self, event) -> None:
-        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            factor = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-            self.scale(factor, factor)
-            event.accept()
+        """ホイールは拡大・縮小に割り当てる。
+
+        画面の上下移動はスペース+ドラッグと中ボタン+ドラッグで足りる。
+        文字の細部を見るために倍率を変える回数のほうが、ずっと多い。
+        """
+        delta = event.angleDelta().y()
+        if delta == 0:
+            super().wheelEvent(event)
             return
-        super().wheelEvent(event)
+        self.zoom_by(WHEEL_ZOOM_STEP if delta > 0 else 1.0 / WHEEL_ZOOM_STEP)
+        event.accept()
 
     def keyPressEvent(self, event) -> None:
-        if event.key() == Qt.Key.Key_Escape:
-            # 入力中の Esc は編集項目が先に受け取る。ここに来るのは
-            # 入力していないときだけ
+        # **入力中は1つも横取りしない。** キー入力はまずこの部品に届くので、
+        # ここで拾うと入力欄まで下りず、文字として打てないキーができる。
+        # Esc（取り消し）と Ctrl+Enter（確定）は入力欄自身が受け取る
+        if self.is_editing_text:
+            super().keyPressEvent(event)
+            return
+
+        key = event.key()
+        if key == Qt.Key.Key_Escape:
             self._select_parent()
             event.accept()
             return
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             # 選択中のセリフを打ち始める。ダブルクリックより速い
             text = self.state.selected_text
-            if text is not None and not self.is_editing_text:
+            if text is not None:
                 self.begin_text_edit(text.id)
                 event.accept()
                 return
-        if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
+        if key in ZOOM_IN_KEYS:
+            self.zoom_in()
+            event.accept()
+            return
+        if key in ZOOM_OUT_KEYS:
+            self.zoom_out()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._space_held = True
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
             event.accept()

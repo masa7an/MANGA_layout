@@ -263,8 +263,16 @@ class MainWindow(QMainWindow):
         page_menu.addAction(self._act("次のページ", self.next_page, "PgDown"))
 
         view_menu = self.menuBar().addMenu("表示(&V)")
-        view_menu.addAction(self._act("拡大", lambda: self.view.scale(1.2, 1.2), "Ctrl++"))
-        view_menu.addAction(self._act("縮小", lambda: self.view.scale(1 / 1.2, 1 / 1.2), "Ctrl+-"))
+        # 素の + / - とホイールでも拡大縮小できる（PageView 側で拾う）。
+        # メニューには修飾キー付きのほうを出す。素のキーを割り当てると
+        # 文字入力中に横取りしてしまうため
+        view_menu.addAction(
+            self._act("拡大", self.view.zoom_in, "Ctrl++", "+ キー / ホイール上でも拡大")
+        )
+        view_menu.addAction(
+            self._act("縮小", self.view.zoom_out, "Ctrl+-", "- キー / ホイール下でも縮小")
+        )
+        view_menu.addAction(self._act("原寸で表示", self.zoom_actual, "Ctrl+1"))
         view_menu.addAction(self._act("ページ全体を表示", self.view.fit_page, "Ctrl+0"))
 
     def _build_toolbar(self) -> None:
@@ -290,6 +298,17 @@ class MainWindow(QMainWindow):
         self.hint_label = QLabel()
         self.statusBar().addPermanentWidget(self.hint_label)
         self.statusBar().addPermanentWidget(self.page_label)
+
+    def zoom_actual(self) -> None:
+        """紙に刷ったときと同じ大きさで表示する。
+
+        mm で作る道具なので、実際の大きさで一度確かめられると
+        文字の詰まり具合や余白の判断がしやすい。
+        """
+        percent = self.view.zoom_percent()
+        if percent <= 0:
+            return
+        self.view.zoom_by(100.0 / percent, at_mouse=False)
 
     # -- 表示の更新 --------------------------------------------------------
 
