@@ -896,6 +896,15 @@ class TestSlantSplitUI:
         assert window.state.page.slant_pairs == []
 
 
+def scene_point_of(view, x: float, y: float) -> tuple[float, float]:
+    """`press` が実際に受け取る mm 座標。画面座標の整数丸めを通す。"""
+    from PySide6.QtCore import QPointF
+
+    pixel = QPointF(view.mapFromScene(QPointF(x, y))).toPoint()
+    point = view.mapToScene(pixel)
+    return point.x(), point.y()
+
+
 class TestSlantSlideUI:
     """斜めの境界を左右にずらす操作の結線。"""
 
@@ -903,6 +912,8 @@ class TestSlantSlideUI:
         window.add_full_page_panel()
         window.state.set_tool(TOOL_SPLIT_SLANT)
         window.view._apply_split(105.0, 150.0)
+        # 分割の道具は使ったあとも残る。押下の検証では選択に戻しておく
+        window.state.set_tool(TOOL_SELECT)
         page = window.state.page
         window.state.select(page.panels[0].id)
         return page
@@ -919,7 +930,50 @@ class TestSlantSlideUI:
         self._split(window)
         hx, hy = window.view._scene.slant_handle()
         assert window.view._slant_handle_at(hx, hy)
-        assert not window.view._slant_handle_at(hx + 30.0, hy)
+
+    def test_掴める範囲は描く印より広い(self, window):
+        """印は小さく描き、拾う範囲は SLANT_HANDLE_PX ぶん広く取る。"""
+        from manga_layout.ui.canvas import HANDLE_PX, SLANT_HANDLE_PX
+
+        self._split(window)
+        view = window.view
+        hx, hy = view._scene.slant_handle()
+        drawn = HANDLE_PX / view.view_scale / 2.0
+        grab = SLANT_HANDLE_PX / view.view_scale / 2.0
+
+        # 印の外だが掴める範囲の中
+        assert view._slant_handle_at(hx + (drawn + grab) / 2.0, hy)
+        # 範囲の外
+        assert not view._slant_handle_at(hx + grab * 1.5, hy)
+
+    def test_リサイズのつまみのほうが優先される(self, window):
+        """境界の掴み範囲が広いので、重なったら小さいほうを勝たせる。
+
+        逆にすると、縮小したときや細いコマで左右のつまみが覆い隠され、
+        大きさを変えられなくなる。
+        """
+        from manga_layout.ui.canvas import SLANT_HANDLE_PX
+
+        page = self._split(window)
+        view = window.view
+        outer = page.slant_bounds(page.slant_pairs[0])
+        # 左辺の中央のつまみ。境界の掴み範囲と重なるまで表示を縮める
+        # 境界のつまみから左辺までは幅の半分。掴む範囲がそれを 20mm
+        # 上回るところまで縮めて、確実に重ねる
+        scale = SLANT_HANDLE_PX / 2.0 / (outer.w / 2.0 + 20.0)
+        view.resetTransform()
+        view.scale(scale, scale)
+        wx, wy = outer.x, outer.y + outer.h / 2.0
+
+        # 押下は画面座標を整数へ丸めてから mm に戻る。ここまで縮めると
+        # 1px が数 mm になるので、実際に届く点で判定を確かめる
+        ex, ey = scene_point_of(view, wx, wy)
+        assert view._handle_at_point(ex, ey) == "w"
+        assert view._slant_handle_at(ex, ey)  # 範囲としては重なっている
+
+        press(view, wx, wy)
+        assert view._mode == "resize"
+        assert view._handle == "w"
 
     def test_斜めでないコマにはつまみが出ない(self, window):
         window.add_full_page_panel()

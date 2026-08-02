@@ -95,6 +95,10 @@ MISSING_IMAGE = QColor("#D9534F")
 
 # 画面上での大きさ（ピクセル）。表示倍率で割って mm に直して使う
 HANDLE_PX = 9.0
+# 斜めの境界を掴める範囲（ピクセル）。**描く印の大きさは `HANDLE_PX` のまま。**
+# 印を大きく描くとコマの上に居座って絵の邪魔になるので、
+# 「小さく描いて広く拾う」形にしてある
+SLANT_HANDLE_PX = 50.0
 # これ以下の大きさで離した場合、ドラッグではなくクリックとみなして
 # 既定の大きさのコマを置く
 MIN_CREATE_PX = 6.0
@@ -882,19 +886,6 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        # 斜めの境界のつまみ。角のつまみより先に見る。細いコマでは
-        # 境界と左右のつまみが近づくため、狙って掴んだほうを優先する
-        if self._slant_handle_at(x, y):
-            panel = self.state.selected_panel
-            self._mode = "slant"
-            self._scene.slant_preview = (
-                panel.id,
-                self.state.page.slant_pair_of(panel.id).ratio,
-            )
-            self.state.message.emit("左右にドラッグすると、斜めの境界が動きます")
-            event.accept()
-            return
-
         selected_bounds = self.state.selected_bounds
         if handle is not None and selected_bounds is not None:
             self._mode = "resize"
@@ -903,6 +894,20 @@ class PageView(QGraphicsView):
             self._scene.preview_rect = self._origin_rect
             # 掴んだ時点で出す。動かし始めてからでは遅い
             self._update_aspect_hint(self._shift_held(event))
+            event.accept()
+            return
+
+        # 斜めの境界のつまみ。**角と辺のつまみより後に見る。**
+        # こちらは掴む範囲が広いので、先に見ると縮小したときや細いコマで
+        # 左右のつまみを覆い隠し、大きさを変えられなくなる
+        if self._slant_handle_at(x, y):
+            panel = self.state.selected_panel
+            self._mode = "slant"
+            self._scene.slant_preview = (
+                panel.id,
+                self.state.page.slant_pair_of(panel.id).ratio,
+            )
+            self.state.message.emit("左右にドラッグすると、斜めの境界が動きます")
             event.accept()
             return
 
@@ -1016,11 +1021,19 @@ class PageView(QGraphicsView):
         return abs(x - tx) <= half and abs(y - ty) <= half
 
     def _slant_handle_at(self, x: float, y: float) -> bool:
-        """斜めの境界のつまみを掴んでいるか。"""
+        """斜めの境界のつまみを掴んでいるか。
+
+        描いてある印より**ずっと広く**取る（`SLANT_HANDLE_PX`）。左右に
+        しか動かないうえ、境界の周りは隙間で他に掴むものが無いため、
+        狙いを外しても拾えるほうが扱いやすい。
+
+        代わりに、角と辺のつまみより**後**に判定すること。先に見ると
+        こちらが広いぶん、それらを覆い隠してしまう。
+        """
         point = self._scene.slant_handle()
         if point is None:
             return False
-        half = HANDLE_PX / self.view_scale / 2.0
+        half = SLANT_HANDLE_PX / self.view_scale / 2.0
         return abs(x - point[0]) <= half and abs(y - point[1]) <= half
 
     def _tail_root_at(self, x: float, y: float) -> bool:
@@ -1258,11 +1271,12 @@ class PageView(QGraphicsView):
         elif self._tail_root_at(x, y):
             # 上下にしか動かないことを形で示す
             self.viewport().setCursor(Qt.CursorShape.SizeVerCursor)
-        elif self._slant_handle_at(x, y):
-            # 左右にしか動かないことを形で示す
-            self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
         elif handle is not None:
             self.viewport().setCursor(_HANDLE_CURSORS[handle])
+        elif self._slant_handle_at(x, y):
+            # 左右にしか動かないことを形で示す。掴む順と同じく、
+            # 角と辺のつまみより後に見る（先に見ると出る形が実際と食い違う）
+            self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
         elif image is not None and image.rect.contains(x, y):
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif balloon_at(self.state.page, x, y) is not None:
