@@ -414,19 +414,46 @@ class TestDirection:
         window_with_text.view.finish_text_edit(commit=True)
         assert only_text(window_with_text.state.page).direction == "vertical"
 
-    def test_縦書きの入力では横書きで入ると断る(self, window_with_text):
+    def test_縦書きの入力では確定後どうなるかを断る(self, window_with_text):
         # 黙っていると「縦書きにしたのに横書きで入る」と受け取られる
         window_with_text.toggle_vertical()
         window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
         message = window_with_text.statusBar().currentMessage()
         window_with_text.view.finish_text_edit(commit=False)
-        assert "横書き" in message and "縦書き" in message
+        assert "縦書き" in message
+
+    def test_縦書きの入力でも操作キーの案内を落とさない(self, window_with_text):
+        window_with_text.toggle_vertical()
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        message = window_with_text.statusBar().currentMessage()
+        window_with_text.view.finish_text_edit(commit=False)
+        for key in ("Enter", "Ctrl+Enter", "Esc"):
+            assert key in message
+
+    def test_入力の案内を長くしすぎない(self):
+        """状態表示に入り切る長さを保つ。
+
+        案内に使える幅は約 560px しかない（右の常設表示が 696px を占める）。
+        一度これを超えて **`Ctrl+Enter で確定、Esc で取り消し` が切れて
+        消えた**（2026-08-03）。
+
+        幅そのものは offscreen では測れない（フォントが無い）ので、文字数で
+        代用している。**代用でしかないことは上限の定義側に書いてある。**
+        """
+        from manga_layout.ui.canvas import (
+            TEXT_EDIT_HINT,
+            TEXT_EDIT_HINT_MAX_CHARS,
+            TEXT_EDIT_HINT_VERTICAL,
+        )
+
+        for hint in (TEXT_EDIT_HINT, TEXT_EDIT_HINT_VERTICAL):
+            assert len(hint) <= TEXT_EDIT_HINT_MAX_CHARS, hint
 
     def test_横書きの入力では余計な断りを出さない(self, window_with_text):
         window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
         message = window_with_text.statusBar().currentMessage()
         window_with_text.view.finish_text_edit(commit=False)
-        assert "横書き" not in message
+        assert "縦書き" not in message
 
     def test_縦書きでは整列の呼び名が変わる(self, window_with_text):
         # align は横書き用の項目を読み替えて使っている（→ manga_layout.vertical）
