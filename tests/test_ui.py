@@ -360,6 +360,140 @@ class TestImageSelection:
         assert window_with_image.view._origin_rect == image.rect
 
 
+def press_at(view, x: float, y: float, shift: bool = False) -> None:
+    """Shift の有無を指定して左ボタンの押下を送る。"""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    modifiers = (
+        Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
+    )
+    position = QPointF(view.mapFromScene(QPointF(x, y)))
+    view.mousePressEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            position,
+            view.viewport().mapToGlobal(position),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            modifiers,
+        )
+    )
+
+
+@pytest.fixture
+def messages(window_with_image):
+    """状態表示に流れた文言を順に控える。"""
+    seen = []
+    window_with_image.state.message.connect(seen.append)
+    return seen
+
+
+class TestAspectHint:
+    """斜めのつまみを掴んだときの Shift の案内。
+
+    等比リサイズは知らないと使えない機能なので、使う直前に出す。
+    """
+
+    def test_角のつまみを掴むと案内が出る(self, window_with_image, messages):
+        from manga_layout.ui.canvas import ASPECT_HINT
+
+        bounds = window_with_image.state.selected_image.rect
+        press_at(window_with_image.view, bounds.right, bounds.bottom)  # 右下の角
+
+        assert ASPECT_HINT in messages
+
+    @pytest.mark.parametrize("corner", ["nw", "ne", "se", "sw"])
+    def test_4つの角すべてで出る(self, window_with_image, messages, corner):
+        from manga_layout.layout import handle_positions
+        from manga_layout.ui.canvas import ASPECT_HINT
+
+        bounds = window_with_image.state.selected_image.rect
+        x, y = handle_positions(bounds)[corner]
+        press_at(window_with_image.view, x, y)
+
+        assert ASPECT_HINT in messages
+
+    @pytest.mark.parametrize("edge", ["n", "s", "e", "w"])
+    def test_辺のつまみでは出ない(self, window_with_image, messages, edge):
+        """斜めのときだけ縦横が同時に変わる。辺で出すと案内が邪魔になる。"""
+        from manga_layout.layout import handle_positions
+        from manga_layout.ui.canvas import ASPECT_HINT
+
+        bounds = window_with_image.state.selected_image.rect
+        x, y = handle_positions(bounds)[edge]
+        press_at(window_with_image.view, x, y)
+
+        assert ASPECT_HINT not in messages
+
+    def test_コマの角では出ない(self, window):
+        """コマは絵ではないので、等比に縛る意味がない。"""
+        from manga_layout.ui.canvas import ASPECT_HINT
+
+        window.add_full_page_panel()
+        seen = []
+        window.state.message.connect(seen.append)
+
+        bounds = window.state.selected_panel.shape.bounds()
+        press_at(window.view, bounds.right, bounds.bottom)
+
+        assert ASPECT_HINT not in seen
+
+    def test_Shiftを押していれば維持中と出る(self, window_with_image, messages):
+        from manga_layout.ui.canvas import ASPECT_HINT, ASPECT_HINT_HELD
+
+        bounds = window_with_image.state.selected_image.rect
+        press_at(window_with_image.view, bounds.right, bounds.bottom, shift=True)
+
+        assert ASPECT_HINT_HELD in messages
+        assert ASPECT_HINT not in messages
+
+    def test_同じ案内を出し続けない(self, window_with_image, messages):
+        """ドラッグのたびに何度も流すと、他の知らせが押し流される。"""
+        from manga_layout.ui.canvas import ASPECT_HINT
+
+        view = window_with_image.view
+        bounds = window_with_image.state.selected_image.rect
+        press_at(view, bounds.right, bounds.bottom)
+        for offset in range(1, 6):
+            drag_to(view, bounds.right + offset, bounds.bottom + offset)
+
+        # ドラッグが実際に届いていること（届いていなければ 1 回で当然）
+        assert view._scene.preview_rect != bounds
+        assert messages.count(ASPECT_HINT) == 1
+
+    def test_ドラッグ中にShiftを押すと文面が変わる(self, window_with_image, messages):
+        from manga_layout.ui.canvas import ASPECT_HINT, ASPECT_HINT_HELD
+
+        view = window_with_image.view
+        bounds = window_with_image.state.selected_image.rect
+        press_at(view, bounds.right, bounds.bottom)
+        drag_to(view, bounds.right + 5.0, bounds.bottom + 5.0)
+        drag_to(view, bounds.right + 10.0, bounds.bottom + 10.0, shift=True)
+
+        assert messages.index(ASPECT_HINT) < messages.index(ASPECT_HINT_HELD)
+
+
+def drag_to(view, x: float, y: float, shift: bool = False) -> None:
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    modifiers = (
+        Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
+    )
+    position = QPointF(view.mapFromScene(QPointF(x, y)))
+    view.mouseMoveEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            position,
+            view.viewport().mapToGlobal(position),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            modifiers,
+        )
+    )
+
+
 class TestImageEditing:
     def test_画像だけ動かせる(self, window_with_image):
         image = window_with_image.state.selected_image

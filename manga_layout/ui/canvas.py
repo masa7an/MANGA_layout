@@ -63,6 +63,11 @@ SNAP_PX = 8.0
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 IMAGE_FILE_FILTER = "画像 (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;すべてのファイル (*)"
 
+# 縦と横が同時に変わるつまみ。ここでだけ等比かどうかが問題になる
+CORNER_HANDLES = ("nw", "ne", "se", "sw")
+ASPECT_HINT = "Shift キーを押しながらドラッグで縦横比率を維持"
+ASPECT_HINT_HELD = "縦横比率を維持中（Shift）"
+
 _HANDLE_CURSORS = {
     "nw": Qt.CursorShape.SizeFDiagCursor,
     "se": Qt.CursorShape.SizeFDiagCursor,
@@ -287,6 +292,8 @@ class PageView(QGraphicsView):
         self._grab: tuple[float, float] = (0.0, 0.0)
         self._space_held = False
         self._pan_from: QPointF | None = None
+        # 状態表示に出している案内。同じ文を出し続けないための控え
+        self._hint_shown: str | None = None
 
         state.changed.connect(self._on_model_changed)
         state.selection_changed.connect(self.viewport().update)
@@ -325,6 +332,7 @@ class PageView(QGraphicsView):
         self._mode = None
         self._handle = None
         self._origin_rect = None
+        self._hint_shown = None
         self._scene.preview_rect = None
 
     def fit_page(self) -> None:
@@ -414,6 +422,8 @@ class PageView(QGraphicsView):
             self._handle = handle
             self._origin_rect = selected_bounds
             self._scene.preview_rect = self._origin_rect
+            # 掴んだ時点で出す。動かし始めてからでは遅い
+            self._update_aspect_hint(self._shift_held(event))
             event.accept()
             return
 
@@ -503,6 +513,9 @@ class PageView(QGraphicsView):
             sx, sy = snap_point(self._handle, x, y, xs, ys, threshold)
             minimum = self.state.settings.min_panel_size
             aspect = self._locked_aspect(event)
+            # ドラッグ中も出し直す。案内は数秒で消えるため、
+            # ゆっくり合わせているうちに見えなくなってしまう
+            self._update_aspect_hint(self._shift_held(event))
             if aspect > 0.0:
                 self._scene.preview_rect = resize_rect_keep_aspect(
                     self._origin_rect, self._handle, sx, sy, minimum, aspect
@@ -552,6 +565,28 @@ class PageView(QGraphicsView):
             return None
         return handle_at(bounds, x, y, HANDLE_PX / self.view_scale)
 
+    def _update_aspect_hint(self, shift_held: bool) -> None:
+        """斜めのつまみで画像を伸縮しているあいだ、Shift の案内を出す。
+
+        角のつまみは縦と横が同時に変わるので、ここでだけ等比かどうかが
+        効いてくる。辺のつまみや、コマの伸縮では出さない（コマは絵では
+        ないので等比に縛る意味がなく、案内が邪魔になる）。
+
+        押している最中は文面を変える。効いているかどうかが分からないと、
+        Shift を押したつもりで歪んだまま確定してしまう。
+        """
+        if self.state.selected_image is None or self._handle not in CORNER_HANDLES:
+            return
+        text = ASPECT_HINT_HELD if shift_held else ASPECT_HINT
+        if text == self._hint_shown:
+            return
+        self._hint_shown = text
+        self.state.message.emit(text)
+
+    @staticmethod
+    def _shift_held(event) -> bool:
+        return bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
     def _locked_aspect(self, event) -> float:
         """Shift を押しながら画像をリサイズしているときの縦横比。
 
@@ -559,9 +594,7 @@ class PageView(QGraphicsView):
         コマは絵ではないので、等比に縛る意味がない。
         """
         image = self.state.selected_image
-        if image is None:
-            return 0.0
-        if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+        if image is None or not self._shift_held(event):
             return 0.0
         return aspect_of(image.src_px)
 
