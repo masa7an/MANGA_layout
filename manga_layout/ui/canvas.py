@@ -381,7 +381,10 @@ class ConfirmHintItem(QGraphicsItem):
 
     PADDING_X = 8.0
     PADDING_Y = 4.0
-    GAP = 6.0  # 入力欄との間隔
+    # 入力欄の下端との間隔。表示倍率を無視して描くので、これは**画面上の
+    # 画素数**であって作品の座標ではない（拡大しても間隔は変わらない）。
+    # 近すぎて入力中の文字に被って見えたため 6 から広げた（2026-08-03）
+    GAP = 26.0
     LABEL = "確定（Ctrl+Enter）"
 
     BG = QColor("#1E88E5")
