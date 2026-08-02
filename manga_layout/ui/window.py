@@ -64,6 +64,18 @@ PAGES_MENU_LABEL = "ページ一覧"
 
 TEXT_ALIGN_LABELS = {"left": "左寄せ", "center": "中央寄せ", "right": "右寄せ"}
 
+# 縦書きのときの、同じ値の呼び名。`align` は横書き用に作った項目を
+# 読み替えて使っているので（→ `manga_layout.vertical`）、表示だけ言い換える。
+# 「行の始まりに寄せる」が left で、縦書きの列は上から始まるため上寄せになる
+TEXT_ALIGN_LABELS_VERTICAL = {"left": "上寄せ", "center": "中央寄せ", "right": "下寄せ"}
+
+
+def align_label(align: str, direction: str) -> str:
+    labels = (
+        TEXT_ALIGN_LABELS_VERTICAL if direction == "vertical" else TEXT_ALIGN_LABELS
+    )
+    return labels.get(align, align)
+
 # 「開く」の窓に出す対象。作品フォルダそのものではなく、その中の
 # project.json を選ばせる（理由は `open_project`）
 PROJECT_FILE_FILTER = f"作品ファイル ({PROJECT_FILENAME});;すべてのファイル (*)"
@@ -229,6 +241,10 @@ class MainWindow(QMainWindow):
             return action
 
         add("文字を入力...", self.edit_text, "F2")
+        menu.addSeparator()
+
+        self.vertical_action = add("縦書き", self.toggle_vertical, "Ctrl+T")
+        self.vertical_action.setCheckable(True)
         menu.addSeparator()
 
         for label, align in (("左寄せ", "left"), ("中央寄せ", "center"), ("右寄せ", "right")):
@@ -478,6 +494,9 @@ class MainWindow(QMainWindow):
         for action in self.text_actions:
             action.setEnabled(text is not None)
         self.bold_action.setChecked(text is not None and text.font.bold)
+        self.vertical_action.setChecked(
+            text is not None and text.direction == "vertical"
+        )
 
         balloon = self.state.selected_balloon
         for action in self.balloon_actions:
@@ -511,9 +530,10 @@ class MainWindow(QMainWindow):
             tied = "吹き出しに紐づけ" if text.attached_balloon_id else "紐づけなし"
             lines = text.content.count("\n") + 1 if text.content else 0
             body = f"{lines} 行" if lines else "（未入力）"
+            lay = "縦書き" if text.direction == "vertical" else "横書き"
             return (
                 f"セリフを選択中: {body} / {font.family} {font.size_px:.0f}px{weight}"
-                f" / {TEXT_ALIGN_LABELS.get(text.align, text.align)} / {tied}"
+                f" / {lay} / {align_label(text.align, text.direction)} / {tied}"
             )
 
         balloon = self.state.selected_balloon
@@ -745,7 +765,25 @@ class MainWindow(QMainWindow):
         if text is None or text.align == align:
             return
         self.state.set_text_align(text.id, align)
-        self.state.message.emit(f"整列: {TEXT_ALIGN_LABELS[align]}")
+        self.state.message.emit(f"整列: {align_label(align, text.direction)}")
+
+    def toggle_vertical(self) -> None:
+        """縦書きと横書きを入れ替える。
+
+        セリフごとに持つ。1 ページの中に縦書きのセリフと横書きの効果音が
+        混ざるのが普通なので、作品全体の設定にはしない。
+        """
+        text = self.state.selected_text
+        if text is None:
+            self.state.message.emit("先にセリフを選んでください")
+            return
+        to_vertical = text.direction != "vertical"
+        self.state.set_text_direction(
+            text.id, "vertical" if to_vertical else "horizontal"
+        )
+        self.state.message.emit(
+            "縦書きにしました" if to_vertical else "横書きにしました"
+        )
 
     def step_text_size(self, direction: int) -> None:
         """文字を1段階だけ大きく／小さくする。

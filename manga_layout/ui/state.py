@@ -480,6 +480,16 @@ class EditorState(QObject):
         with self._edit_text(text_id, "セリフの整列") as text:
             text.align = align
 
+    def set_text_direction(self, text_id: str, direction: str) -> None:
+        """縦書き・横書きを切り替える。
+
+        `align` は持ち替えない。横書きの左右の寄せが、縦書きでは上下の
+        寄せとして読み替えられる（→ `manga_layout.vertical`）。別々に
+        持つと、向きを往復したときにどちらの値を使うのか決められなくなる。
+        """
+        with self._edit_text(text_id, "セリフの向き") as text:
+            text.direction = direction
+
     def set_text_font(
         self,
         text_id: str,

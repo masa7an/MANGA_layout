@@ -344,15 +344,83 @@ class TestFormat:
         window_with_text.set_text_align("left")
         window_with_text.toggle_bold()
         window_with_text.step_text_size(1)
+        window_with_text.toggle_vertical()
         window_with_text.state.save(tmp_path)
 
         restored = load_project(tmp_path)
         text = [f for f in restored.pages[0].floating if isinstance(f, TextObject)][0]
         assert text.align == "left"
         assert text.font.bold
+        assert text.direction == "vertical"
         assert text.content == "セリフ"
         assert text.attached_balloon_id is not None
         assert restored.load_warnings == []
+
+
+class TestDirection:
+    """縦書きの切り替え。
+
+    **組んだ結果の見た目はここでは確かめられない**（offscreen にフォントが
+    無い）。置き場所の計算は `test_vertical.py` が Qt 抜きで押さえている。
+    ここは「操作 → モデルの変更 → 履歴・保存」だけを見る。
+    """
+
+    def test_既定は横書き(self, window_with_text):
+        assert window_with_text.state.selected_text.direction == "horizontal"
+
+    def test_切り替えられる(self, window_with_text):
+        window_with_text.toggle_vertical()
+        assert window_with_text.state.selected_text.direction == "vertical"
+        window_with_text.toggle_vertical()
+        assert window_with_text.state.selected_text.direction == "horizontal"
+
+    def test_履歴に積まれる(self, window_with_text):
+        depth = window_with_text.state.history.depth
+        window_with_text.toggle_vertical()
+        assert window_with_text.state.history.depth == depth + 1
+
+    def test_元に戻せる(self, window_with_text):
+        window_with_text.toggle_vertical()
+        window_with_text.state.undo()
+        assert only_text(window_with_text.state.page).direction == "horizontal"
+
+    def test_整列は持ち替えない(self, window_with_text):
+        # 向きを往復したときに、どちらの値を使うのか決められなくなるのを避ける
+        window_with_text.set_text_align("left")
+        window_with_text.toggle_vertical()
+        assert window_with_text.state.selected_text.align == "left"
+
+    def test_何も選んでいなければ何も起きない(self, window):
+        depth = window.state.history.depth
+        window.toggle_vertical()
+        assert window.state.history.depth == depth
+
+    def test_縦書きの印が状態に追随する(self, window_with_text):
+        assert not window_with_text.vertical_action.isChecked()
+        window_with_text.toggle_vertical()
+        assert window_with_text.vertical_action.isChecked()
+
+    def test_状態表示に向きが出る(self, window_with_text):
+        assert "横書き" in window_with_text._hint()
+        window_with_text.toggle_vertical()
+        assert "縦書き" in window_with_text._hint()
+
+    def test_縦書きでもその場編集に入れる(self, window_with_text):
+        # **入力欄は横書きのまま出る。** Qt に縦書きの入力欄が無いため、
+        # 入力中と確定後で見た目が食い違う（段階3 で決める積み残し）。
+        # ここでは、その状態でも操作が壊れないことだけを押さえる
+        window_with_text.toggle_vertical()
+        text_id = window_with_text.state.selected_text.id
+        assert window_with_text.view.begin_text_edit(text_id)
+        window_with_text.view.finish_text_edit(commit=True)
+        assert only_text(window_with_text.state.page).direction == "vertical"
+
+    def test_縦書きでは整列の呼び名が変わる(self, window_with_text):
+        # align は横書き用の項目を読み替えて使っている（→ manga_layout.vertical）
+        window_with_text.set_text_align("left")
+        assert "左寄せ" in window_with_text._hint()
+        window_with_text.toggle_vertical()
+        assert "上寄せ" in window_with_text._hint()
 
 
 class TestTextMenu:

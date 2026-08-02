@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 
+from .. import vertical
 from ..geometry import Rect
 from ..layout import balloon_outline, slant_polygons, tail_triangle
 from ..model import BalloonObject, Font, ImageObject, Page, Panel, TextObject
@@ -72,6 +73,24 @@ def text_font(font: Font) -> QFont:
     qfont = QFont(font.family)
     qfont.setPixelSize(max(1, round(font.size_px)))
     qfont.setBold(font.bold)
+    return qfont
+
+
+# 縦書き用の字形に差し替える OpenType の指定。句読点を右上へ寄せ、
+# 長音符「ー」と括弧を 90 度回し、小書き文字をずらす、といった処理を
+# **フォント側がまとめて行う**。文字ごとの例外表を自前で持たずに済む。
+VERTICAL_FEATURE = QFont.Tag("vert")
+
+
+def vertical_font(font: Font) -> QFont:
+    """縦書きのセリフ用のフォント。
+
+    `text_font` との違いは縦書き字形を有効にすることだけ。手元の日本語
+    フォント 9 種すべてで効くことを確認済み（2026-08-03）。持っていない
+    書体では横書きの字形のまま出るが、落ちはしない。
+    """
+    qfont = text_font(font)
+    qfont.setFeature(VERTICAL_FEATURE, 1)
     return qfont
 
 
@@ -289,7 +308,7 @@ class PageRenderer:
     def _draw_text(
         self, painter: QPainter, obj: TextObject, preview: DragPreview
     ) -> None:
-        """セリフ。横書き・手動改行のみ（要件定義 6.5、9章）。
+        """セリフ。手動改行のみ（要件定義 6.5、9章）。
 
         その場編集の最中は描かない。編集中の文字が二重に見えてしまう。
         """
@@ -307,8 +326,15 @@ class PageRenderer:
             return
 
         painter.save()
-        painter.setFont(text_font(obj.font))
         painter.setPen(QPen(QColor("#000000")))
+        if obj.direction == "vertical":
+            self._draw_text_vertical(painter, obj)
+        else:
+            self._draw_text_horizontal(painter, obj)
+        painter.restore()
+
+    def _draw_text_horizontal(self, painter: QPainter, obj: TextObject) -> None:
+        painter.setFont(text_font(obj.font))
         flags = (
             TEXT_ALIGN_FLAGS.get(obj.align, Qt.AlignmentFlag.AlignHCenter)
             | Qt.AlignmentFlag.AlignVCenter
@@ -317,7 +343,24 @@ class PageRenderer:
             | Qt.TextFlag.TextDontClip
         )
         painter.drawText(qrect(obj.rect), flags, obj.content)
-        painter.restore()
+
+    def _draw_text_vertical(self, painter: QPainter, obj: TextObject) -> None:
+        """縦書き。1 文字ずつ置く。
+
+        Qt には日本語の縦書きが無いので、まとめて渡す方法が使えない
+        （→ `manga_layout.vertical`）。置き場所の計算はそちらが持ち、
+        ここは受け取った正方形の中央へ 1 文字ずつ描くだけ。
+
+        **正方形の中央に置いてよい**のは、句読点を右上へ寄せる・長音符を
+        回すといった正方形の中での調整をフォントの縦書き字形が済ませて
+        いるため。こちらでずらすと二重に効いて崩れる。
+        """
+        painter.setFont(vertical_font(obj.font))
+        flags = Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextDontClip
+        for glyph in vertical.layout(
+            obj.content, obj.rect, obj.font.size_px, obj.align
+        ):
+            painter.drawText(qrect(glyph.cell), flags, glyph.ch)
 
     def with_preview_tail(
         self, balloon: BalloonObject, preview: DragPreview
