@@ -31,3 +31,11 @@ class AssetError(MangaLayoutError):
 
 class UnknownImageFormatError(AssetError):
     """画像として認識できないデータを取り込もうとした。"""
+
+
+class BrokenImageError(AssetError):
+    """形式は分かるが、画像として展開できなかった。
+
+    署名だけ正しく中身が壊れているファイルがこれ。`assets.py` は
+    バイト列しか見ないため見抜けず、実際に展開して初めて分かる。
+    """

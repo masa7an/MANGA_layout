@@ -51,6 +51,20 @@ def panel_at(page: Page, x: float, y: float) -> Panel | None:
     return None
 
 
+def image_at(panel: Panel, x: float, y: float) -> ImageObject | None:
+    """コマの中のその位置にある画像。重なっていれば手前のものを返す。
+
+    コマの外にはみ出した部分は当たらない。そこは切り抜かれて見えておらず、
+    見えていないものを掴めるとどこを触っているのか分からなくなる。
+    """
+    if not panel.shape.bounds().contains(x, y):
+        return None
+    for image in sorted(panel.children, key=lambda i: i.z, reverse=True):
+        if image.rect.contains(x, y):
+            return image
+    return None
+
+
 def handle_positions(rect: Rect) -> dict[str, tuple[float, float]]:
     """8方向のつまみの中心座標。"""
     cx, cy = rect.center
@@ -174,6 +188,87 @@ def snap_point(
 # --------------------------------------------------------------------------
 # 編集
 # --------------------------------------------------------------------------
+
+
+def aspect_of(src_px: tuple[int, int]) -> float:
+    """元画像の縦横比（幅÷高さ）。取れなければ 0。"""
+    w, h = src_px
+    if w <= 0 or h <= 0:
+        return 0.0
+    return w / h
+
+
+def _centered(outer: Rect, aspect: float, height: float) -> Rect:
+    """`outer` の中心に、縦横比 `aspect`・高さ `height` の矩形を置く。"""
+    w = height * aspect
+    cx, cy = outer.center
+    return Rect(cx - w / 2.0, cy - height / 2.0, w, height)
+
+
+def contain_rect_in(outer: Rect, src_px: tuple[int, int]) -> Rect:
+    """縦横比を保ったまま `outer` に**収まる**最大の矩形（中央寄せ）。
+
+    貼り付け直後の置き場所に使う。絵の全体が見えるので、どこが写るかを
+    利用者が見てから「コマにフィット」で埋めるか決められる。
+    """
+    aspect = aspect_of(src_px)
+    if aspect <= 0.0 or outer.w <= 0.0 or outer.h <= 0.0:
+        return outer
+    return _centered(outer, aspect, min(outer.w / aspect, outer.h))
+
+
+def cover_rect_in(outer: Rect, src_px: tuple[int, int]) -> Rect:
+    """縦横比を保ったまま `outer` を**埋める**最小の矩形（中央寄せ）。
+
+    「コマにフィット」の中身。はみ出した分はコマの形で切り抜かれるので、
+    コマの中に隙間が残らない。
+    """
+    aspect = aspect_of(src_px)
+    if aspect <= 0.0 or outer.w <= 0.0 or outer.h <= 0.0:
+        return outer
+    return _centered(outer, aspect, max(outer.w / aspect, outer.h))
+
+
+def resize_rect_keep_aspect(
+    rect: Rect, handle: str, x: float, y: float, min_size: float, aspect: float
+) -> Rect:
+    """縦横比を保ったままリサイズする（Shift 併用時）。
+
+    `aspect` は 幅÷高さ。0 以下なら普通のリサイズと同じ。
+
+    角のつまみは対角を固定して伸縮する。辺のつまみは動かせる向きが
+    1方向しかないため、もう一方の辺は中央から均等に伸ばす。
+    """
+    free = resize_rect(rect, handle, x, y, min_size)
+    if aspect <= 0.0:
+        return free
+
+    w, h = free.w, free.h
+    if handle in ("n", "s"):
+        w = h * aspect
+    elif handle in ("e", "w"):
+        h = w / aspect
+    elif w / h > aspect:
+        # 横に伸びすぎている。高さのほうに合わせる
+        w = h * aspect
+    else:
+        h = w / aspect
+
+    # 最小の大きさは縦横まとめて効かせる。片方ずつ持ち上げると
+    # そこで縦横比が崩れ、Shift を押しているのに絵が歪む
+    if w < min_size or h < min_size:
+        scale = max(min_size / w, min_size / h)
+        w *= scale
+        h *= scale
+
+    # つまんでいない側の辺を動かさない
+    left = free.right - w if "w" in handle else free.x
+    top = free.bottom - h if "n" in handle else free.y
+    if handle in ("n", "s"):
+        left = rect.center[0] - w / 2.0
+    elif handle in ("e", "w"):
+        top = rect.center[1] - h / 2.0
+    return Rect(left, top, w, h)
 
 
 def set_panel_rect(panel: Panel, rect: Rect) -> None:

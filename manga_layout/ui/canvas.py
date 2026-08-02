@@ -11,24 +11,30 @@
 
 from __future__ import annotations
 
+import pathlib
+
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QGraphicsScene, QGraphicsView
 
+from ..errors import MangaLayoutError
 from ..geometry import Rect
 from ..layout import (
+    aspect_of,
     default_panel_rect,
     handle_at,
     handle_positions,
+    image_at,
     panel_at,
     resize_rect,
+    resize_rect_keep_aspect,
     set_panel_rect,
     snap_candidates,
     snap_moved_rect,
     snap_point,
     split_panel,
 )
-from ..model import BalloonObject, Panel, TextObject
+from ..model import BalloonObject, ImageObject, Panel, TextObject
 from .state import TOOL_PANEL, TOOL_SELECT, TOOL_SPLIT_H, TOOL_SPLIT_V, EditorState
 
 CANVAS_BG = QColor("#3C3F41")
@@ -38,7 +44,11 @@ PAGE_SHADOW = QColor(0, 0, 0, 70)
 MARGIN_GUIDE = QColor("#B7CEE8")
 PANEL_FILL = QColor("#F4F4F4")
 ACCENT = QColor("#1E88E5")
+# 画像を選んでいるときの色。コマの選択（青）と見分けるために変える。
+# 同じ色だと、いま動かすのがコマなのか中の絵なのか分からない
+IMAGE_ACCENT = QColor("#FB8C00")
 PLACEHOLDER = QColor("#9FB2BF")
+MISSING_IMAGE = QColor("#D9534F")
 
 # 画面上での大きさ（ピクセル）。表示倍率で割って mm に直して使う
 HANDLE_PX = 9.0
@@ -47,6 +57,11 @@ HANDLE_PX = 9.0
 MIN_CREATE_PX = 6.0
 # 吸着が効き始める距離（ピクセル）
 SNAP_PX = 8.0
+
+# ファイル選択ダイアログとドロップ受け入れで共通の対象。
+# assets.sniff_format が見分けられる形式に合わせてある
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
+IMAGE_FILE_FILTER = "画像 (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;すべてのファイル (*)"
 
 _HANDLE_CURSORS = {
     "nw": Qt.CursorShape.SizeFDiagCursor,
@@ -125,11 +140,53 @@ class PageScene(QGraphicsScene):
         painter.setBrush(QBrush(PANEL_FILL))
         painter.drawPolygon(polygon)
 
+        if panel.children:
+            self._draw_children(painter, panel, polygon)
+
         if panel.border.visible and panel.border.width > 0:
             # 枠線は作品の一部なので、太さは mm のまま（倍率で見た目が変わる）
+            # 画像より後に描く。先に描くと、はみ出した絵が枠線を覆ってしまう
             painter.setPen(QPen(QColor(panel.border.color), panel.border.width))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPolygon(polygon)
+
+    def _draw_children(self, painter: QPainter, panel: Panel, polygon: QPolygonF) -> None:
+        """コマの中の画像を、コマの形で切り抜いて描く。
+
+        切り抜きはコマのポリゴンそのものに対して行う。斜めのコマでも
+        そのまま効く（要件定義 4章でポリゴン保存にした狙いのひとつ）。
+        """
+        path = QPainterPath()
+        path.addPolygon(polygon)
+        path.closeSubpath()
+
+        painter.save()
+        painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
+        for image in sorted(panel.children, key=lambda i: i.z):
+            self._draw_image(painter, image)
+        painter.restore()
+
+    def _draw_image(self, painter: QPainter, image: ImageObject) -> None:
+        preview = self.state.preview(image.asset)
+        if preview is None:
+            self._draw_missing(painter, image)
+            return
+        painter.setOpacity(image.opacity)
+        painter.drawImage(_qrect(image.rect), preview.image)
+        painter.setOpacity(1.0)
+
+    def _draw_missing(self, painter: QPainter, image: ImageObject) -> None:
+        """実体が無い・壊れている画像の場所。
+
+        何も描かないと、絵が消えたのか最初から無かったのか分からない。
+        枠だけ出して「ここに1枚あるはず」と示す。
+        """
+        painter.setPen(_cosmetic_pen(MISSING_IMAGE, 1.0, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        rect = _qrect(image.rect)
+        painter.drawRect(rect)
+        painter.drawLine(QLineF(rect.topLeft(), rect.bottomRight()))
+        painter.drawLine(QLineF(rect.topRight(), rect.bottomLeft()))
 
     def _draw_placeholders(self, painter: QPainter, page) -> None:
         """吹き出しとセリフの仮表示。
@@ -155,9 +212,10 @@ class PageScene(QGraphicsScene):
         if scale <= 0:
             return
 
-        panel = self.state.selected_panel
-        if panel is not None and self.preview_rect is None:
-            self._draw_selection(painter, panel.shape.bounds(), scale)
+        bounds = self.state.selected_bounds
+        if bounds is not None and self.preview_rect is None:
+            color = IMAGE_ACCENT if self.state.selected_image is not None else ACCENT
+            self._draw_selection(painter, bounds, scale, color)
 
         if self.preview_rect is not None:
             painter.setPen(_cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
@@ -174,13 +232,15 @@ class PageScene(QGraphicsScene):
                 line = QLineF(position, bounds.y, position, bounds.bottom)
             painter.drawLine(line)
 
-    def _draw_selection(self, painter: QPainter, bounds: Rect, scale: float) -> None:
-        painter.setPen(_cosmetic_pen(ACCENT, 1.5))
+    def _draw_selection(
+        self, painter: QPainter, bounds: Rect, scale: float, color: QColor = ACCENT
+    ) -> None:
+        painter.setPen(_cosmetic_pen(color, 1.5))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(_qrect(bounds))
 
         size = HANDLE_PX / scale
-        painter.setPen(_cosmetic_pen(ACCENT, 1.2))
+        painter.setPen(_cosmetic_pen(color, 1.2))
         painter.setBrush(QBrush(QColor("#FFFFFF")))
         for cx, cy in handle_positions(bounds).values():
             painter.drawRect(QRectF(cx - size / 2, cy - size / 2, size, size))
@@ -216,6 +276,7 @@ class PageView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setMouseTracking(True)
+        self.setAcceptDrops(True)
         # ここで背景ブラシを設定してはいけない。設定すると Qt はビュー側で
         # 背景を塗って終わりにし、シーンの drawBackground を呼ばなくなる
         # （＝用紙もコマも描かれない）
@@ -281,12 +342,30 @@ class PageView(QGraphicsView):
         super().wheelEvent(event)
 
     def keyPressEvent(self, event) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self._select_parent()
+            event.accept()
+            return
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
             self._space_held = True
             self.viewport().setCursor(Qt.CursorShape.OpenHandCursor)
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _select_parent(self) -> None:
+        """Esc。画像を選んでいれば入っているコマへ、そうでなければ選択解除。
+
+        踏み込んだぶんを1段ずつ戻す。いきなり選択が消えると、
+        コマを選び直す操作が余計に要る。
+        """
+        self._reset_drag()
+        image = self.state.selected_image
+        if image is None:
+            self.state.select(None)
+            return
+        panel = self.state.page.panel_of_image(image.id)
+        self.state.select(panel.id if panel is not None else None)
 
     def keyReleaseEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Space and not event.isAutoRepeat():
@@ -329,10 +408,22 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        if handle is not None and self.state.selected_panel is not None:
+        selected_bounds = self.state.selected_bounds
+        if handle is not None and selected_bounds is not None:
             self._mode = "resize"
             self._handle = handle
-            self._origin_rect = self.state.selected_panel.shape.bounds()
+            self._origin_rect = selected_bounds
+            self._scene.preview_rect = self._origin_rect
+            event.accept()
+            return
+
+        # 選択中の画像の上なら、コマに持ち替えずにその画像を動かす。
+        # ここで奪われると、選んだ絵をドラッグした瞬間にコマが動く
+        image = self.state.selected_image
+        if image is not None and image.rect.contains(x, y) and hit is not None:
+            self._mode = "move"
+            self._origin_rect = image.rect
+            self._grab = (x, y)
             self._scene.preview_rect = self._origin_rect
             event.accept()
             return
@@ -343,6 +434,31 @@ class PageView(QGraphicsView):
             self._origin_rect = hit.shape.bounds()
             self._grab = (x, y)
             self._scene.preview_rect = self._origin_rect
+        event.accept()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        """コマの中に入って、画像そのものを選ぶ。
+
+        1回のクリックでコマではなく画像が選ばれると、コマを動かすつもりの
+        ドラッグが絵だけを動かしてしまう。踏み込む操作を分けておく。
+        """
+        if event.button() != Qt.MouseButton.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+
+        x, y = self._mm(event)
+        panel = panel_at(self.state.page, x, y)
+        image = image_at(panel, x, y) if panel is not None else None
+        if image is None:
+            super().mouseDoubleClickEvent(event)
+            return
+
+        self._reset_drag()
+        self.state.select(image.id)
+        self.state.message.emit(
+            "画像を選びました。ドラッグで移動、つまみで拡大縮小"
+            "（Shift で縦横比を保つ）。Esc でコマに戻ります"
+        )
         event.accept()
 
     def mouseMoveEvent(self, event) -> None:
@@ -385,9 +501,16 @@ class PageView(QGraphicsView):
         elif self._mode == "resize" and self._origin_rect is not None and self._handle:
             xs, ys = self._candidates(self.state.selected_id)
             sx, sy = snap_point(self._handle, x, y, xs, ys, threshold)
-            self._scene.preview_rect = resize_rect(
-                self._origin_rect, self._handle, sx, sy, self.state.settings.min_panel_size
-            )
+            minimum = self.state.settings.min_panel_size
+            aspect = self._locked_aspect(event)
+            if aspect > 0.0:
+                self._scene.preview_rect = resize_rect_keep_aspect(
+                    self._origin_rect, self._handle, sx, sy, minimum, aspect
+                )
+            else:
+                self._scene.preview_rect = resize_rect(
+                    self._origin_rect, self._handle, sx, sy, minimum
+                )
 
         self.viewport().update()
         event.accept()
@@ -423,16 +546,32 @@ class PageView(QGraphicsView):
         event.accept()
 
     def _handle_at_point(self, x: float, y: float) -> str | None:
-        """その位置にある、選択中のコマのつまみ。無ければ None。"""
-        panel = self.state.selected_panel
-        if panel is None:
+        """その位置にある、選択中のもののつまみ。無ければ None。"""
+        bounds = self.state.selected_bounds
+        if bounds is None:
             return None
-        return handle_at(panel.shape.bounds(), x, y, HANDLE_PX / self.view_scale)
+        return handle_at(bounds, x, y, HANDLE_PX / self.view_scale)
+
+    def _locked_aspect(self, event) -> float:
+        """Shift を押しながら画像をリサイズしているときの縦横比。
+
+        画像以外、または Shift を押していなければ 0（自由に伸縮）。
+        コマは絵ではないので、等比に縛る意味がない。
+        """
+        image = self.state.selected_image
+        if image is None:
+            return 0.0
+        if not (event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            return 0.0
+        return aspect_of(image.src_px)
 
     def _update_cursor(self, x: float, y: float) -> None:
         handle = self._handle_at_point(x, y)
+        image = self.state.selected_image
         if handle is not None:
             self.viewport().setCursor(_HANDLE_CURSORS[handle])
+        elif image is not None and image.rect.contains(x, y):
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif panel_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif self.state.tool == TOOL_PANEL:
@@ -468,13 +607,33 @@ class PageView(QGraphicsView):
         dx, dy = final.x - origin.x, final.y - origin.y
         if dx == 0.0 and dy == 0.0:
             return
-        panel_id = self.state.selected_id
-        if panel_id is None:
+        object_id = self.state.selected_id
+        if object_id is None:
             return
+
+        if self.state.selected_image is not None:
+            with self.state.edit("画像の移動") as project:
+                image = project.pages[self.state.page_index].find(object_id)
+                if isinstance(image, ImageObject):
+                    image.rect = image.rect.translated(dx, dy)
+            return
+
         with self.state.edit("コマの移動") as project:
-            project.pages[self.state.page_index].move_panel(panel_id, dx, dy)
+            project.pages[self.state.page_index].move_panel(object_id, dx, dy)
 
     def _apply_resize(self, rect: Rect) -> None:
+        image = self.state.selected_image
+        if image is not None:
+            if image.rect == rect:
+                return
+            image_id = image.id
+            with self.state.edit("画像の大きさ変更") as project:
+                target = project.pages[self.state.page_index].find(image_id)
+                if isinstance(target, ImageObject):
+                    target.rect = rect
+            self.state.message.emit(f"{rect.w:.1f} × {rect.h:.1f} mm")
+            return
+
         panel = self.state.selected_panel
         if panel is None or panel.shape.bounds() == rect:
             return
@@ -526,6 +685,64 @@ class PageView(QGraphicsView):
         self._scene.split_preview = None
         self.state.select(panel_id)
         self.state.message.emit("コマを分割しました")
+
+    # -- ドラッグ&ドロップ --------------------------------------------------
+
+    def _dropped_images(self, mime) -> list[pathlib.Path]:
+        """ドロップされたもののうち、画像として扱えるファイル。"""
+        if not mime.hasUrls():
+            return []
+        files = []
+        for url in mime.urls():
+            if not url.isLocalFile():
+                continue
+            path = pathlib.Path(url.toLocalFile())
+            if path.suffix.lower() in IMAGE_SUFFIXES:
+                files.append(path)
+        return files
+
+    def dragEnterEvent(self, event) -> None:
+        if self._dropped_images(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:
+        # ここを受け取らないと、Windows では入った瞬間だけ許可されて
+        # 動かした途端に拒否に変わり、落とせなくなる
+        if self._dropped_images(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:
+        files = self._dropped_images(event.mimeData())
+        if not files:
+            super().dropEvent(event)
+            return
+
+        point = event.position() if hasattr(event, "position") else event.pos()
+        scene_point = self.mapToScene(point.toPoint())
+        panel = panel_at(self.state.page, scene_point.x(), scene_point.y())
+        if panel is None:
+            self.state.message.emit("コマの上に落としてください")
+            event.ignore()
+            return
+
+        event.acceptProposedAction()
+        placed = 0
+        for path in files:
+            try:
+                self.state.place_image(panel.id, path.read_bytes())
+            except (MangaLayoutError, OSError) as e:
+                self.state.message.emit(f"{path.name}: {e}")
+                continue
+            placed += 1
+
+        if placed:
+            self.state.message.emit(
+                f"{placed} 枚を置きました。コマを埋めるなら Ctrl+Shift+F"
+            )
 
     def leaveEvent(self, event) -> None:
         if self._scene.split_preview is not None:

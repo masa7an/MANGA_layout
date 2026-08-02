@@ -13,9 +13,12 @@ from typing import Iterator
 
 from PySide6.QtCore import QObject, Signal
 
+from ..assets import AssetStore, PendingAssets
+from ..geometry import Rect
 from ..history import History
-from ..layout import LayoutSettings
-from ..model import Page, Panel, Project, new_project
+from ..images import ImageCache, Preview, preview_from_bytes
+from ..layout import LayoutSettings, contain_rect_in
+from ..model import ImageObject, Page, Panel, Project, SceneObject, new_project
 from ..storage import load_project, save_project
 
 # 道具（ツール）
@@ -54,6 +57,9 @@ class EditorState(QObject):
         self._page_index = 0
         self._tool = TOOL_SELECT
         self._selected_id: str | None = None
+        # 保存先が決まる前に貼り付けた画像の預かり所。保存時に書き出す
+        self.pending_assets = PendingAssets()
+        self.image_cache = ImageCache()
 
     # -- 参照 --------------------------------------------------------------
 
@@ -82,13 +88,36 @@ class EditorState(QObject):
         return self._selected_id
 
     @property
-    def selected_panel(self) -> Panel | None:
-        """選択中のコマ。Undo で消えていれば None。"""
+    def selected_object(self) -> SceneObject | None:
+        """選択中のもの（コマ、またはコマの中の画像）。
+
+        Undo で消えていれば None。id で毎回引き直すのは、Undo で
+        `Project` の実体が差し替わるため（要件定義 6.8）。
+        """
         if self._selected_id is None:
             return None
-        for panel in self.page.panels:
-            if panel.id == self._selected_id:
-                return panel
+        return self.page.find(self._selected_id)
+
+    @property
+    def selected_panel(self) -> Panel | None:
+        """選択中のコマ。画像を選んでいるときは None。"""
+        obj = self.selected_object
+        return obj if isinstance(obj, Panel) else None
+
+    @property
+    def selected_image(self) -> ImageObject | None:
+        """選択中の画像。コマを選んでいるときは None。"""
+        obj = self.selected_object
+        return obj if isinstance(obj, ImageObject) else None
+
+    @property
+    def selected_bounds(self) -> Rect | None:
+        """選択枠とつまみを描く矩形。"""
+        obj = self.selected_object
+        if isinstance(obj, Panel):
+            return obj.shape.bounds()
+        if isinstance(obj, ImageObject):
+            return obj.rect
         return None
 
     # -- 操作 --------------------------------------------------------------
@@ -146,6 +175,54 @@ class EditorState(QObject):
         self.page_changed.emit()
         self.message.emit(message)
 
+    # -- 画像 --------------------------------------------------------------
+
+    def read_asset(self, ref: str) -> bytes | None:
+        """画像の実体。まだ保存していないものは預かり所から取る。"""
+        data = self.pending_assets.get(ref)
+        if data is not None:
+            return data
+        if self.project_dir is None:
+            return None
+        store = AssetStore(self.project_dir)
+        return store.read(ref) if store.exists(ref) else None
+
+    def preview(self, ref: str) -> Preview | None:
+        """画面に描くための1枚。無い・壊れているときは None。"""
+        return self.image_cache.get(ref, lambda: self.read_asset(ref))
+
+    def import_bytes(self, data: bytes) -> tuple[str, tuple[int, int]]:
+        """画像を取り込み、参照と原寸のピクセル寸法を返す。
+
+        **展開できるか先に確かめる。** `assets.py` はバイト列しか見ないため、
+        署名だけ正しい壊れたファイルを通してしまう。内容ハッシュが名前なので、
+        一度入れてしまうと人が見分けられなくなる。
+        """
+        preview = preview_from_bytes(data)  # 壊れていればここで例外
+        if self.project_dir is None:
+            ref = self.pending_assets.add(data)
+        else:
+            ref = AssetStore(self.project_dir).add_bytes(data)
+        self.image_cache.put(ref, preview)
+        return ref, preview.source_px
+
+    def place_image(self, panel_id: str, data: bytes) -> ImageObject:
+        """コマに画像を1枚置く。置いた画像を選択状態にする。
+
+        最初は**コマに収まる大きさ**（全体が見える）にする。埋めたいときは
+        「コマにフィット」を使う。いきなり埋めると、絵のどこが切れているのか
+        分からないまま進んでしまう。
+        """
+        ref, px = self.import_bytes(data)
+        page = self.page
+        rect = contain_rect_in(page.panel(panel_id).shape.bounds(), px)
+
+        with self.edit("画像の配置") as project:
+            target = project.pages[self._page_index].panel(panel_id)
+            image = project.add_image(target, ref, rect, px)
+        self.select(image.id)
+        return image
+
     # -- ファイル ----------------------------------------------------------
 
     def reset(self, project: Project, project_dir: pathlib.Path | None) -> None:
@@ -154,6 +231,9 @@ class EditorState(QObject):
         self.project_dir = project_dir
         self._page_index = 0
         self._selected_id = None
+        # 前の作品の画像を抱えたままにしない。参照が同じでも中身は別物
+        self.pending_assets = PendingAssets()
+        self.image_cache.clear()
         self.changed.emit()
         self.selection_changed.emit()
         self.page_changed.emit()
@@ -169,6 +249,12 @@ class EditorState(QObject):
         target = project_dir or self.project_dir
         if target is None:
             raise ValueError("保存先が決まっていません")
+
+        # **画像の実体を先に書く。** 逆順だと、途中で落ちたときに
+        # 実体の無い参照を持つ project.json が残る。この順なら、
+        # 最悪でも参照されない画像が余るだけで済む
+        self.pending_assets.flush_to(AssetStore(target))
+
         path = save_project(self.project, target)
         self.project_dir = target
         self.history.mark_saved()

@@ -7,8 +7,12 @@ import pytest
 from manga_layout import Rect, Size, new_project
 from manga_layout.layout import (
     LayoutSettings,
+    aspect_of,
+    contain_rect_in,
+    cover_rect_in,
     default_panel_rect,
     full_page_rect,
+    resize_rect_keep_aspect,
     handle_at,
     handle_positions,
     panel_at,
@@ -298,6 +302,97 @@ class TestSetPanelRect:
         panel = project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
         set_panel_rect(panel, Rect(50.0, 60.0, -30.0, -40.0))
         assert panel.shape.as_rect() == Rect(20.0, 20.0, 30.0, 40.0)
+
+
+class TestImageFit:
+    """画像をコマに合わせる計算。
+
+    「収める」は貼り付け直後の置き場所、「埋める」は コマにフィット。
+    取り違えると、埋めたつもりで隙間が残る／全体を見たいのに切れる、
+    という分かりにくい不具合になる。
+    """
+
+    PANEL = Rect(10.0, 20.0, 90.0, 60.0)  # 横長のコマ（3:2）
+
+    def test_縦横比を返す(self):
+        assert aspect_of((1200, 900)) == pytest.approx(4 / 3)
+
+    @pytest.mark.parametrize("src_px", [(0, 0), (100, 0), (0, 100), (-5, 10)])
+    def test_元の寸法が無ければコマそのまま(self, src_px):
+        # 読み込んだ作品に src_px が入っていない場合。0 除算で落とさない
+        assert contain_rect_in(self.PANEL, src_px) == self.PANEL
+        assert cover_rect_in(self.PANEL, src_px) == self.PANEL
+
+    def test_収める_縦長の絵は左右が余る(self):
+        rect = contain_rect_in(self.PANEL, (100, 200))  # 1:2
+        assert rect.h == pytest.approx(self.PANEL.h)  # 高さがぴったり
+        assert rect.w < self.PANEL.w
+        assert rect.center == pytest.approx(self.PANEL.center)
+
+    def test_収める_はみ出さない(self):
+        for src in [(100, 200), (200, 100), (50, 50)]:
+            rect = contain_rect_in(self.PANEL, src)
+            assert rect.w <= self.PANEL.w + 1e-9
+            assert rect.h <= self.PANEL.h + 1e-9
+
+    def test_埋める_縦長の絵は上下がはみ出す(self):
+        rect = cover_rect_in(self.PANEL, (100, 200))
+        assert rect.w == pytest.approx(self.PANEL.w)  # 幅がぴったり
+        assert rect.h > self.PANEL.h
+        assert rect.center == pytest.approx(self.PANEL.center)
+
+    def test_埋める_隙間が残らない(self):
+        for src in [(100, 200), (200, 100), (50, 50)]:
+            rect = cover_rect_in(self.PANEL, src)
+            assert rect.w >= self.PANEL.w - 1e-9
+            assert rect.h >= self.PANEL.h - 1e-9
+
+    @pytest.mark.parametrize("src_px", [(100, 200), (200, 100), (1200, 900)])
+    def test_どちらも縦横比を保つ(self, src_px):
+        want = aspect_of(src_px)
+        assert aspect_of_rect(contain_rect_in(self.PANEL, src_px)) == pytest.approx(want)
+        assert aspect_of_rect(cover_rect_in(self.PANEL, src_px)) == pytest.approx(want)
+
+
+def aspect_of_rect(rect: Rect) -> float:
+    return rect.w / rect.h
+
+
+class TestResizeKeepAspect:
+    """Shift を押しながらのリサイズ。絵が歪まないこと。"""
+
+    RECT = Rect(0.0, 0.0, 40.0, 20.0)  # 2:1
+
+    @pytest.mark.parametrize("handle", ["nw", "ne", "se", "sw", "n", "s", "e", "w"])
+    def test_どのつまみでも縦横比が保たれる(self, handle):
+        result = resize_rect_keep_aspect(self.RECT, handle, 70.0, 55.0, 5.0, 2.0)
+        assert aspect_of_rect(result) == pytest.approx(2.0)
+
+    def test_角は対角を動かさない(self):
+        # se をつかんだら左上は動かない
+        result = resize_rect_keep_aspect(self.RECT, "se", 80.0, 30.0, 5.0, 2.0)
+        assert (result.x, result.y) == pytest.approx((0.0, 0.0))
+        assert result.w > self.RECT.w
+
+    def test_左上をつかむと右下が動かない(self):
+        result = resize_rect_keep_aspect(self.RECT, "nw", -20.0, -20.0, 5.0, 2.0)
+        assert (result.right, result.bottom) == pytest.approx((40.0, 20.0))
+
+    def test_辺は反対の辺を動かさない(self):
+        # s をつかんだら上辺は動かない。幅は中央から均等に伸びる
+        result = resize_rect_keep_aspect(self.RECT, "s", 20.0, 40.0, 5.0, 2.0)
+        assert result.y == pytest.approx(0.0)
+        assert result.center[0] == pytest.approx(self.RECT.center[0])
+
+    def test_縦横比が無ければ普通のリサイズと同じ(self):
+        from manga_layout.layout import resize_rect
+
+        free = resize_rect(self.RECT, "se", 80.0, 30.0, 5.0)
+        assert resize_rect_keep_aspect(self.RECT, "se", 80.0, 30.0, 5.0, 0.0) == free
+
+    def test_最小の大きさを下回らない(self):
+        result = resize_rect_keep_aspect(self.RECT, "se", -100.0, -100.0, 5.0, 2.0)
+        assert result.w >= 5.0 and result.h >= 5.0
 
 
 class TestFullPage:

@@ -197,6 +197,341 @@ class TestAddPanelMode:
         assert window.view._handle == "nw"
 
 
+def double_click(view, x: float, y: float) -> None:
+    """mm 座標を画面座標に直して、左ボタンのダブルクリックを送る。"""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    position = QPointF(view.mapFromScene(QPointF(x, y)))
+    view.mouseDoubleClickEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseButtonDblClick,
+            position,
+            view.viewport().mapToGlobal(position),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
+@pytest.fixture
+def png(fixture_dir) -> bytes:
+    """64×48 の不透明な PNG。"""
+    return (fixture_dir / "rgb_opaque.png").read_bytes()
+
+
+@pytest.fixture
+def window_with_image(window, png):
+    """全面コマに画像を1枚置いた状態。画像が選ばれている。"""
+    window.add_full_page_panel()
+    panel_id = window.state.selected_panel.id
+    window.state.place_image(panel_id, png)
+    return window
+
+
+class TestImagePlacement:
+    def test_コマに置ける(self, window, png):
+        window.add_full_page_panel()
+        panel = window.state.selected_panel
+
+        image = window.state.place_image(panel.id, png)
+
+        assert window.state.page.panels[0].children == [image]
+        assert image.src_px == (64, 48)
+        assert window.state.selected_id == image.id
+
+    def test_置いた直後はコマに収まる(self, window_with_image):
+        """全体が見える大きさで入る。埋めるのは コマにフィット の役目。"""
+        image = window_with_image.state.selected_image
+        panel = window_with_image.state.page.panels[0].shape.bounds()
+
+        assert image.rect.w <= panel.w + 1e-9
+        assert image.rect.h <= panel.h + 1e-9
+        assert image.rect.center == pytest.approx(panel.center)
+
+    def test_履歴に積まれる(self, window_with_image):
+        assert window_with_image.state.history.undo_label == "画像の配置"
+        window_with_image.state.undo()
+        assert window_with_image.state.page.panels[0].children == []
+
+    def test_壊れた画像は断る(self, window, fixture_dir):
+        from manga_layout.errors import BrokenImageError
+
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        broken = (fixture_dir / "broken.png").read_bytes()
+
+        with pytest.raises(BrokenImageError):
+            window.state.place_image(panel_id, broken)
+
+        # 壊れたものを assets に入れない。内容ハッシュ名なので
+        # 一度入れると人が見分けられなくなる
+        assert len(window.state.pending_assets) == 0
+        assert window.state.page.panels[0].children == []
+
+    def test_コマ未選択なら知らせるだけ(self, window):
+        window.paste_image()  # クリップボードは空、コマも無い
+        assert window.state.page.panels == []
+
+
+class TestImageAssets:
+    """未保存のうちに貼っても、保存すれば実体が残ること。"""
+
+    def test_未保存でも置ける(self, window_with_image):
+        assert window_with_image.state.project_dir is None
+        assert len(window_with_image.state.pending_assets) == 1
+
+    def test_保存すると実体が書かれる(self, window_with_image, tmp_path, png):
+        from manga_layout import AssetStore
+
+        ref = window_with_image.state.selected_image.asset
+        window_with_image.state.save(tmp_path)
+
+        assert AssetStore(tmp_path).read(ref) == png
+        assert len(window_with_image.state.pending_assets) == 0
+
+    def test_保存して開き直しても画像が残る(self, window_with_image, tmp_path):
+        from manga_layout import find_missing_assets
+
+        window_with_image.state.save(tmp_path)
+        restored = load_project(tmp_path)
+
+        assert len(restored.pages[0].panels[0].children) == 1
+        # 参照が実体を指していること。ここが切れるのが一番痛い壊れ方
+        assert find_missing_assets(restored, tmp_path) == []
+
+    def test_同じ画像を2回置いても実体は1つ(self, window, png, tmp_path):
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        window.state.place_image(panel_id, png)
+        window.state.place_image(panel_id, png)
+        window.state.save(tmp_path)
+
+        from manga_layout import AssetStore
+
+        assert len(AssetStore(tmp_path).list_refs()) == 1
+        assert len(window.state.page.panels[0].children) == 2
+
+    def test_別の作品を開くと前の画像を持ち越さない(self, window_with_image, tmp_path):
+        from manga_layout import new_project, save_project
+
+        save_project(new_project(), tmp_path)
+        window_with_image.state.load(tmp_path)
+
+        assert len(window_with_image.state.pending_assets) == 0
+        assert len(window_with_image.state.image_cache) == 0
+
+
+class TestImageSelection:
+    def test_ダブルクリックで画像を選ぶ(self, window_with_image):
+        image = window_with_image.state.selected_image
+        window_with_image.state.select(None)
+
+        cx, cy = image.rect.center
+        double_click(window_with_image.view, cx, cy)
+
+        assert window_with_image.state.selected_id == image.id
+        assert window_with_image.state.selected_panel is None
+
+    def test_画像の外をダブルクリックしても入らない(self, window_with_image):
+        window_with_image.state.select(None)
+        double_click(window_with_image.view, 2.0, 2.0)  # ページの隅、コマの外
+        assert window_with_image.state.selected_image is None
+
+    def test_Escでコマに戻る(self, window_with_image):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QKeyEvent
+
+        panel_id = window_with_image.state.page.panels[0].id
+        window_with_image.view.keyPressEvent(
+            QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Escape, Qt.KeyboardModifier.NoModifier)
+        )
+        assert window_with_image.state.selected_id == panel_id
+
+    def test_選択中の画像を押すと画像が動く(self, window_with_image):
+        # ここでコマに持ち替わると、絵を動かしたつもりでコマが動く
+        image = window_with_image.state.selected_image
+        cx, cy = image.rect.center
+
+        press(window_with_image.view, cx, cy)
+
+        assert window_with_image.view._mode == "move"
+        assert window_with_image.view._origin_rect == image.rect
+
+
+class TestImageEditing:
+    def test_画像だけ動かせる(self, window_with_image):
+        image = window_with_image.state.selected_image
+        origin = image.rect
+        panel_before = window_with_image.state.page.panels[0].shape.bounds()
+
+        window_with_image.view._apply_move(origin, origin.translated(5.0, 3.0))
+
+        moved = window_with_image.state.selected_image.rect
+        assert (moved.x, moved.y) == pytest.approx((origin.x + 5.0, origin.y + 3.0))
+        # コマは動いていない
+        assert window_with_image.state.page.panels[0].shape.bounds() == panel_before
+
+    def test_画像の大きさを変えられる(self, window_with_image):
+        window_with_image.view._apply_resize(Rect(20.0, 20.0, 60.0, 40.0))
+        assert window_with_image.state.selected_image.rect == Rect(20.0, 20.0, 60.0, 40.0)
+
+    def test_コマを動かすと中の画像も動く(self, window_with_image):
+        page = window_with_image.state.page
+        image_before = page.panels[0].children[0].rect
+        window_with_image.state.select(page.panels[0].id)
+        origin = page.panels[0].shape.bounds()
+
+        window_with_image.view._apply_move(origin, origin.translated(10.0, 0.0))
+
+        after = window_with_image.state.page.panels[0].children[0].rect
+        assert after.x == pytest.approx(image_before.x + 10.0)
+
+    def test_コマにフィットするとコマを埋める(self, window_with_image):
+        panel = window_with_image.state.page.panels[0].shape.bounds()
+
+        window_with_image.fit_image()
+
+        rect = window_with_image.state.selected_image.rect
+        assert rect.w >= panel.w - 1e-9
+        assert rect.h >= panel.h - 1e-9
+        assert rect.center == pytest.approx(panel.center)
+
+    def test_フィットは縦横比を保つ(self, window_with_image):
+        window_with_image.fit_image()
+        rect = window_with_image.state.selected_image.rect
+        assert rect.w / rect.h == pytest.approx(64 / 48)
+
+    def test_画像未選択でフィットしても何も起きない(self, window_with_image):
+        window_with_image.state.select(window_with_image.state.page.panels[0].id)
+        depth = window_with_image.state.history.depth
+        window_with_image.fit_image()
+        assert window_with_image.state.history.depth == depth
+
+
+class TestImageDeletion:
+    def test_画像を消してもコマは残る(self, window_with_image):
+        panel_id = window_with_image.state.page.panels[0].id
+
+        window_with_image.delete_selected()
+
+        assert len(window_with_image.state.page.panels) == 1
+        assert window_with_image.state.page.panels[0].children == []
+        # 消したあとはコマを選び直す。選択が空になると操作の続きがしづらい
+        assert window_with_image.state.selected_id == panel_id
+
+    def test_コマを消すと中の画像も消える(self, window_with_image):
+        window_with_image.state.select(window_with_image.state.page.panels[0].id)
+        window_with_image.delete_selected()
+        assert window_with_image.state.page.panels == []
+
+    def test_消しても実体は残る(self, window_with_image, tmp_path):
+        """Undo で戻せるようにしておく。整理は利用者が選んだときだけ。"""
+        from manga_layout import AssetStore
+
+        window_with_image.state.save(tmp_path)
+        ref = window_with_image.state.page.panels[0].children[0].asset
+
+        window_with_image.state.select(window_with_image.state.page.panels[0].children[0].id)
+        window_with_image.delete_selected()
+
+        assert AssetStore(tmp_path).exists(ref)
+        window_with_image.state.undo()
+        assert len(window_with_image.state.page.panels[0].children) == 1
+
+
+def red_png(w: int = 40, h: int = 40) -> bytes:
+    """真っ赤な PNG。描かれた場所を画素で数えるために使う。"""
+    from PySide6.QtGui import QColor, QImage
+
+    from manga_layout.images import to_png_bytes
+
+    image = QImage(w, h, QImage.Format.Format_ARGB32)
+    image.fill(QColor(255, 0, 0))
+    return to_png_bytes(image)
+
+
+def render_page(window):
+    """ページを 1mm = 1px で描く。mm の座標がそのまま画素の座標になる。"""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QImage, QPainter
+
+    page = window.state.page
+    area = QRectF(0.0, 0.0, page.size.w, page.size.h)
+    target = QImage(int(page.size.w), int(page.size.h), QImage.Format.Format_ARGB32)
+    target.fill(0)
+
+    painter = QPainter(target)
+    window.view._scene.render(painter, QRectF(target.rect()), area)
+    painter.end()
+    return target
+
+
+def red_pixels(image) -> list[tuple[int, int]]:
+    found = []
+    for y in range(image.height()):
+        for x in range(image.width()):
+            c = image.pixelColor(x, y)
+            if c.red() > 200 and c.green() < 60 and c.blue() < 60:
+                found.append((x, y))
+    return found
+
+
+class TestImageClipping:
+    """コマの形での切り抜き（要件定義 6.3）。
+
+    ここが効いていないと、はみ出した絵が隣のコマや紙の外まで描かれる。
+    """
+
+    def test_画像が実際に描かれる(self, window):
+        window.add_full_page_panel()
+        window.state.place_image(window.state.selected_panel.id, red_png())
+        assert len(red_pixels(render_page(window))) > 0
+
+    def test_はみ出した分はコマの外に出ない(self, window):
+        # コマをページの左上 1/4 に作り、画像をページ全体より大きくする
+        with window.state.edit("コマの追加") as project:
+            panel = project.add_panel(project.pages[0], Rect(20.0, 20.0, 60.0, 60.0))
+        window.state.select(panel.id)
+        window.state.place_image(panel.id, red_png())
+
+        window.view._apply_resize(Rect(-50.0, -50.0, 400.0, 500.0))
+
+        outside = [
+            (x, y)
+            for x, y in red_pixels(render_page(window))
+            if not (20 <= x <= 80 and 20 <= y <= 80)
+        ]
+        assert outside == [], f"コマの外に {len(outside)} 画素はみ出した"
+
+    def test_コマの中は埋まる(self, window):
+        with window.state.edit("コマの追加") as project:
+            panel = project.add_panel(project.pages[0], Rect(20.0, 20.0, 60.0, 60.0))
+        window.state.select(panel.id)
+        window.state.place_image(panel.id, red_png())
+        window.view._apply_resize(Rect(-50.0, -50.0, 400.0, 500.0))
+
+        # コマの中央付近は赤で埋まっているはず
+        painted = set(red_pixels(render_page(window)))
+        assert (50, 50) in painted
+
+
+class TestImageDrawing:
+    def test_実体が無くても描ける(self, window_with_image):
+        """開いた作品の画像が1枚欠けていても、そこだけ枠で示して続行する。
+
+        1枚欠けただけで作品全体が開けないのは割に合わない。
+        """
+        from manga_layout.assets import PendingAssets
+
+        window_with_image.state.pending_assets = PendingAssets()
+        window_with_image.state.image_cache.clear()
+
+        render_page(window_with_image)  # 例外が出なければよい
+        assert window_with_image.state.preview("assets/missing.png") is None
+
+
 class TestHistoryWiring:
     def test_操作が履歴に積まれる(self, window):
         window.add_full_page_panel()

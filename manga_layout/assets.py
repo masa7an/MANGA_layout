@@ -48,6 +48,25 @@ def sniff_format(data: bytes) -> str | None:
     return None
 
 
+def ref_for(data: bytes) -> str:
+    """バイト列に対応する参照文字列（`assets/<sha1>.<拡張子>`）。
+
+    書き込みはしない。保存先フォルダが決まる前でも参照だけは確定させたい
+    `PendingAssets` と、実際に書き込む `AssetStore` で同じ名前になるよう、
+    計算をここ1箇所に置く。
+    """
+    if not data:
+        raise UnknownImageFormatError("空のデータは取り込めません")
+
+    ext = sniff_format(data)
+    if ext is None:
+        head = data[:8].hex(" ")
+        raise UnknownImageFormatError(
+            f"画像として認識できないデータです（先頭 8 バイト: {head}）"
+        )
+    return f"{ASSETS_DIRNAME}/{hashlib.sha1(data).hexdigest()}.{ext}"
+
+
 def _atomic_write_bytes(path: pathlib.Path, data: bytes) -> None:
     """途中で落ちても半端なファイルが残らないように書く。
 
@@ -86,19 +105,8 @@ class AssetStore:
 
         同じ中身が既にあれば何も書かずに同じ参照を返す（重複排除）。
         """
-        if not data:
-            raise UnknownImageFormatError("空のデータは取り込めません")
-
-        ext = sniff_format(data)
-        if ext is None:
-            head = data[:8].hex(" ")
-            raise UnknownImageFormatError(
-                f"画像として認識できないデータです（先頭 8 バイト: {head}）"
-            )
-
-        digest = hashlib.sha1(data).hexdigest()
-        ref = f"{ASSETS_DIRNAME}/{digest}.{ext}"
-        path = self.dir / f"{digest}.{ext}"
+        ref = ref_for(data)
+        path = self.resolve(ref)
 
         if not path.exists():
             self.dir.mkdir(parents=True, exist_ok=True)
@@ -182,3 +190,46 @@ class AssetStore:
                 os.replace(src, dest)
             moved.append(ref)
         return moved
+
+
+class PendingAssets:
+    """保存先フォルダが決まる前に取り込んだ画像を、メモリ上で預かる。
+
+    新しい作品はフォルダを持たないため、貼り付けた画像を書く場所が無い。
+    「先に保存してください」と断ると、この道具の主動線である
+    「クリスタから Ctrl+V」がいきなり止まってしまうので、預かっておいて
+    保存時に `flush_to()` で書き出す。
+
+    参照文字列は `AssetStore` と同じ計算（内容の SHA1）で作るため、
+    保存の前後で project.json の中身は変わらない。
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, bytes] = {}
+
+    def __contains__(self, ref: str) -> bool:
+        return ref in self._data
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def add(self, data: bytes) -> str:
+        ref = ref_for(data)
+        self._data[ref] = data
+        return ref
+
+    def get(self, ref: str) -> bytes | None:
+        return self._data.get(ref)
+
+    def flush_to(self, store: AssetStore) -> list[str]:
+        """預かっている画像をすべて書き出し、控えを手放す。
+
+        **参照されていないものも書き出す。** 保存の時点で参照が無くても、
+        Undo で戻せば復活する（要件定義 5章「assets/ の扱い」）。
+        余ったファイルは利用者が「未使用ファイルを整理」を選んだときに片付く。
+        """
+        written = sorted(self._data)
+        for ref in written:
+            store.add_bytes(self._data[ref])
+        self._data.clear()
+        return written

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import AssetStore, sniff_format
+from manga_layout.assets import PendingAssets, ref_for
 from manga_layout.errors import AssetError, UnknownImageFormatError
 
 
@@ -127,3 +128,59 @@ class TestCollectUnused:
         store.add_file(fixture_dir / "rgb_opaque.png")
         assert store.collect_unused(set()) == [ref]
         assert not store.exists(ref)
+
+
+class TestPending:
+    """保存先が決まる前に貼り付けた画像の預かり所。"""
+
+    def test_預けた参照は保存後と同じ(self, tmp_path, png_bytes):
+        # ここが食い違うと、保存した瞬間に project.json の参照が
+        # 実体を指さなくなる
+        pending = PendingAssets()
+        assert pending.add(png_bytes) == AssetStore(tmp_path).add_bytes(png_bytes)
+
+    def test_預けた中身を取り出せる(self, png_bytes):
+        pending = PendingAssets()
+        ref = pending.add(png_bytes)
+        assert ref in pending
+        assert pending.get(ref) == png_bytes
+        assert pending.get("assets/none.png") is None
+
+    def test_書き出すと実体になり控えは空になる(self, tmp_path, png_bytes):
+        pending = PendingAssets()
+        ref = pending.add(png_bytes)
+        store = AssetStore(tmp_path)
+
+        assert pending.flush_to(store) == [ref]
+
+        assert store.exists(ref)
+        assert store.read(ref) == png_bytes
+        assert len(pending) == 0
+
+    def test_参照が無くなったものも書き出す(self, tmp_path, fixture_dir):
+        """Undo で戻せば復活するので、保存時点の参照だけで捨てない。"""
+        pending = PendingAssets()
+        kept = pending.add((fixture_dir / "rgba_transparent.png").read_bytes())
+        dropped = pending.add((fixture_dir / "rgb_opaque.png").read_bytes())
+        store = AssetStore(tmp_path)
+
+        pending.flush_to(store)
+
+        assert store.exists(kept) and store.exists(dropped)
+
+    def test_画像でないものは預からない(self):
+        with pytest.raises(UnknownImageFormatError):
+            PendingAssets().add(b"this is a text file")
+
+
+class TestRefFor:
+    def test_書き込まずに参照を決められる(self, tmp_path, png_bytes):
+        ref = ref_for(png_bytes)
+        assert ref.startswith("assets/") and ref.endswith(".png")
+        assert not (tmp_path / ref).exists()
+
+    def test_空や画像でないものは断る(self):
+        with pytest.raises(UnknownImageFormatError):
+            ref_for(b"")
+        with pytest.raises(UnknownImageFormatError):
+            ref_for(b"not an image")

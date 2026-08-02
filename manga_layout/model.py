@@ -381,6 +381,14 @@ class Page:
                 return f
         return None
 
+    def panel_of_image(self, image_id: str) -> Panel | None:
+        """その画像が入っているコマ。画像はコマの子なので必ず1つに属する。"""
+        for p in self.panels:
+            for c in p.children:
+                if c.id == image_id:
+                    return p
+        return None
+
     def attached_to(self, panel_id: str) -> list[FloatingObject]:
         """そのコマに紐づいた吹き出し・セリフ。"""
         return [f for f in self.floating if f.attached_panel_id == panel_id]

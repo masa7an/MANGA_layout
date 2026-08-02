@@ -2,11 +2,16 @@
 
 この層は Qt に依存しない。画面まわりを持ち込まないことで、
 テストが画面なしで動き、あとから UI を差し替えても影響が及ばない。
+
+**`manga_layout.images` はここから公開しない。** 画像の展開に Qt が要るため、
+ここに載せると `import manga_layout` だけで PySide6 を引き込むことになる。
+使う側が `from manga_layout.images import ...` と明示して取る。
 """
 
-from .assets import AssetStore, sniff_format
+from .assets import AssetStore, PendingAssets, sniff_format
 from .errors import (
     AssetError,
+    BrokenImageError,
     MangaLayoutError,
     ProjectFormatError,
     ProjectNotFoundError,
@@ -46,7 +51,9 @@ __all__ = [
     "AssetStore",
     "BalloonObject",
     "Border",
+    "BrokenImageError",
     "Font",
+    "PendingAssets",
     "History",
     "ImageObject",
     "MangaLayoutError",

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pathlib
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
@@ -15,9 +15,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import MangaLayoutError
-from ..layout import full_page_rect
-from ..storage import is_project_dir
-from .canvas import PageView
+from ..images import to_png_bytes
+from ..layout import cover_rect_in, full_page_rect
+from ..model import ImageObject, Panel
+from ..storage import is_project_dir, prune_unused_assets
+from .canvas import IMAGE_FILE_FILTER, PageView
 from .state import (
     TOOL_LABELS,
     TOOL_PANEL,
@@ -120,11 +122,24 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
         edit_menu.addSeparator()
-        self.delete_action = self._act("コマを削除", self.delete_panel, "Delete")
+        self.delete_action = self._act("削除", self.delete_selected, "Delete")
         edit_menu.addAction(self.delete_action)
         edit_menu.addAction(
             self._act("ページ全面にコマを作る", self.add_full_page_panel, "Ctrl+Shift+A")
         )
+
+        image_menu = self.menuBar().addMenu("画像(&I)")
+        image_menu.addAction(
+            self._act("貼り付け", self.paste_image, "Ctrl+V", "クリップボードの画像を置く")
+        )
+        image_menu.addAction(self._act("ファイルから読み込み...", self.open_image_file))
+        image_menu.addSeparator()
+        self.fit_action = self._act(
+            "コマにフィット", self.fit_image, "Ctrl+Shift+F", "選択中の画像でコマを埋める"
+        )
+        image_menu.addAction(self.fit_action)
+        image_menu.addSeparator()
+        image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
 
         tool_menu = self.menuBar().addMenu("道具(&T)")
         group = QActionGroup(self)
@@ -180,12 +195,7 @@ class MainWindow(QMainWindow):
             f"ページ {self.state.page_index + 1} / {self.state.page_count}"
         )
 
-        panel = self.state.selected_panel
-        if panel is None:
-            self.hint_label.setText("コマ未選択")
-        else:
-            b = panel.shape.bounds()
-            self.hint_label.setText(f"選択中: {b.w:.1f} × {b.h:.1f} mm")
+        self.hint_label.setText(self._hint())
 
         history = self.state.history
         self.undo_action.setEnabled(history.can_undo)
@@ -196,7 +206,29 @@ class MainWindow(QMainWindow):
         self.redo_action.setText(
             f"やり直す: {history.redo_label}" if history.can_redo else "やり直す"
         )
-        self.delete_action.setEnabled(panel is not None)
+        self.delete_action.setEnabled(self.state.selected_object is not None)
+        self.fit_action.setEnabled(self.state.selected_image is not None)
+
+    def _hint(self) -> str:
+        """いま何を選んでいるかを状態表示に出す。
+
+        コマと画像は見た目が似ているので、文字でも示さないと
+        どちらを動かしているのか分からなくなる。
+        """
+        image = self.state.selected_image
+        if image is not None:
+            r = image.rect
+            w, h = image.src_px
+            return f"画像を選択中: {r.w:.1f} × {r.h:.1f} mm（元 {w}×{h} px）"
+
+        panel = self.state.selected_panel
+        if panel is not None:
+            b = panel.shape.bounds()
+            count = len(panel.children)
+            inside = f" / 画像 {count} 枚" if count else ""
+            return f"コマを選択中: {b.w:.1f} × {b.h:.1f} mm{inside}"
+
+        return "コマ未選択"
 
     def _sync_tool_actions(self) -> None:
         self._tool_actions[self.state.tool].setChecked(True)
@@ -208,6 +240,13 @@ class MainWindow(QMainWindow):
 
     # -- 編集 --------------------------------------------------------------
 
+    def delete_selected(self) -> None:
+        """Delete キー。選んでいるものに応じて、コマか画像を消す。"""
+        if self.state.selected_image is not None:
+            self.delete_image()
+        else:
+            self.delete_panel()
+
     def delete_panel(self) -> None:
         panel = self.state.selected_panel
         if panel is None:
@@ -217,6 +256,133 @@ class MainWindow(QMainWindow):
             project.pages[self.state.page_index].remove_panel(panel_id)
         self.state.select(None)
         self.state.message.emit("コマを削除しました")
+
+    def delete_image(self) -> None:
+        """画像だけ消す。入っていたコマは残り、そのコマを選び直す。
+
+        画像の実体（assets/）はここでは消さない。Undo で戻せなくなるため。
+        余った実体は「未使用ファイルを整理」で片付ける（要件定義 5章）。
+        """
+        image = self.state.selected_image
+        if image is None:
+            return
+        image_id = image.id
+        panel = self.state.page.panel_of_image(image_id)
+        panel_id = panel.id if panel is not None else None
+
+        with self.state.edit("画像の削除") as project:
+            target = project.pages[self.state.page_index].panel_of_image(image_id)
+            if target is not None:
+                target.children = [c for c in target.children if c.id != image_id]
+
+        self.state.select(panel_id)
+        self.state.message.emit("画像を削除しました")
+
+    # -- 画像 --------------------------------------------------------------
+
+    def _target_panel(self) -> Panel | None:
+        """画像を入れるコマ。画像を選んでいれば、それが入っているコマ。"""
+        panel = self.state.selected_panel
+        if panel is None:
+            image = self.state.selected_image
+            if image is not None:
+                panel = self.state.page.panel_of_image(image.id)
+        if panel is None:
+            self.state.message.emit("先にコマを選んでください")
+        return panel
+
+    def _place_image(self, panel_id: str, data: bytes, source: str) -> bool:
+        try:
+            image = self.state.place_image(panel_id, data)
+        except MangaLayoutError as e:
+            QMessageBox.warning(self, "画像を置けません", str(e))
+            return False
+        w, h = image.src_px
+        self.state.message.emit(
+            f"画像を置きました（{source} / {w}×{h} px）。"
+            "コマを埋めるなら Ctrl+Shift+F"
+        )
+        return True
+
+    def paste_image(self) -> None:
+        panel = self._target_panel()
+        if panel is None:
+            return
+        image = QGuiApplication.clipboard().image()
+        if image.isNull():
+            self.state.message.emit("クリップボードに画像がありません")
+            return
+        try:
+            data = to_png_bytes(image)
+        except MangaLayoutError as e:
+            QMessageBox.warning(self, "画像を置けません", str(e))
+            return
+        self._place_image(panel.id, data, "貼り付け")
+
+    def open_image_file(self) -> None:
+        panel = self._target_panel()
+        if panel is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "画像を選ぶ", "", IMAGE_FILE_FILTER)
+        if not path:
+            return
+        file = pathlib.Path(path)
+        try:
+            data = file.read_bytes()
+        except OSError as e:
+            QMessageBox.critical(self, "画像を読めません", f"{file}\n{e}")
+            return
+        self._place_image(panel.id, data, file.name)
+
+    def fit_image(self) -> None:
+        """選択中の画像でコマを埋める。はみ出た分はコマの形で切り抜かれる。"""
+        image = self.state.selected_image
+        if image is None:
+            self.state.message.emit("先に画像を選んでください（コマの中をダブルクリック）")
+            return
+        panel = self.state.page.panel_of_image(image.id)
+        if panel is None:
+            return
+
+        rect = cover_rect_in(panel.shape.bounds(), image.src_px)
+        if rect == image.rect:
+            return
+        image_id = image.id
+        with self.state.edit("コマにフィット") as project:
+            target = project.pages[self.state.page_index].find(image_id)
+            if isinstance(target, ImageObject):
+                target.rect = rect
+        self.state.message.emit(f"コマを埋めました（{rect.w:.1f} × {rect.h:.1f} mm）")
+
+    def prune_assets(self) -> None:
+        """どこからも使われていない画像を assets/_unused/ へ移す。
+
+        保存時に自動で行わない理由は要件定義 5章。Undo で戻した画像の
+        実体が消えてしまうため、利用者が選んだときだけ動かす。
+        """
+        if self.state.project_dir is None:
+            self.state.message.emit("先に作品を保存してください")
+            return
+        if self.state.is_dirty:
+            QMessageBox.information(
+                self,
+                "先に保存してください",
+                "保存していない変更があります。\n"
+                "保存前に整理すると、まだ保存されていない画像まで未使用と判定されます。",
+            )
+            return
+
+        moved = prune_unused_assets(self.state.project, self.state.project_dir)
+        if not moved:
+            self.state.message.emit("使われていない画像はありませんでした")
+            return
+        QMessageBox.information(
+            self,
+            "整理しました",
+            f"{len(moved)} 件を assets/_unused/ へ移しました。\n"
+            "削除はしていないので、戻したいときはフォルダから取り出せます。",
+        )
+        self.state.message.emit(f"{len(moved)} 件を _unused/ へ移しました")
 
     def add_full_page_panel(self) -> None:
         rect = full_page_rect(self.state.page, self.state.settings)
