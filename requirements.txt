@@ -1,0 +1,13 @@
+# MANGA_layout の依存パッケージ
+#
+# インストールは _setup_env.bat から行う。手動なら:
+#     ./venv/Scripts/python.exe -m pip install -r requirements.txt
+#
+# 2台のPCで同じ環境になるようバージョンを固定している。
+# 更新するときは片方で上げて動作確認し、この行を書き換えてからコミットする。
+
+# GUI（画面表示と PNG 書き出しの両方を担う）
+PySide6==6.11.1
+
+# テスト実行
+pytest==9.1.1

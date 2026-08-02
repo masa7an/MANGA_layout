@@ -1,6 +1,11 @@
 # 2台のPC間で改行コードの差分が出ないよう、リポジトリ内はLFに統一する
 * text=auto eol=lf
 
+# バッチファイルだけは例外でCRLF。
+# cmd.exe はLFのみの .bat で goto/ラベルの解釈を誤ることがあるため
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
 # バイナリ（差分を取らない）
 *.png binary
 *.jpg binary
