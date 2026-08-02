@@ -14,6 +14,7 @@ from .errors import (
     UnsupportedVersionError,
 )
 from .geometry import Polygon, Rect, Size, fit_rect, fit_size
+from .history import History
 from .model import (
     APP_NAME,
     FORMAT_VERSION,
@@ -46,6 +47,7 @@ __all__ = [
     "BalloonObject",
     "Border",
     "Font",
+    "History",
     "ImageObject",
     "MangaLayoutError",
     "Page",
