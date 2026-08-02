@@ -22,6 +22,8 @@ from manga_layout.storage import project_dir_of
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.saving import (
     DEFAULT_PROJECT_NAME,
+    INITIAL_WIDTH,
+    MIN_WIDTH,
     SaveAsDialog,
     default_parent,
     name_problem,
@@ -170,6 +172,21 @@ class Test窓:
 
         assert not ok_enabled(dialog)
         assert "見つかりません" in dialog.note.text()
+
+    def test_パスが収まる幅で開く(self, qapp, tmp_path):
+        """この窓の中身はほとんどがパス。狭いと行き先を確かめられない。"""
+        dialog = SaveAsDialog(tmp_path, "私のネーム")
+        assert dialog.width() >= INITIAL_WIDTH
+
+    def test_長いパスでも切らない(self, qapp, tmp_path):
+        deep = tmp_path / ("とても長いフォルダ名" * 6)
+        deep.mkdir()
+        dialog = SaveAsDialog(deep, "私のネーム")
+        assert dialog.width() >= dialog.sizeHint().width()
+
+    def test_縮められる下限がある(self, qapp, tmp_path):
+        dialog = SaveAsDialog(tmp_path, "私のネーム")
+        assert dialog.minimumWidth() == MIN_WIDTH
 
     def test_上書きになることを見せる(self, qapp, tmp_path):
         state = EditorState()

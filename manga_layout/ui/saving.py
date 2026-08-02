@@ -35,6 +35,14 @@ DEFAULT_PROJECT_NAME = "無題"
 # 断る理由と「上書きになる」を出すときの色
 WARN_COLOR = "#C0392B"
 
+# 窓の初期幅（px）。**この窓の中身はほとんどがパス**なので、Qt に任せた
+# 幅では `F:\2025_e\a漫画用\帰省\下書き\私のネーム` が途中で切れて、
+# どこに作られるのか確かめられない（2026-08-03 に実機で発生）
+INITIAL_WIDTH = 640
+
+# 利用者が縮めたときの下限（px）。ここまでは狭められる
+MIN_WIDTH = 200
+
 # Windows がフォルダ名に許さない文字
 INVALID_NAME_CHARS = '\\/:*?"<>|'
 
@@ -176,6 +184,11 @@ class SaveAsDialog(QDialog):
             where.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(where)
         layout.addWidget(self.buttons)
+
+        self.setMinimumWidth(MIN_WIDTH)
+        # 中身から決まる幅より狭くはしない。長いパスを入れたときに
+        # 決め打ちの幅で切れないようにする
+        self.resize(max(INITIAL_WIDTH, self.sizeHint().width()), self.sizeHint().height())
 
         self.parent_dir.textChanged.connect(self._refresh)
         self.name.textChanged.connect(self._refresh)
