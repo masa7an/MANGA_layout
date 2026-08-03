@@ -18,6 +18,7 @@ import pytest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMessageBox
 
 from manga_layout import Rect, is_project_dir
+from manga_layout.settings import AppSettings, save_settings
 from manga_layout.storage import project_dir_of
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.saving import (
@@ -312,6 +313,91 @@ class Test開く:
 
         assert shown == ["開けません"]
         assert window.state.project_dir is None
+
+
+class Test窓が始まる場所:
+    """開く・保存・画像を選ぶで**同じ場所**から始める。
+
+    窓ごとに別々だと、同じ作業の途中なのに始まる場所が変わり、そのたびに
+    辿り直すことになる。特に「画像を選ぶ」は場所を渡していなかったため、
+    アプリを起動したフォルダから始まっていた。
+    """
+
+    def test_作品を開くは設定の場所から始まる(self, window, tmp_path, monkeypatch):
+        _configure(window, tmp_path, tmp_path)
+        started = _record_start_dir(monkeypatch)
+
+        window.open_project()
+
+        assert started == [str(tmp_path)]
+
+    def test_画像を選ぶも同じ場所から始まる(self, window, tmp_path, monkeypatch):
+        _configure(window, tmp_path, tmp_path)
+        window.add_full_page_panel()
+        started = _record_start_dir(monkeypatch)
+
+        window.open_image_file()
+
+        assert started == [str(tmp_path)]
+
+    def test_保存も同じ場所から始まる(self, window, tmp_path):
+        _configure(window, tmp_path, tmp_path)
+
+        assert window._default_parent() == tmp_path
+
+    def test_作品を開いていればその隣から始まる(self, window, tmp_path, monkeypatch):
+        """設定より、今いる場所のほうが強い。"""
+        other = tmp_path / "設定の場所"
+        other.mkdir()
+        _configure(window, tmp_path, other)
+        window.state.save(tmp_path / "1作目")
+        window.add_full_page_panel()
+        started = _record_start_dir(monkeypatch)
+
+        window.open_image_file()
+
+        assert started == [str(tmp_path)]
+
+    def test_書き換えた設定は開き直さずに効く(self, window, tmp_path):
+        """`settings.json` は手で書き換える前提のファイル。
+
+        起動時に一度読むだけだと、書き換えてもアプリを開き直すまで
+        効かない。しかも効かない理由は画面に出ないので、設定の書き方を
+        間違えたのかと疑うことになる（2026-08-03 に実際に起きた）。
+        """
+        最初 = tmp_path / "最初の場所"
+        あとで = tmp_path / "あとで書いた場所"
+        最初.mkdir()
+        あとで.mkdir()
+        _configure(window, tmp_path, 最初)
+        assert window._default_parent() == 最初
+
+        # アプリを開いたまま、設定だけを書き換える
+        save_settings(AppSettings(default_parent_dir=str(あとで)), window.settings_file)
+
+        assert window._default_parent() == あとで
+
+
+def _configure(window, tmp_path: pathlib.Path, parent_dir: pathlib.Path) -> None:
+    """設定を差し替える。**本物の `settings.json` は触らない。**
+
+    利用者の設定を読みに行くと、その PC に何が書いてあるかで結果が
+    変わってしまう（`F:` のような外付けドライブが書かれていることがある）。
+    """
+    window.settings_file = tmp_path / "settings.json"
+    save_settings(AppSettings(default_parent_dir=str(parent_dir)), window.settings_file)
+
+
+def _record_start_dir(monkeypatch) -> list[str]:
+    """窓を出さずに、渡された「始まる場所」だけ控える。"""
+    started: list[str] = []
+
+    def fake(parent, caption, directory="", *args, **kwargs):
+        started.append(directory)
+        return "", ""
+
+    monkeypatch.setattr("manga_layout.ui.window.QFileDialog.getOpenFileName", fake)
+    return started
 
 
 def _choose_file(monkeypatch, path: pathlib.Path | None) -> None:

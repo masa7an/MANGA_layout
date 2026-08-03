@@ -41,6 +41,16 @@ APP_NAME = "MANGA_layout"
 # 古い作品だけが違う大きさで開く
 MM_TO_PX = 150.0 / 25.4
 
+# 文字の大きさをポイントで言い直すときの倍率。
+#
+# **フォント設定の窓はポイントでしか喋らない。** こちらは px で持って
+# いるが、その px は画面の点ではなく**ページの座標**（150dpi 換算）なので、
+# Qt が画面の解像度で勝手に換算すると別の大きさになる。紙の上での
+# 大きさで揃うよう、ここでも 150dpi で換算する。
+#
+# 1pt = 1/72 インチ。20px は約 9.6pt（約 3.4mm）にあたる
+PT_TO_PX = 150.0 / 72.0
+
 # よく使うページ寸法（px）。紙の寸法を 150dpi で換算した値で、
 # 印刷はしないので「A4 相当」という目安でしかない（要件定義 1章）
 PAGE_SIZES: dict[str, Size] = {
@@ -68,6 +78,33 @@ TEXT_DIRECTIONS = ("horizontal", "vertical")
 # これは「作るとき」の既定であって、**読み込むときの既定ではない**。
 # 保存形式に `direction` が無いファイルは横書きとして読む（`TextObject.from_dict`）。
 DEFAULT_TEXT_DIRECTION = "vertical"
+
+# **新しく作るセリフの書体。** 読みやすさを狙って作られた書体で、
+# Windows 10 以降に標準で入っている。
+#
+# **名前のスペースを省けない。** Qt に渡すのは `UD デジタル 教科書体 N`
+# （3か所にスペース）で、`UDデジタル教科書体N` と詰めて書くと一致せず、
+# **黙って Tahoma に化ける**（2026-08-03 実測）。代わりの書体で描かれる
+# だけなので、エラーにならず気づけない。
+#
+# 末尾の `N` は等幅の一族（`NK` は仮名が詰まり、`NP` は全体が詰まる）。
+# 太さの `-R` / `-B` は付けない。Qt では同じ一族の中の style 扱いで、
+# 太字は `Font.bold` から切り替わる。
+DEFAULT_FONT_FAMILY = "UD デジタル 教科書体 N"
+
+# 新しく作るセリフの文字の大きさ（px）。**紙の上で 20pt 相当**。
+#
+# px はページの座標（150dpi 換算）なので、数字の見た目より小さい。
+# 20px では紙の上で約 9.6pt しかなく、ネームの下書きとして読みにくかった
+# （2026-08-03、実機で確認して 42px に決めた）。
+DEFAULT_FONT_SIZE_PX = 42.0
+
+# 上の2つは `DEFAULT_TEXT_DIRECTION` と同じく「作るとき」の既定であって、
+# **読み込むときの既定ではない**。項目の欠けた `project.json` は、書かれて
+# いた頃の既定（`Yu Gothic UI` / 21px）で読む（`Font.from_dict`）。
+# 既にある作品の見た目を、アプリの更新で変えないため
+LEGACY_FONT_FAMILY = "Yu Gothic UI"
+LEGACY_FONT_SIZE_PX = 21.0
 
 # 斜め割りの境界が傾く向き。上へ行くほど右が "/"、上へ行くほど左が "\"
 SLANT_RIGHT = "/"
@@ -115,8 +152,8 @@ class Font:
     `TEXT_FONT_SCALE`）は、px にしたことで要らなくなった。
     """
 
-    family: str = "Yu Gothic UI"
-    size_px: float = 21.0
+    family: str = DEFAULT_FONT_FAMILY
+    size_px: float = DEFAULT_FONT_SIZE_PX
     bold: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -128,12 +165,18 @@ class Font:
 
         値の換算は `Project.from_dict` がまとめて行う。ここは
         「どの名前で入っているか」だけを吸収する。
+
+        **項目が欠けているときは昔の既定で埋める**（`LEGACY_FONT_*`）。
+        新しく作るときの既定（`DEFAULT_FONT_*`）を使うと、アプリを更新
+        しただけで既にある作品の見た目が変わってしまう。
         """
         d = v.req_mapping(data, where)
         legacy = "size_px" not in d and "size_mm" in d
         return cls(
-            family=v.text(d, "family", where, "Yu Gothic UI"),
-            size_px=v.positive(d, "size_mm" if legacy else "size_px", where, 21.0),
+            family=v.text(d, "family", where, LEGACY_FONT_FAMILY),
+            size_px=v.positive(
+                d, "size_mm" if legacy else "size_px", where, LEGACY_FONT_SIZE_PX
+            ),
             bold=v.flag(d, "bold", where, False),
         )
 

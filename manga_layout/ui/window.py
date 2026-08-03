@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from ..errors import MangaLayoutError
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect
-from ..model import ImageObject, Panel
+from ..model import PT_TO_PX, ImageObject, Panel
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import (
     PROJECT_FILENAME,
@@ -80,9 +80,14 @@ def align_label(align: str, direction: str) -> str:
 # project.json を選ばせる（理由は `open_project`）
 PROJECT_FILE_FILTER = f"作品ファイル ({PROJECT_FILENAME});;すべてのファイル (*)"
 
-# 文字の大きさを1段階変える幅（px）と、行き過ぎを止める範囲。
-# 数値を打ち込ませるより、押して確かめるほうが速い
-TEXT_SIZE_STEP_PX = 2.0
+# 文字の大きさを1段階変える幅と、行き過ぎを止める範囲。
+# 数値を打ち込ませるより、押して確かめるほうが速い。
+#
+# **1段階はポイントで決める。** 状態表示もフォント設定の窓もポイントで
+# 喋るので、px で決めると 1 段階が半端な数になる（以前の 2px は
+# 約 0.96pt で、押しても表示が 1pt 動いたり動かなかったりした）。
+TEXT_SIZE_STEP_PT = 2.0
+TEXT_SIZE_STEP_PX = TEXT_SIZE_STEP_PT * PT_TO_PX
 TEXT_SIZE_MIN_PX = 9.0
 TEXT_SIZE_MAX_PX = 180.0
 
@@ -119,9 +124,12 @@ class MainWindow(QMainWindow):
 
         # settings.json は手で書き換える前提のファイル。実物が無いと
         # 「どこに何を書けばいいのか」が分からないので、起動時に雛形を置く。
-        # 読めなくても既定値で進む（設定は好みで、無くても作業はできる）
-        ensure_settings_file()
-        self.settings = load_settings()
+        # 読めなくても既定値で進む（設定は好みで、無くても作業はできる）。
+        #
+        # 場所を持っておくのは、テストで本物の設定を読み書きしないため
+        self.settings_file = settings_path()
+        ensure_settings_file(self.settings_file)
+        self.settings = load_settings(self.settings_file)
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -532,7 +540,7 @@ class MainWindow(QMainWindow):
             body = f"{lines} 行" if lines else "（未入力）"
             lay = "縦書き" if text.direction == "vertical" else "横書き"
             return (
-                f"セリフを選択中: {body} / {font.family} {font.size_px:.0f}px{weight}"
+                f"セリフを選択中: {body} / {font.family} {self._size_label(font.size_px)}{weight}"
                 f" / {lay} / {align_label(text.align, text.direction)} / {tied}"
             )
 
@@ -665,10 +673,19 @@ class MainWindow(QMainWindow):
         self._place_image(panel.id, data, "貼り付け")
 
     def open_image_file(self) -> None:
+        """コマに入れる画像を選ぶ。
+
+        **始まる場所は保存・作品を開くと揃える。** 下書きは作品の隣に
+        置かれることが多いので、そこから始めれば辿り直さずに済む。
+        空文字を渡すと**アプリを起動したフォルダ**から始まり、
+        毎回どこか分からない場所を辿ることになる。
+        """
         panel = self._target_panel()
         if panel is None:
             return
-        path, _ = QFileDialog.getOpenFileName(self, "画像を選ぶ", "", IMAGE_FILE_FILTER)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "画像を選ぶ", self._dialog_start_dir(), IMAGE_FILE_FILTER
+        )
         if not path:
             return
         file = pathlib.Path(path)
@@ -798,7 +815,7 @@ class MainWindow(QMainWindow):
         if size == text.font.size_px:
             return
         self.state.set_text_font(text.id, size_px=size)
-        self.state.message.emit(f"文字の大きさ: {size:.0f} px")
+        self.state.message.emit(f"文字の大きさ: {self._size_label(size)}")
 
     def toggle_bold(self) -> None:
         text = self.state.selected_text
@@ -809,16 +826,58 @@ class MainWindow(QMainWindow):
         self.state.message.emit("太字にしました" if bold else "太字をやめました")
 
     def choose_font(self) -> None:
+        """種類・大きさ・太さをまとめて選ぶ。
+
+        **今の書式を窓に持っていき、選んだ大きさを持ち帰る。** 以前は
+        `QFont(family)` だけを渡していたため、窓には Qt の既定である
+        12pt が出ていた。**選択中のセリフとは無関係な数字**で、しかも
+        窓で大きさを変えても捨てていたので、そこから文字の大きさを
+        変えることができなかった（2026-08-03 に直した）。
+
+        窓はポイントでしか喋らないので、`PT_TO_PX` で換算して渡す。
+        画面の解像度で Qt に換算させると、紙の上での大きさと合わない。
+        """
         text = self.state.selected_text
         if text is None:
             self.state.message.emit("先にセリフを選んでください")
             return
         current = QFont(text.font.family)
+        current.setPointSizeF(text.font.size_px / PT_TO_PX)
+        current.setBold(text.font.bold)
+
         chosen, ok = QFontDialog.getFont(current, self, "フォントを選ぶ")
         if not ok:
             return
-        self.state.set_text_font(text.id, family=chosen.family(), bold=chosen.bold())
-        self.state.message.emit(f"フォント: {chosen.family()}")
+
+        size = self._size_px_of(chosen, fallback=text.font.size_px)
+        self.state.set_text_font(
+            text.id, family=chosen.family(), size_px=size, bold=chosen.bold()
+        )
+        self.state.message.emit(f"フォント: {chosen.family()} {self._size_label(size)}")
+
+    @staticmethod
+    def _size_px_of(font: QFont, fallback: float) -> float:
+        """窓が返した大きさをページの px に直す。
+
+        `pointSizeF()` は、大きさが px で指定された QFont では -1 を返す。
+        窓には pt で渡しているので普通は起きないが、**戻り値を信じて
+        負の大きさを保存すると描画が消える**ので、その場合は元の値を使う。
+        """
+        points = font.pointSizeF()
+        if points <= 0:
+            return fallback
+        size = round(points * PT_TO_PX, 2)
+        return min(max(size, TEXT_SIZE_MIN_PX), TEXT_SIZE_MAX_PX)
+
+    @staticmethod
+    def _size_label(size_px: float) -> str:
+        """px とポイントを併記する。
+
+        px だけだと**画面の点の数と取り違える**。実際にはページの座標
+        （150dpi 換算）なので、20px は紙の上では約 9.6pt にしかならない。
+        フォント設定の窓もポイントで喋るので、そちらとも突き合わせられる。
+        """
+        return f"{size_px:.0f}px（約 {size_px / PT_TO_PX:.0f}pt）"
 
     def delete_text(self) -> None:
         text = self.state.selected_text
@@ -964,6 +1023,28 @@ class MainWindow(QMainWindow):
         self.state.reset(make(), None)
         self.state.message.emit("新しい作品を作りました")
 
+    def _default_parent(self) -> pathlib.Path:
+        """ファイルの窓が始まる場所。
+
+        **開く・保存・画像を選ぶで同じ場所を使う。** 別々にすると、
+        同じ作業の途中なのに窓ごとに違う場所から始まり、そのたびに
+        辿り直すことになる。決め方は `saving.default_parent`
+        （開いている作品の隣 → `settings.json` → ドキュメント）。
+
+        **設定は使う直前に読み直す。** `settings.json` は手で書き換える
+        前提のファイルなのに、起動時に一度読むだけだと**書き換えても
+        アプリを開き直すまで効かない**。しかも効かない理由が画面に出ない
+        ので、設定の書き方を間違えたのかと疑うことになる（2026-08-03 に
+        実際に起きた）。窓を開く瞬間に数百バイト読むだけなので、
+        待たされることはない。
+        """
+        self.settings = load_settings(self.settings_file)
+        return default_parent(self.state.project_dir, self.settings.default_parent_dir)
+
+    def _dialog_start_dir(self) -> str:
+        """`QFileDialog` に渡す形にした `_default_parent`。"""
+        return str(self._default_parent())
+
     def open_project(self) -> None:
         """作品を開く。**`project.json` を選ばせる。**
 
@@ -975,10 +1056,7 @@ class MainWindow(QMainWindow):
         if not self._confirm_discard():
             return
         chosen, _ = QFileDialog.getOpenFileName(
-            self,
-            "作品を開く",
-            str(default_parent(self.state.project_dir, self.settings.default_parent_dir)),
-            PROJECT_FILE_FILTER,
+            self, "作品を開く", self._dialog_start_dir(), PROJECT_FILE_FILTER
         )
         if not chosen:
             return
@@ -1020,10 +1098,10 @@ class MainWindow(QMainWindow):
         置き場所と名前を分けて受け取る（`saving.SaveAsDialog`）。
         """
         dialog = SaveAsDialog(
-            default_parent(self.state.project_dir, self.settings.default_parent_dir),
+            self._default_parent(),
             self.state.project.title,
             self,
-            settings_path(),
+            self.settings_file,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False

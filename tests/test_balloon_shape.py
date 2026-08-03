@@ -20,6 +20,8 @@ from manga_layout.layout import (
     balloon_contains,
     balloon_outline,
     default_balloon_rect,
+    TAIL_LENGTH_MIN_PX,
+    TAIL_LENGTH_RATIO,
     default_tail_tip,
     ellipse_points,
     jagged_points,
@@ -176,6 +178,22 @@ class TestTail:
         tip = default_tail_tip(RECT)
         assert tip[0] == pytest.approx(RECT.center[0])
         assert tip[1] > RECT.bottom
+
+    def test_長さは吹き出しの高さに比例する(self):
+        """既定を縦長にしたとき、高さ基準のしっぽも一緒に伸びる。"""
+        tall = Rect(RECT.x, RECT.y, RECT.w, RECT.h * 2.0)
+        伸びた = default_tail_tip(tall)[1] - tall.bottom
+        もと = default_tail_tip(RECT)[1] - RECT.bottom
+
+        assert 伸びた == pytest.approx(もと * 2.0)
+        assert もと == pytest.approx(RECT.h * TAIL_LENGTH_RATIO)
+
+    def test_小さい吹き出しでも潰れない(self):
+        """割合だけだと、小さい吹き出しでしっぽが消える。"""
+        tiny = Rect(0.0, 0.0, 4.0, 1.0)
+        assert default_tail_tip(tiny)[1] - tiny.bottom == pytest.approx(
+            TAIL_LENGTH_MIN_PX
+        )
 
 
 class TestTailRoot:

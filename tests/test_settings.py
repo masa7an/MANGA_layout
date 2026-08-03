@@ -8,9 +8,11 @@
 from __future__ import annotations
 
 import json
+import pathlib
 
 import pytest
 
+import manga_layout
 from manga_layout.settings import (
     SETTINGS_FILENAME,
     SETTINGS_VERSION,
@@ -101,10 +103,35 @@ class Test雛形の用意:
 
 
 class Test置き場所:
-    def test_LOCALAPPDATAの下に置く(self, monkeypatch, tmp_path):
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-        assert settings_path() == tmp_path / "MANGA_layout" / SETTINGS_FILENAME
+    """作業フォルダの `data/` に置く。
 
-    def test_環境変数が無くても場所は決まる(self, monkeypatch):
+    `%LOCALAPPDATA%` に置いていた頃は、パッケージ版アプリの中から触ると
+    別フォルダへ転送されるのに**パス表示が変わらず**、同じパスなのに実体が
+    別という状態になった。作業フォルダの中なら実体が1つしかない。
+    """
+
+    def test_リポジトリのdataの下に置く(self):
+        repo_root = pathlib.Path(manga_layout.__file__).resolve().parent.parent
+        assert settings_path() == repo_root / "data" / SETTINGS_FILENAME
+
+    def test_どこから起動しても同じ場所を指す(self, monkeypatch, tmp_path):
+        """起動時の作業フォルダに左右されない。
+
+        `run.bat` から、tools/ のスクリプトから、と入口が複数あるので、
+        相対で決めると入口ごとに別のファイルを見ることになる。
+        """
+        before = settings_path()
+        monkeypatch.chdir(tmp_path)
+        assert settings_path() == before
+
+    def test_環境変数に左右されない(self, monkeypatch):
+        """`%LOCALAPPDATA%` を見ていた頃の名残が残っていないこと。"""
+        before = settings_path()
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
-        assert settings_path().name == SETTINGS_FILENAME
+        assert settings_path() == before
+
+    def test_git管理外の場所にある(self):
+        """`F:` のような片方の PC にしか無いドライブが同期で持ち込まれない。"""
+        repo_root = pathlib.Path(manga_layout.__file__).resolve().parent.parent
+        ignored = (repo_root / ".gitignore").read_text(encoding="utf-8")
+        assert "/data/" in ignored

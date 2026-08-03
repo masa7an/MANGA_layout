@@ -4,12 +4,21 @@
 （ページの大きさ、綴じ方向）は `project.json` 側で、ここには入れない。
 混ぜると、作品を別の PC へ渡したときに相手の好みを上書きしてしまう。
 
-置き場所は `%LOCALAPPDATA%\\MANGA_layout\\settings.json`。リポジトリの中に
-置かない理由は2つある。
+置き場所は**このリポジトリの `data/settings.json`**。`data/` は git 管理外
+なので（`.gitignore` の `/data/`）、`F:` のような**片方の PC にしか無い
+ドライブ**が書かれていても、もう1台へは同期されない。2台運用で困らない
+という条件は、`%LOCALAPPDATA%` に置かなくても満たせる。
 
-- このプロジェクトは**2台の PC で git 同期している**。保存先には `F:` の
-  ような、片方の PC にしか無いドライブが入る
-- リポジトリを clone し直しても設定が残る
+`%LOCALAPPDATA%` から移した理由は、**そこに置くと「誰が見ているファイル
+なのか」が分からなくなった**ため。パッケージ版アプリの中から触ると
+`%LOCALAPPDATA%` は `...\\Packages\\<アプリ>\\LocalCache\\Local\\` へ
+転送されるが、**パス表示は元のまま変わらない**。同じパスなのに実体が別で、
+片方では設定が入っていて片方では空、という状態になる（2026-08-03 に
+実際に起きて、原因の特定に長くかかった）。作業フォルダの中なら実体が1つ
+しかなく、この取り違えが起こらない。
+
+**代わりに失うもの:** clone し直すと設定も消える。手で書き直す前提の
+数行なので、取り違えの分かりにくさとは釣り合わないと判断した。
 
 人が手で開いて書き換えることを前提にした形にしてある（項目を絞る、
 知らない項目は捨てずに読み飛ばす、壊れていても起動を止めない）。
@@ -18,13 +27,13 @@
 from __future__ import annotations
 
 import json
-import os
 import pathlib
 from dataclasses import dataclass
 
 from .storage import atomic_write_text
 
-APP_DIRNAME = "MANGA_layout"
+# 利用者のデータを入れるフォルダ。git 管理外（`.gitignore` の `/data/`）
+DATA_DIRNAME = "data"
 SETTINGS_FILENAME = "settings.json"
 
 # 形式を変えたときに、古い設定を読んでいると気づけるようにする
@@ -32,11 +41,14 @@ SETTINGS_VERSION = 1
 
 
 def settings_dir() -> pathlib.Path:
-    base = os.environ.get("LOCALAPPDATA")
-    if base:
-        return pathlib.Path(base) / APP_DIRNAME
-    # Windows 以外や、環境変数が無い場合の逃げ道
-    return pathlib.Path.home() / f".{APP_DIRNAME.lower()}"
+    """設定を置くフォルダ。**このリポジトリの `data/`。**
+
+    起動時の作業フォルダではなく、**このファイルの位置から**辿る。
+    どこから起動しても同じ1個のファイルを指すようにするため
+    （`run.bat` から、tools/ のスクリプトから、と入口が複数ある）。
+    """
+    # settings.py → manga_layout/ → リポジトリのルート
+    return pathlib.Path(__file__).resolve().parent.parent / DATA_DIRNAME
 
 
 def settings_path() -> pathlib.Path:
@@ -47,9 +59,13 @@ def settings_path() -> pathlib.Path:
 class AppSettings:
     """`settings.json` の中身。
 
-    `default_parent_dir` は「名前を付けて保存」の窓に最初から入っている
-    **置き場所**。作品フォルダそのものではなく、その1つ上を指す。
-    `null` にするとドキュメントフォルダを使う。
+    `default_parent_dir` は**ファイルの窓が始まる場所**。作品フォルダ
+    そのものではなく、その1つ上を指す。`null` にするとドキュメント
+    フォルダを使う。
+
+    「名前を付けて保存」「作品を開く」「画像を選ぶ」で**共通**に使う。
+    窓ごとに分けると、同じ作業の途中なのに始まる場所が変わり、
+    そのたびに辿り直すことになる。
     """
 
     default_parent_dir: str | None = None

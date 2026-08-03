@@ -64,8 +64,13 @@ class BalloonSettings:
     調整したい場面がまったく違うため。
     """
 
-    # クリックだけで置いたときの大きさ
-    default_size: tuple[float, float] = (236.0, 154.0)
+    # クリックだけで置いたときの大きさ。**縦長。**
+    # 日本語のマンガは縦書きなので、中に入るセリフが縦に長くなる。
+    # 横長の吹き出しに縦書きを入れると、左右が空いて下がはみ出す。
+    #
+    # **セリフの枠（`DEFAULT_TEXT_SIZE`）より一回り大きく保つ。**
+    # 中に入るセリフのほうが大きいと、置いた瞬間にはみ出す
+    default_size: tuple[float, float] = (333.0, 496.0)
     # しっぽの付け根の幅
     tail_width: float = 35.0
     # ギザギザの山の数。増やすと細かく、減らすと荒くなる
@@ -77,6 +82,17 @@ class BalloonSettings:
 
 
 DEFAULT_BALLOON_SETTINGS = BalloonSettings()
+
+# 作ったばかりのしっぽが、吹き出しの下へ伸びる長さ。**吹き出しの高さに
+# 対する割合。**
+#
+# 吹き出しの既定を縦長（高さ 496px）にしたことで、高さ基準のしっぽが
+# 一緒に伸びて長すぎになった。0.5 から 25% 減らして 0.375 にしてある
+# （2026-08-03）。既にある吹き出しのしっぽは自分の先端を持つので変わらない
+TAIL_LENGTH_RATIO = 0.375
+
+# 吹き出しがごく小さいときでも、しっぽが潰れない最小の長さ（px）
+TAIL_LENGTH_MIN_PX = 4.0
 
 
 # --------------------------------------------------------------------------
@@ -918,7 +934,7 @@ def default_tail_tip(rect: Rect) -> tuple[float, float]:
     吹き出しは上に置かれるため、下向きが当たりやすい。
     """
     cx, _ = rect.center
-    return (cx, rect.bottom + max(rect.h * 0.5, 4.0))
+    return (cx, rect.bottom + max(rect.h * TAIL_LENGTH_RATIO, TAIL_LENGTH_MIN_PX))
 
 
 def default_balloon_rect(

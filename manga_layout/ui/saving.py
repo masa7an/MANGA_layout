@@ -102,11 +102,14 @@ def target_note(path: pathlib.Path) -> str:
 def default_parent(
     project_dir: pathlib.Path | None, configured: str | None = None
 ) -> pathlib.Path:
-    """置き場所の初期値。次の順に、**実在する最初のもの**を使う。
+    """ファイルの窓が始まる場所。次の順に、**実在する最初のもの**を使う。
 
     1. 開いている作品の親フォルダ。2作目は1作目の隣に作ることが多い
     2. `settings.json` の `default_parent_dir`（新しい作品のとき）
     3. ドキュメントフォルダ
+
+    「名前を付けて保存」だけでなく「作品を開く」「画像を選ぶ」も
+    ここを通す（`MainWindow._default_parent`）。
 
     実在を毎回確かめるのは、設定に `F:` のような外付けドライブが
     書かれていて、**その PC では繋がっていない**ことがあるため。

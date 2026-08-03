@@ -11,6 +11,7 @@ import pytest
 
 from manga_layout import (
     BalloonObject,
+    Font,
     ImageObject,
     Panel,
     Project,
@@ -20,6 +21,7 @@ from manga_layout import (
     new_project,
 )
 from manga_layout.errors import ProjectFormatError, UnsupportedVersionError
+from manga_layout.model import DEFAULT_FONT_FAMILY, PT_TO_PX
 
 
 class TestIds:
@@ -202,6 +204,42 @@ class TestPages:
         b5 = project.add_page(size=Size(1075.0, 1518.0))
         assert project.pages[0].size == Size(1240.0, 1754.0)
         assert b5.size == Size(1075.0, 1518.0)
+
+
+class Testセリフの書式の既定:
+    """「作るときの既定」と「読み込むときの既定」を分けてある。
+
+    同じにすると、アプリを更新しただけで**既にある作品の見た目が変わる**。
+    """
+
+    def test_新しいセリフはUDデジタル教科書体(self):
+        project = new_project()
+        text = project.add_text(project.pages[0], "セリフ", Rect(0.0, 0.0, 40.0, 40.0))
+
+        assert text.font.family == "UD デジタル 教科書体 N"
+        # 紙の上で 20pt 相当。px はページの座標（150dpi 換算）なので、
+        # 数字の見た目より小さい
+        assert text.font.size_px == 42.0
+        assert text.font.size_px / PT_TO_PX == pytest.approx(20.0, abs=0.2)
+
+    def test_書体名のスペースを詰めない(self):
+        """詰めた名前は Qt で一致せず、黙って別の書体で描かれる。
+
+        エラーにならないので、名前が崩れても気づけない。
+        """
+        assert DEFAULT_FONT_FAMILY == "UD デジタル 教科書体 N"
+
+    def test_項目の欠けた保存は昔の既定で読む(self):
+        font = Font.from_dict({}, "font")
+
+        assert font.family == "Yu Gothic UI"
+        assert font.size_px == 21.0
+
+    def test_書いてある値のほうが強い(self):
+        font = Font.from_dict({"family": "游明朝", "size_px": 30.0}, "font")
+
+        assert font.family == "游明朝"
+        assert font.size_px == 30.0
 
 
 class TestValidation:

@@ -10,9 +10,10 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtGui import QFont
 
 from manga_layout import Rect
-from manga_layout.model import TextObject
+from manga_layout.model import PT_TO_PX, TextObject
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import TOOL_SELECT, TOOL_TEXT
 
@@ -322,6 +323,24 @@ class TestFormat:
         window_with_text.step_text_size(-1)
         assert window_with_text.state.selected_text.font.size_px == pytest.approx(before)
 
+    def test_1段階は2ポイント(self, window_with_text):
+        """px ではなくポイントで決める。表示も窓もポイントで喋る。"""
+        before = window_with_text.state.selected_text.font.size_px
+        window_with_text.step_text_size(1)
+        動いた = window_with_text.state.selected_text.font.size_px - before
+
+        assert 動いた / PT_TO_PX == pytest.approx(2.0, abs=0.01)
+
+    def test_2回押すと表示が4ポイント動く(self, window_with_text):
+        """半端な幅だと、押しても表示が動かない回が出る。"""
+        text = window_with_text.state.selected_text
+        before = round(text.font.size_px / PT_TO_PX)
+        window_with_text.step_text_size(1)
+        window_with_text.step_text_size(1)
+        after = round(window_with_text.state.selected_text.font.size_px / PT_TO_PX)
+
+        assert after - before == 4
+
     def test_小さくしすぎない(self, window_with_text):
         for _ in range(50):
             window_with_text.step_text_size(-1)
@@ -356,6 +375,94 @@ class TestFormat:
         assert text.content == "セリフ"
         assert text.attached_balloon_id is not None
         assert restored.load_warnings == []
+
+
+class Testフォント設定の窓:
+    """**今の書式を持っていき、選んだ大きさを持ち帰る。**
+
+    以前は種類と太さだけを持ち帰り、大きさは捨てていた。窓には Qt の
+    既定の 12pt が出るので、**選択中のセリフとは無関係な数字**を見ながら
+    操作することになり、そこから大きさを変えることもできなかった。
+    """
+
+    def test_今の大きさをポイントで持っていく(self, window_with_text, monkeypatch):
+        window_with_text.state.set_text_font(
+            window_with_text.state.selected_text.id, size_px=25.0
+        )
+        渡された = _capture_font(monkeypatch, accept=False)
+
+        window_with_text.choose_font()
+
+        # 25px は 150dpi 換算で 12pt。画面の解像度で換算してはいけない
+        assert 渡された[0].pointSizeF() == pytest.approx(12.0)
+
+    def test_太字も持っていく(self, window_with_text, monkeypatch):
+        window_with_text.toggle_bold()
+        渡された = _capture_font(monkeypatch, accept=False)
+
+        window_with_text.choose_font()
+
+        assert 渡された[0].bold()
+
+    def test_選んだ大きさが効く(self, window_with_text, monkeypatch):
+        _choose_font(monkeypatch, points=24.0)
+
+        window_with_text.choose_font()
+
+        # 24pt は 150dpi 換算で 50px
+        assert window_with_text.state.selected_text.font.size_px == pytest.approx(50.0)
+
+    def test_取り消せば何も変わらない(self, window_with_text, monkeypatch):
+        before = window_with_text.state.selected_text.font
+        _choose_font(monkeypatch, points=24.0, accept=False)
+
+        window_with_text.choose_font()
+
+        assert window_with_text.state.selected_text.font == before
+
+    def test_大きさが取れなければ元の値を保つ(self, window_with_text, monkeypatch):
+        """`pointSizeF()` は px 指定の QFont では -1 を返す。
+
+        そのまま保存すると負の大きさになり、**文字が描かれなくなる**。
+        """
+        before = window_with_text.state.selected_text.font.size_px
+        _choose_font(monkeypatch, pixels=18)
+
+        window_with_text.choose_font()
+
+        assert window_with_text.state.selected_text.font.size_px == before
+
+    def test_大きさの表示にポイントを併記する(self):
+        """px だけだと画面の点の数と取り違える。"""
+        assert MainWindow._size_label(25.0) == "25px（約 12pt）"
+
+
+def _capture_font(monkeypatch, *, accept: bool) -> list:
+    """窓を出さずに、渡された QFont を控える。"""
+    渡された: list = []
+
+    def fake(font, *args, **kwargs):
+        渡された.append(font)
+        return font, accept
+
+    monkeypatch.setattr("manga_layout.ui.window.QFontDialog.getFont", fake)
+    return 渡された
+
+
+def _choose_font(
+    monkeypatch, *, points: float | None = None, pixels: int | None = None, accept=True
+) -> None:
+    """窓を出さずに、その書式を選んだことにして進める。"""
+
+    def fake(font, *args, **kwargs):
+        chosen = QFont(font)
+        if points is not None:
+            chosen.setPointSizeF(points)
+        if pixels is not None:
+            chosen.setPixelSize(pixels)
+        return chosen, accept
+
+    monkeypatch.setattr("manga_layout.ui.window.QFontDialog.getFont", fake)
 
 
 class TestConfirmHint:
