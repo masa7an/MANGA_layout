@@ -432,20 +432,17 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._act("ページ全体を表示", self.view.fit_page, "Ctrl+0"))
 
     def _build_toolbar(self) -> None:
+        """道具箱。**一覧は `_tool_actions` から取る。**
+
+        道具の名前を並べ直すと、道具メニュー（`_build_menus` の
+        `tool_menu`）と2か所を直すことになる。道具を増やしたときに
+        片方だけ直し忘れると、道具箱にだけ出ない項目ができてしまう。
+        """
         bar = QToolBar("道具", self)
         bar.setMovable(False)
         self.addToolBar(bar)
-        for tool in (
-            TOOL_SELECT,
-            TOOL_PANEL,
-            TOOL_SPLIT_H,
-            TOOL_SPLIT_V,
-            TOOL_SPLIT_SLANT,
-            TOOL_BALLOON,
-            TOOL_BALLOON_JAGGED,
-            TOOL_TEXT,
-        ):
-            bar.addAction(self._tool_actions[tool])
+        for action in self._tool_actions.values():
+            bar.addAction(action)
         bar.addSeparator()
         bar.addAction(self._act("← 前ページ", self.prev_page))
         bar.addAction(self._act("次ページ →", self.next_page))

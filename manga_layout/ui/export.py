@@ -143,7 +143,7 @@ def existing_paths(paths) -> list[pathlib.Path]:
 def missing_assets_in(state, indexes) -> int:
     """書き出す範囲にある「実体が見つからない画像」の数。
 
-    書き出しでは目印を描かない（`PageRenderer(marks=False)`）ので、
+    書き出しでは目印を描かない（`PageRenderer(aids=False)`）ので、
     黙って穴が空く。数だけ先に数えて、書き出す前に知らせる。
     """
     count = 0

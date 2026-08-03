@@ -379,7 +379,7 @@ class BalloonObject(SceneObject):
 
 @dataclass
 class TextObject(SceneObject):
-    """セリフ。MVP は横書きのみ（要件定義 6.5）。"""
+    """セリフ。横書き・縦書きの両方に対応する（要件定義 6.5、6.11）。"""
 
     content: str = ""
     rect: Rect = field(default_factory=lambda: Rect(0.0, 0.0, 0.0, 0.0))

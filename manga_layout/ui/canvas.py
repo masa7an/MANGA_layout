@@ -39,11 +39,9 @@ from ..errors import MangaLayoutError
 from ..geometry import Rect
 from ..layout import (
     aspect_of,
-    attach_target,
     balloon_at,
     default_balloon_rect,
     default_panel_rect,
-    default_tail_tip,
     handle_at,
     handle_positions,
     image_at,
