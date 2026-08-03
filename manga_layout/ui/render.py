@@ -4,6 +4,12 @@
 用紙・コマ・画像・吹き出し・セリフの描画をここへ集めてある。分けて書くと、
 片方だけ直したときにサムネイルと本画面が食い違い、しかも気づきにくい。
 
+重ねる順（奥から手前）は**種類で決まる**。z は同じ種類の中でしか効かない。
+
+    用紙 → コマ（と中の画像）→ 吹き出し → セリフ
+
+段の定義は `model.floating_order` にある。詳しい理由はそちらに書いた。
+
 選択枠・つまみ・下書きの矩形といった「画面の道具」はここに入れない。
 それらは作品の一部ではないので、サムネイルにも書き出しにも出したくない。
 
@@ -22,7 +28,15 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, Q
 from .. import vertical
 from ..geometry import Rect
 from ..layout import balloon_outline, slant_polygons, tail_triangle
-from ..model import BalloonObject, Font, ImageObject, Page, Panel, TextObject
+from ..model import (
+    BalloonObject,
+    Font,
+    ImageObject,
+    Page,
+    Panel,
+    TextObject,
+    floating_order,
+)
 
 PAGE_BG = QColor("#FFFFFF")
 PAGE_EDGE = QColor("#8A8A8A")
@@ -298,8 +312,12 @@ class PageRenderer:
     def draw_floating(
         self, painter: QPainter, page: Page, preview: DragPreview = NO_PREVIEW
     ) -> None:
-        """ページ直下のもの。z の小さい順に重ねる。"""
-        for obj in sorted(page.floating, key=lambda f: f.z):
+        """ページ直下のもの。**段が先、z が後**（`model.floating_order`）。
+
+        セリフは常に吹き出しより手前。z だけで重ねると、セリフを書いた
+        あとに載せた吹き出しが文字を塗り潰してしまう。
+        """
+        for obj in sorted(page.floating, key=floating_order):
             if isinstance(obj, BalloonObject):
                 self._draw_balloon(painter, obj, preview)
             elif isinstance(obj, TextObject):
