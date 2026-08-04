@@ -84,13 +84,16 @@ def align_label(align: str, direction: str) -> str:
     return labels.get(align, align)
 
 
-# しっぽの向きを変える項目と、付け根の高さ（-1 が上端、+1 が下端）。
-# 「横」は先端のある側の真横。左右どちらかは先端に従うので、名前には出さない。
+# しっぽの向きを変える項目（→ `TAIL_DIRECTIONS`）。
+#
+# **右と左を分ける。** まとめて「横へ」にすると、どちら側になるかが
+# 先端の現在位置任せになる。左右に2人が向かい合うコマでは、指す相手を
+# 選べないと使えない（相談 2026-08-05）
 #
 # **メニューの文言と操作後の案内が同じ表を見る。** 書き分けると、
 # 改名したときに片方だけ古いまま残る（→ `BALLOON_STYLE_LABELS` と同じ線引き）
-TAIL_TURN_ITEMS = (("上", -1.0), ("横", 0.0), ("下", 1.0))
-TAIL_TURN_LABELS = {ratio: where for where, ratio in TAIL_TURN_ITEMS}
+TAIL_TURN_ITEMS = (("上", "up"), ("右", "right"), ("左", "left"), ("下", "down"))
+TAIL_TURN_LABELS = {direction: where for where, direction in TAIL_TURN_ITEMS}
 
 
 # 右クリックの「ここに ●● を追加」「ここで ●●」の前置きと後置き。
@@ -461,14 +464,14 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.tail_action)
         self.balloon_actions.append(self.tail_action)
 
-        # しっぽの向きを変える3つは右クリックには出さない。選択中の
+        # しっぽの向きを変える4つは右クリックには出さない。選択中の
         # フキダシだけでも右クリックのメニューは項目数が多く（実測13、
-        # 3つ外して10）、これ以上増やすと選びにくくなる（相談 2026-08-05）
+        # 外して10）、これ以上増やすと選びにくくなる（相談 2026-08-05）
         tail_turn_actions: list[QAction] = []
-        for where, ratio in TAIL_TURN_ITEMS:
+        for where, direction in TAIL_TURN_ITEMS:
             action = self._act(
                 f"しっぽを{where}へ",
-                lambda _=False, r=ratio: self.turn_tail(r),
+                lambda _=False, d=direction: self.turn_tail(d),
                 tip=f"しっぽの向きを{where}に変えます。先端も一緒に回ります",
             )
             balloon_menu.addAction(action)
@@ -1190,11 +1193,11 @@ class MainWindow(QMainWindow):
         self.state.set_tail_enabled(balloon.id, enabled)
         self.state.message.emit("しっぽを出しました" if enabled else "しっぽを消しました")
 
-    def turn_tail(self, root_y: float) -> None:
+    def turn_tail(self, direction: str) -> None:
         """しっぽの向きを変える。**先端も一緒に回る**（→ 6.4）。
 
         付け根だけを動かすと、先端と反対側では本体に隠れて針に痩せる。
-        付け根の左右への微調整はひし形の印のドラッグが受け持つ。
+        付け根の細かい寄せはひし形の印のドラッグが受け持つ。
         """
         balloon = self.state.selected_balloon
         if balloon is None:
@@ -1202,8 +1205,8 @@ class MainWindow(QMainWindow):
         if not balloon.tail.enabled:
             self.state.message.emit("しっぽが出ていません")
             return
-        self.state.turn_tail(balloon.id, root_y)
-        self.state.message.emit(f"しっぽを{TAIL_TURN_LABELS[root_y]}へ向けました")
+        self.state.turn_tail(balloon.id, direction)
+        self.state.message.emit(f"しっぽを{TAIL_TURN_LABELS[direction]}へ向けました")
 
     def toggle_attachment(self) -> None:
         """コマへの紐づけを付けたり外したり（要件定義 6.4「手動で解除可」）。

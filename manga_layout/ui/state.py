@@ -656,8 +656,8 @@ class EditorState(QObject):
         with self._edit_balloon(balloon_id, "しっぽの付け根") as balloon:
             balloon.tail = dataclasses.replace(balloon.tail, root_y=root_y)
 
-    def turn_tail(self, balloon_id: str, root_y: float) -> None:
-        """しっぽを、指定した高さから生える向きへ**先端ごと**回す。
+    def turn_tail(self, balloon_id: str, direction: str) -> None:
+        """しっぽを `direction`（→ `TAIL_DIRECTIONS`）へ**先端ごと**回す。
 
         付け根だけを動かすと、先端と反対側では本体に隠れて針になる。
         メニューから「上へ」を選ぶのは向きを変えたいときなので、
@@ -668,9 +668,9 @@ class EditorState(QObject):
         ときに古い指定が効いて、また針に痩せる。
         """
         with self._edit_balloon(balloon_id, "しっぽの向き") as balloon:
-            tip = tail_tip_turned_to(balloon, root_y)
+            tip = tail_tip_turned_to(balloon, direction)
             if tip is None:
-                return  # 先端が中心に重なっている。向きが決まらない
+                return  # 先端が中心に重なっている。いまの向きが決まらない
             balloon.tail = dataclasses.replace(balloon.tail, tip=tip, root_y=None)
 
     def set_tail_enabled(self, balloon_id: str, enabled: bool) -> None:

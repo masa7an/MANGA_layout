@@ -1,4 +1,4 @@
-"""フキダシの操作まわりの検証（画面なし）。
+﻿"""フキダシの操作まわりの検証（画面なし）。
 
 形そのものは tests/test_balloon_shape.py で押さえている。ここでは
 「操作 → モデルの変更 → 履歴に積む」がつながっているか、
@@ -702,21 +702,39 @@ class TestTailTurn:
     """メニューからしっぽの向きを変える。付け根だけでなく**先端も回る**。"""
 
     @pytest.mark.parametrize(
-        "ratio,expected", [(-1.0, "上"), (0.0, "横"), (1.0, "下")]
+        "direction", ["up", "right", "left", "down"], ids=["上", "右", "左", "下"]
     )
-    def test_先端が指定した側へ回る(self, window_with_balloon, ratio, expected):
+    def test_先端が指定した側へ回る(self, window_with_balloon, direction):
         state = window_with_balloon.state
         rect = state.selected_balloon.rect
 
-        window_with_balloon.turn_tail(ratio)
+        window_with_balloon.turn_tail(direction)
 
         tip = state.selected_balloon.tail.tip
-        if expected == "上":
-            assert tip[1] < rect.y
-        elif expected == "下":
-            assert tip[1] > rect.bottom
-        else:
-            assert tip[0] > rect.right
+        want = {
+            "up": tip[1] < rect.y,
+            "right": tip[0] > rect.right,
+            "left": tip[0] < rect.x,
+            "down": tip[1] > rect.bottom,
+        }
+        assert want[direction], f"{direction} なのに先端が {tip}"
+
+    def test_左右は先端の位置に関係なく選べる(self, window_with_balloon):
+        """向かい合う2人を左右から指し分けるための分け方（→ 6.4）。
+
+        高さだけで指していたころは、真横がどちら側になるかを先端の
+        現在位置任せにするしかなかった。
+        """
+        state = window_with_balloon.state
+        rect = state.selected_balloon.rect
+
+        window_with_balloon.turn_tail("right")
+        assert state.selected_balloon.tail.tip[0] > rect.right
+        # 右を向いた状態から、そのまま左を選べる
+        window_with_balloon.turn_tail("left")
+        assert state.selected_balloon.tail.tip[0] < rect.x
+        window_with_balloon.turn_tail("right")
+        assert state.selected_balloon.tail.tip[0] > rect.right
 
     def test_付け根も指定した高さへ動く(self, window_with_balloon):
         from manga_layout.layout import tail_root_point
@@ -724,7 +742,7 @@ class TestTailTurn:
         state = window_with_balloon.state
         rect = state.selected_balloon.rect
 
-        window_with_balloon.turn_tail(-1.0)
+        window_with_balloon.turn_tail("up")
 
         root = tail_root_point(state.selected_balloon, state.balloon_settings)
         assert root[1] == pytest.approx(
@@ -741,7 +759,7 @@ class TestTailTurn:
         before = balloon.tail.tip
         length = math.dist(center, before)
 
-        window_with_panel.turn_tail(-1.0)
+        window_with_panel.turn_tail("up")
 
         after = state.selected_balloon.tail.tip
         assert after != before
@@ -752,7 +770,7 @@ class TestTailTurn:
         state = window_with_balloon.state
         state.set_tail_root(state.selected_balloon.id, 0.5)
 
-        window_with_balloon.turn_tail(-1.0)
+        window_with_balloon.turn_tail("up")
 
         assert state.selected_balloon.tail.root_y is None
 
@@ -760,7 +778,7 @@ class TestTailTurn:
         state = window_with_balloon.state
         before = state.selected_balloon.tail.tip
 
-        window_with_balloon.turn_tail(-1.0)
+        window_with_balloon.turn_tail("up")
         state.undo()
 
         assert state.selected_balloon.tail.tip == before
@@ -770,7 +788,7 @@ class TestTailTurn:
         state.set_tail_enabled(state.selected_balloon.id, False)
         tip = state.selected_balloon.tail.tip
 
-        window_with_balloon.turn_tail(-1.0)
+        window_with_balloon.turn_tail("up")
 
         assert state.selected_balloon.tail.tip == tip
         assert messages[-1] == "しっぽが出ていません"

@@ -113,6 +113,19 @@ TAIL_LENGTH_MIN_PX = 4.0
 # （→ `tail_tip_turned_to`）。この上限はあくまで微調整の範囲を決めるもの。
 TAIL_ROOT_MAX_GAP = math.radians(40.0)
 
+# しっぽを向ける先。楕円の媒介変数（ラジアン）で持つ。
+# 画面の y は下向きが正なので、上が -π/2 になる。
+#
+# **左右を別々に持つ。** 高さ（`root_y`）だけで指すと、真横がどちら側かを
+# 先端の現在位置任せにするしかない。左右に2人が向かい合うコマでは、
+# どちらを指すかを選べないと使えない（相談 2026-08-05）
+TAIL_DIRECTIONS = {
+    "up": -math.pi / 2.0,
+    "right": 0.0,
+    "left": math.pi,
+    "down": math.pi / 2.0,
+}
+
 
 # --------------------------------------------------------------------------
 # 当たり判定
@@ -613,20 +626,24 @@ def tail_base_angle(balloon: BalloonObject) -> float | None:
 
 
 def tail_tip_turned_to(
-    balloon: BalloonObject, root_y: float
+    balloon: BalloonObject, direction: str
 ) -> tuple[float, float] | None:
-    """付け根を `root_y` の高さへ動かすとき、**先端を回した先**。
+    """しっぽを `direction` の向きへ回したときの、**先端の行き先**。
 
     付け根だけを反対側へ置いても、しっぽは本体に隠れて針になるだけで
     狙った場所からは生えない（→ `TAIL_ROOT_MAX_GAP`）。向きを大きく
     変えるときは先端ごと回す。
 
-    楕円の潰れを打ち消した空間で回すので、**しっぽの長さと左右の傾きは
-    そのまま残る**。回した先では `root_y` と自動（先端の向き）が一致するので、
+    **左右は名前で受け取る**（`TAIL_DIRECTIONS`）。高さ（`root_y`）で
+    受け取ると、真横がどちら側になるかを先端の現在位置任せにするしかなく、
+    向かい合う2人を左右から指し分けられない。
+
+    楕円の潰れを打ち消した空間で回すので、**しっぽの長さと傾きの具合は
+    そのまま残る**。回した先では付け根の高さと先端の向きが一致するので、
     呼ぶ側は `root_y` を自動へ戻してよい。
     """
     auto = _tail_auto_angle(balloon)
-    wanted = _tail_root_angle(balloon, root_y)
+    wanted = TAIL_DIRECTIONS.get(direction)
     if auto is None or wanted is None:
         return None
 
