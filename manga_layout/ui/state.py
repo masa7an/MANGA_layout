@@ -44,7 +44,7 @@ from ..model import (
     new_project,
 )
 from ..stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION, read_sticker
-from ..storage import load_project, save_project
+from ..storage import load_project, save_project, write_autosave
 
 # 道具（ツール）
 TOOL_SELECT = "select"
@@ -719,6 +719,34 @@ class EditorState(QObject):
         path = save_project(self.project, target)
         self.project_dir = target
         self.history.mark_saved()
+        return path
+
+    def autosave(self) -> pathlib.Path | None:
+        """作業中の内容を `backup/` へ退避する。書いたらそのパスを返す。
+
+        タイマーから一定間隔で呼ばれる（要件定義 6.6）。**次の2つの場合は
+        何もせず None を返す。**
+
+        **保存先が決まっていない**（一度も保存していない作品）。退避先の
+        フォルダが無いうえ、その状態で貼った画像は**まだディスクに無い**
+        （→ `import_bytes` の `pending_assets`）ため、JSON だけ書いても
+        参照先の無い退避になる。保存先が決まっていれば画像は貼った時点で
+        `assets/` に入るので、この問題は起きない。
+
+        **前回の退避から変化が無い。** 判定は保存形式そのものの比較なので
+        （→ `History.is_autosave_pending`）、「変えて元に戻した」場合も
+        正しく何もしない。
+
+        **保存した扱いにはしない。** 本体（project.json）を書き換えていない
+        以上、未保存の印は利用者が保存するまで残す。
+        """
+        if self.project_dir is None:
+            return None
+        if not self.history.is_autosave_pending:
+            return None
+
+        path = write_autosave(self.project, self.project_dir)
+        self.history.mark_autosaved()
         return path
 
     @property

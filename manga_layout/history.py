@@ -80,6 +80,9 @@ class History:
         self._redo: list[Step] = []
         self._merge_key: str | None = None
         self._saved = self._baseline
+        # 自動バックアップは「保存した」印を動かせないので、印を別に持つ
+        # （理由は `is_autosave_pending`）
+        self._autosaved = self._baseline
 
     # -- 現在の状態 --------------------------------------------------------
 
@@ -125,8 +128,36 @@ class History:
         return self._baseline != self._saved
 
     def mark_saved(self) -> None:
-        """保存が完了した時点を記録する。"""
+        """保存が完了した時点を記録する。
+
+        自動バックアップの印も一緒に進める。保存した内容は project.json に
+        そのまま入っているので、同じものを `backup/` へ写しても増えない。
+        """
         self._saved = self._baseline
+        self._autosaved = self._baseline
+
+    @property
+    def is_autosave_pending(self) -> bool:
+        """前回の自動バックアップ以降に変化があるか。
+
+        **`is_dirty` では代用できない。** 自動バックアップでは
+        `mark_saved()` を呼べない（呼ぶと未保存の印が消え、閉じるときに
+        本体が保存されないまま黙って終わる）ため、`is_dirty` は退避した
+        後も真のまま残る。それを目印にすると、1文字も変えていなくても
+        タイマーが回るたびに書くことになる。
+
+        比較は保存形式そのものなので、「変えて元に戻した」場合も正しく
+        「変化なし」になる（`is_dirty` と同じ仕組み）。
+        """
+        return self._baseline != self._autosaved
+
+    def mark_autosaved(self) -> None:
+        """自動バックアップを書いた時点を記録する。
+
+        **`mark_saved()` は呼ばない。** 未保存の印は利用者が保存するまで
+        残す（→ `is_autosave_pending`）。
+        """
+        self._autosaved = self._baseline
 
     # -- 編集 --------------------------------------------------------------
 

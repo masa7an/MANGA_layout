@@ -18,7 +18,13 @@ from manga_layout import (
     save_project,
 )
 from manga_layout.errors import ProjectFormatError, ProjectNotFoundError
-from manga_layout.storage import BACKUP_DIRNAME, BACKUP_GENERATIONS, PROJECT_FILENAME
+from manga_layout.storage import (
+    AUTOSAVE_GENERATIONS,
+    BACKUP_DIRNAME,
+    BACKUP_GENERATIONS,
+    PROJECT_FILENAME,
+    write_autosave,
+)
 
 
 class TestSaveLoad:
@@ -120,6 +126,75 @@ class TestBackup:
         save_project(sample_project, tmp_path)
         save_project(sample_project, tmp_path, backup=False)
         assert not (tmp_path / BACKUP_DIRNAME).exists()
+
+
+class TestAutosave:
+    """タイマーからの自動バックアップ（要件定義 6.6）。"""
+
+    def test_本体を書き換えない(self, tmp_path):
+        # 押していない保存が起きると、未保存の確認と食い違う
+        project = new_project(title="保存した内容")
+        save_project(project, tmp_path)
+
+        project.title = "作業中"
+        write_autosave(project, tmp_path)
+
+        assert load_project(tmp_path).title == "保存した内容"
+
+    def test_作業中の内容が退避される(self, tmp_path):
+        project = new_project(title="保存した内容")
+        save_project(project, tmp_path)
+
+        project.title = "作業中"
+        path = write_autosave(project, tmp_path)
+
+        assert json.loads(path.read_text(encoding="utf-8"))["title"] == "作業中"
+
+    def test_保存の世代とは別の系列になる(self, tmp_path):
+        """混ぜると、タイマーが回るたびに保存済みの世代が押し出されて消える。"""
+        project = new_project(title="1回目")
+        save_project(project, tmp_path)
+        project.title = "2回目"
+        save_project(project, tmp_path)
+
+        for n in range(AUTOSAVE_GENERATIONS + 2):
+            project.title = f"作業中{n}"
+            write_autosave(project, tmp_path)
+
+        backup_dir = tmp_path / BACKUP_DIRNAME
+        saved = backup_dir / "project.1.json"
+        assert json.loads(saved.read_text(encoding="utf-8"))["title"] == "1回目"
+
+    def test_世代が繰り下がり_上限で古いものが消える(self, tmp_path, sample_project):
+        save_project(sample_project, tmp_path)
+        for n in range(AUTOSAVE_GENERATIONS + 2):
+            sample_project.title = f"{n}回目"
+            write_autosave(sample_project, tmp_path)
+
+        backup_dir = tmp_path / BACKUP_DIRNAME
+        files = sorted(backup_dir.glob("autosave.*.json"))
+        assert len(files) == AUTOSAVE_GENERATIONS
+
+        # 直前が .1、その前が .2
+        latest = AUTOSAVE_GENERATIONS + 1
+        assert json.loads((backup_dir / "autosave.1.json").read_text(encoding="utf-8"))["title"] == f"{latest}回目"
+        assert json.loads((backup_dir / "autosave.2.json").read_text(encoding="utf-8"))["title"] == f"{latest - 1}回目"
+
+    def test_退避した内容はそのまま読み戻せる(self, tmp_path, sample_project):
+        # 復元は今のところ手作業（project.json へ置き換える）なので、
+        # 中身が load_project で開ける形であることが要る
+        save_project(sample_project, tmp_path)
+        path = write_autosave(sample_project, tmp_path)
+
+        (tmp_path / PROJECT_FILENAME).write_text(
+            path.read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        assert load_project(tmp_path).to_dict() == sample_project.to_dict()
+
+    def test_書き込み途中のファイルを残さない(self, tmp_path, sample_project):
+        save_project(sample_project, tmp_path)
+        write_autosave(sample_project, tmp_path)
+        assert list((tmp_path / BACKUP_DIRNAME).glob("*.tmp")) == []
 
 
 class TestAssetsIntegration:

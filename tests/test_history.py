@@ -322,6 +322,60 @@ class TestDirty:
         assert not history.is_dirty
 
 
+class TestAutosaveMark:
+    """自動バックアップの印は、保存の印とは別に動く（要件定義 6.6）。"""
+
+    def test_変更すると退避が要る状態になる(self, sample_project):
+        history = History(sample_project)
+        assert not history.is_autosave_pending
+
+        with history.edit("コマの追加") as project:
+            project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+        assert history.is_autosave_pending
+
+        history.mark_autosaved()
+        assert not history.is_autosave_pending
+
+    def test_退避しても未保存の印は残る(self, sample_project):
+        """ここが `is_dirty` で代用できない理由。
+
+        退避で未保存の印まで消すと、閉じるときの確認が出ず、本体が
+        保存されないまま終わる。
+        """
+        history = History(sample_project)
+        with history.edit("コマの追加") as project:
+            project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+
+        history.mark_autosaved()
+
+        assert not history.is_autosave_pending
+        assert history.is_dirty
+
+    def test_保存すると退避も要らなくなる(self, sample_project):
+        # 保存した内容は project.json にそのまま入っている。
+        # 同じものを backup/ へ写しても増えない
+        history = History(sample_project)
+        with history.edit("コマの追加") as project:
+            project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+
+        history.mark_saved()
+
+        assert not history.is_autosave_pending
+        assert not history.is_dirty
+
+    def test_変えて元に戻せば退避は要らない(self, sample_project):
+        # 判定は保存形式そのものの比較なので、往復すれば「変化なし」に戻る
+        history = History(sample_project)
+        history.mark_autosaved()
+
+        with history.edit("コマの追加") as project:
+            project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+        assert history.is_autosave_pending
+
+        history.undo()
+        assert not history.is_autosave_pending
+
+
 class TestMemory:
     def test_30ページの作品でも履歴が軽い(self):
         """要件定義が想定する規模で、50手ぶんの履歴が現実的な大きさに収まるか。

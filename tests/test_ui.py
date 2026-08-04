@@ -9,6 +9,8 @@ Undo でモデルの実体が差し替わったあとも画面が古い参照を
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from manga_layout import Rect
@@ -811,6 +813,80 @@ class TestFile:
         assert window.state.page.size.w == pytest.approx(1240.157, abs=0.01)
         assert window.state.page_count == 2
         assert len(window.state.page.panels) == 4
+
+
+class TestAutosave:
+    """タイマーからの自動バックアップ（要件定義 6.6）。"""
+
+    def test_保存先が決まっていなければ何もしない(self, window):
+        """一度も保存していない作品。退避先が無く、貼った画像もまだ
+        ディスクに無いので、JSON だけ書いても参照先の無い退避になる。"""
+        window.add_full_page_panel()
+        assert window.state.project_dir is None
+
+        assert window.state.autosave() is None
+
+    def test_変化があれば退避する(self, window, tmp_path):
+        window.state.save(tmp_path)
+        window.add_full_page_panel()
+
+        path = window.state.autosave()
+
+        assert path is not None
+        assert path.name == "autosave.1.json"
+        written = json.loads(path.read_text(encoding="utf-8"))
+        assert len(written["pages"][0]["panels"]) == 1
+
+    def test_変化が無ければ書かない(self, window, tmp_path):
+        window.state.save(tmp_path)
+        window.add_full_page_panel()
+        window.state.autosave()
+
+        assert window.state.autosave() is None
+
+    def test_変えて元に戻せば書かない(self, window, tmp_path):
+        window.state.save(tmp_path)
+        window.state.autosave()
+
+        window.add_full_page_panel()
+        window.state.undo()
+
+        assert window.state.autosave() is None
+
+    def test_保存した直後は書かない(self, window, tmp_path):
+        # 保存した内容は project.json にそのまま入っている
+        window.add_full_page_panel()
+        window.state.save(tmp_path)
+
+        assert window.state.autosave() is None
+
+    def test_退避しても未保存の印は残る(self, window, tmp_path):
+        """本体を書き換えていない以上、保存の確認は出さなければならない。"""
+        window.state.save(tmp_path)
+        window.add_full_page_panel()
+
+        window.state.autosave()
+
+        assert window.state.is_dirty
+        assert "*" in window._title()
+
+    def test_失敗しても作業を止めない(self, window, tmp_path, monkeypatch):
+        # 保存先が外付けドライブで抜かれている場合など
+        window.state.save(tmp_path)
+        window.add_full_page_panel()
+
+        def 書けない(*args, **kwargs):
+            raise OSError("書き込めません")
+
+        monkeypatch.setattr("manga_layout.ui.state.write_autosave", 書けない)
+
+        messages = []
+        window.state.message.connect(messages.append)
+        window._autosave()  # 例外が外へ出ないこと
+
+        assert any("自動バックアップできません" in m for m in messages)
+        # 印を進めないので、次の回にまた試す
+        assert window.state.history.is_autosave_pending
 
 
 class TestSlantSplitUI:

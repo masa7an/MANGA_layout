@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
@@ -173,6 +173,14 @@ FRAME_ALLOWANCE_PX = 48
 # 30 ページの作品でも確認欄が画面を埋めないようにする
 OVERWRITE_LIST_LIMIT = 5
 
+# 自動バックアップの間隔（ミリ秒）。
+#
+# 書くのは数十 KB の JSON 1個だけなので、間隔を詰めても負担にはならない。
+# 5分にしてあるのは、失っても描き直せる量の目安のほう。**変化が無ければ
+# 書かない**ので（→ `EditorState.autosave`）、置いたままにしていても
+# ディスクは減らない
+AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000
+
 
 class MainWindow(QMainWindow):
     def __init__(self, state: EditorState | None = None):
@@ -207,6 +215,13 @@ class MainWindow(QMainWindow):
         self.state.tool_changed.connect(self._sync_tool_actions)
         self.state.message.connect(lambda text: self.statusBar().showMessage(text, 6000))
         self.view.context_menu_requested.connect(self._show_context_menu)
+
+        # 一定間隔で作業中の内容を backup/ へ退避する（要件定義 6.6）。
+        # 本体（project.json）は触らないので、保存の確認とは食い違わない
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(AUTOSAVE_INTERVAL_MS)
+        self._autosave_timer.timeout.connect(self._autosave)
+        self._autosave_timer.start()
 
         self._refresh()
 
@@ -1597,6 +1612,25 @@ class MainWindow(QMainWindow):
         self._refresh()
         self.state.message.emit(f"保存しました: {path}")
         return True
+
+    def _autosave(self) -> None:
+        """タイマーからの自動バックアップ（要件定義 6.6）。
+
+        **失敗しても作業は止めない。** 窓は出さず、状態表示に出すだけに
+        する。利用者が押した操作ではないので、書けなかったからといって
+        手を止めさせる理由がない。
+
+        失敗しても印を進めないので、次の回にまた試す。保存先が外付け
+        ドライブで抜かれている間は毎回知らせることになるが、**退避されて
+        いない事実は伝わったほうがよい。**
+        """
+        try:
+            path = self.state.autosave()
+        except (MangaLayoutError, OSError) as e:
+            self.state.message.emit(f"自動バックアップできません: {e}")
+            return
+        if path is not None:
+            self.state.message.emit(f"自動バックアップしました: {path.name}")
 
     # -- 書き出し ----------------------------------------------------------
 

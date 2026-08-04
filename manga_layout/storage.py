@@ -7,8 +7,9 @@
         assets/
             <sha1>.png
         backup/
-            project.1.json   ← 直前の保存内容（新しいほど番号が小さい）
+            project.1.json    ← 直前の保存内容（新しいほど番号が小さい）
             project.2.json
+            autosave.1.json   ← タイマーで退避した、保存していない作業中の内容
 
 保存で最も気を遣うのは**上書きの瞬間**。作業中のファイルを直接書き換えると、
 書いている途中で落ちたときに元も新しい内容も両方失う。ここでは
@@ -32,6 +33,15 @@ BACKUP_DIRNAME = "backup"
 
 # 残す世代数。1作品ぶんの JSON は数十 KB なので、多めに持っても負担にならない
 BACKUP_GENERATIONS = 5
+
+# 自動バックアップ（→ `write_autosave`）。**別の系列にする。**
+#
+# 保存で退避する `project.N.json` は「過去の**保存済み**の姿」だが、
+# こちらは「まだ**保存していない**今の姿」で、中身の性質が違う。混ぜると
+# 復元しようとしたときにどちらか見分けられないうえ、世代が数個しか
+# 無いので、タイマーが回るたびに保存済みの世代が押し出されて消える。
+AUTOSAVE_PREFIX = "autosave"
+AUTOSAVE_GENERATIONS = 3
 
 
 _NUMBER = r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
@@ -83,6 +93,21 @@ def atomic_write_text(path: pathlib.Path, text: str) -> None:
     os.replace(tmp, path)
 
 
+def _shift_generations(backup_dir: pathlib.Path, prefix: str, generations: int) -> None:
+    """`<prefix>.1.json` … を1つずつ古い番号へ繰り下げ、1番を空ける。
+
+    上限を超えた世代は消える。古いほうから動かすのは、先に新しいほうを
+    動かすと繰り下げ先が既にあって上書きになるため。
+    """
+    oldest = backup_dir / f"{prefix}.{generations}.json"
+    if oldest.exists():
+        oldest.unlink()
+    for n in range(generations - 1, 0, -1):
+        src = backup_dir / f"{prefix}.{n}.json"
+        if src.exists():
+            os.replace(src, backup_dir / f"{prefix}.{n + 1}.json")
+
+
 def _rotate_backups(project_dir: pathlib.Path) -> None:
     """既存の project.json を backup/ へ退避し、古い世代を繰り下げる。
 
@@ -95,16 +120,34 @@ def _rotate_backups(project_dir: pathlib.Path) -> None:
 
     backup_dir = project_dir / BACKUP_DIRNAME
     backup_dir.mkdir(parents=True, exist_ok=True)
-
-    oldest = backup_dir / f"project.{BACKUP_GENERATIONS}.json"
-    if oldest.exists():
-        oldest.unlink()
-    for n in range(BACKUP_GENERATIONS - 1, 0, -1):
-        src = backup_dir / f"project.{n}.json"
-        if src.exists():
-            os.replace(src, backup_dir / f"project.{n + 1}.json")
-
+    _shift_generations(backup_dir, "project", BACKUP_GENERATIONS)
     shutil.copy2(current, backup_dir / "project.1.json")
+
+
+def _project_text(project: Project) -> str:
+    """project.json に書く中身。"""
+    return _compact_pairs(json.dumps(project.to_dict(), ensure_ascii=False, indent=2)) + "\n"
+
+
+def write_autosave(project: Project, project_dir: pathlib.Path | str) -> pathlib.Path:
+    """作業中の内容を `backup/autosave.1.json` へ退避し、そのパスを返す。
+
+    **`project.json` は触らない。** 押していない保存が起きると、
+    「保存していない変更があります」の確認と食い違い、Undo で戻せる範囲と
+    ディスクの中身がずれる（要件定義 6.6）。
+
+    **画像の実体には触らない。** 呼ぶ側は保存先が決まっている作品に限る
+    ことになっており、その場合、画像は貼った時点で `assets/` に入っている
+    （→ `EditorState.autosave`）。
+    """
+    project_dir = pathlib.Path(project_dir)
+    backup_dir = project_dir / BACKUP_DIRNAME
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    _shift_generations(backup_dir, AUTOSAVE_PREFIX, AUTOSAVE_GENERATIONS)
+
+    path = backup_dir / f"{AUTOSAVE_PREFIX}.1.json"
+    atomic_write_text(path, _project_text(project))
+    return path
 
 
 def save_project(
@@ -125,9 +168,8 @@ def save_project(
     if backup:
         _rotate_backups(project_dir)
 
-    text = _compact_pairs(json.dumps(project.to_dict(), ensure_ascii=False, indent=2)) + "\n"
     path = project_dir / PROJECT_FILENAME
-    atomic_write_text(path, text)
+    atomic_write_text(path, _project_text(project))
     return path
 
 
