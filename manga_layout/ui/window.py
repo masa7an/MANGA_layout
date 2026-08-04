@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from ..errors import MangaLayoutError
 from ..images import to_png_bytes
-from ..layout import attach_target, cover_rect_in, full_page_rect
+from ..layout import attach_target, cover_rect_in, full_page_rect, image_at
 from ..model import PT_TO_PX, ImageObject, Panel
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import (
@@ -510,6 +510,7 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             menu.addAction(self.paste_action)
             menu.addAction(self.open_image_action)
+            self._add_delete_image_here(menu, state.selected_panel, x, y)
 
         else:
             # 何も無いところ。選択に効く項目はどれも使えないので出さない。
@@ -571,6 +572,26 @@ class MainWindow(QMainWindow):
         for kind, label, slot in items:
             if kind in kinds:
                 self._menu_act(menu, label, slot)
+
+    def _add_delete_image_here(
+        self, menu: QMenu, panel: Panel, x: float, y: float
+    ) -> None:
+        """カーソルの下に画像があれば、その画像を消す項目を出す。
+
+        **コマを選んだままでも画像を消せるようにする。** 画像を選ぶには
+        ダブルクリックで一段踏み込む必要があり（要件定義 6.3）、右クリック
+        しただけではコマが選ばれる。この項目が無いと、メニューに並ぶのは
+        「コマを削除」だけになり、**画像を消すつもりでコマを消す**ことになる。
+        実際にその取り違えが起きたので足した。
+        """
+        image = image_at(panel, x, y)
+        if image is None:
+            return
+        self._menu_act(
+            menu,
+            "この画像を削除",
+            lambda _checked=False, i=image.id: self.delete_image(i),
+        )
 
     def _add_split_here(self, menu: QMenu, x: float, y: float) -> None:
         """押した場所で1回きり割る項目。
@@ -641,7 +662,11 @@ class MainWindow(QMainWindow):
         self.redo_action.setText(
             f"やり直す: {history.redo_label}" if history.can_redo else "やり直す"
         )
-        self.delete_action.setEnabled(self.state.selected_object is not None)
+        # 「削除」ではなく「コマを削除」「画像を削除」と、対象を名前に出す。
+        # 押す前にカーソルの下で気づけるようにするため（→ `delete_target`）
+        target = self.delete_target()
+        self.delete_action.setEnabled(target is not None)
+        self.delete_action.setText("削除" if target is None else f"{target[0]}を削除")
         self.fit_action.setEnabled(self.state.selected_image is not None)
         self.slant_flip_action.setEnabled(self.state.selected_slant_pair is not None)
 
@@ -717,16 +742,32 @@ class MainWindow(QMainWindow):
 
     # -- 編集 --------------------------------------------------------------
 
+    def delete_target(self) -> tuple[str, object] | None:
+        """いま「削除」で消えるもの（呼び名と、消す処理）。何も選んでいなければ None。
+
+        **項目名と、実際に消えるものを1か所で決める。** 別々に持つと
+        「削除」と書いてあるのに違うものが消える状態を作れてしまう。
+
+        実際、画像を消すつもりでコマを消した、という取り違えが起きている。
+        コマの中の画像を選ぶにはダブルクリックで一段踏み込む必要があり
+        （要件定義 6.3）、右クリックしただけではコマが選ばれるため。
+        呼び名を項目に出せば、押す前にカーソルの下で気づける。
+        """
+        if self.state.selected_image is not None:
+            return "画像", self.delete_image
+        if self.state.selected_text is not None:
+            return "セリフ", self.delete_text
+        if self.state.selected_balloon is not None:
+            return "吹き出し", self.delete_balloon
+        if self.state.selected_panel is not None:
+            return "コマ", self.delete_panel
+        return None
+
     def delete_selected(self) -> None:
         """Delete キー。選んでいるものに応じて消し分ける。"""
-        if self.state.selected_image is not None:
-            self.delete_image()
-        elif self.state.selected_text is not None:
-            self.delete_text()
-        elif self.state.selected_balloon is not None:
-            self.delete_balloon()
-        else:
-            self.delete_panel()
+        target = self.delete_target()
+        if target is not None:
+            target[1]()
 
     def delete_balloon(self) -> None:
         """吹き出しを消す。上に乗っていたセリフは残り、紐づけだけ外れる。"""
@@ -757,16 +798,21 @@ class MainWindow(QMainWindow):
         if self.state.flip_slant():
             self.state.message.emit("斜めの向きを反転しました")
 
-    def delete_image(self) -> None:
+    def delete_image(self, image_id: str | None = None) -> None:
         """画像だけ消す。入っていたコマは残り、そのコマを選び直す。
 
         画像の実体（assets/）はここでは消さない。Undo で戻せなくなるため。
         余った実体は「未使用ファイルを整理」で片付ける（要件定義 5章）。
+
+        `image_id` を渡さなければ選択中の画像。右クリックのメニューからは
+        **カーソルの下の画像を名指しで渡す。** コマを選んだままでも消せる
+        ようにするため（ダブルクリックで踏み込まないと画像は選べない）。
         """
-        image = self.state.selected_image
-        if image is None:
-            return
-        image_id = image.id
+        if image_id is None:
+            image = self.state.selected_image
+            if image is None:
+                return
+            image_id = image.id
         panel = self.state.page.panel_of_image(image_id)
         panel_id = panel.id if panel is not None else None
 

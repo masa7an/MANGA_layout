@@ -161,7 +161,7 @@ class TestContents:
         assert "ここにコマを追加" in found
         assert "ページ全面にコマを作る" in found
         # 選んでいるものが無いので、選択に効く項目は出さない
-        assert "削除" not in found
+        assert not any(label.endswith("を削除") for label in found)
 
     def test_コマの品書き(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
@@ -170,7 +170,8 @@ class TestContents:
             assert label in found
         assert "ここに吹き出しを追加" in found
         assert "貼り付け" in found
-        assert "削除" in found
+        # 何が消えるかを名前に出す（→ MainWindow.delete_target）
+        assert "コマを削除" in found
         # コマの上に重ねてコマを作る道は用意しない（割るほうが素直）
         assert "ここにコマを追加" not in found
 
@@ -183,7 +184,7 @@ class TestContents:
         assert "ギザギザにする" in found
         assert "しっぽを消す" in found
         assert "ここにセリフを追加" in found
-        assert "削除" in found
+        assert "吹き出しを削除" in found
 
     def test_セリフの品書き(self, window_with_panel):
         window_with_panel.state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
@@ -194,7 +195,7 @@ class TestContents:
         assert "文字を入力..." in found
         assert "縦書き" in found
         assert "フォントを選ぶ..." in found
-        assert "削除" in found
+        assert "セリフを削除" in found
 
     def test_道具に持ち替える項目は出さない(self, window_with_panel):
         """「ここに〜」と役割が重なるため外している（→ `_copy_actions`）。"""
@@ -310,9 +311,106 @@ class TestActions:
         state.select(None)
 
         menu = right_click(window_with_panel, 300.0, 300.0)
-        find(menu, "削除").trigger()
+        find(menu, "吹き出しを削除").trigger()
 
         assert [f for f in state.page.floating if isinstance(f, BalloonObject)] == []
         # コマは残る
         assert len(state.page.panels) == 1
         assert isinstance(state.page.panels[0], Panel)
+
+
+class TestDeleteTarget:
+    """何が消えるかを名前に出す。
+
+    画像を消すつもりでコマを消した、という取り違えが実際に起きた。
+    コマの中の画像を選ぶにはダブルクリックで一段踏み込む必要があり
+    （要件定義 6.3）、右クリックしただけではコマが選ばれるため。
+    """
+
+    def test_選んでいるものが名前に出る(self, window_with_panel):
+        state = window_with_panel.state
+        action = window_with_panel.delete_action
+
+        right_click(window_with_panel, 400.0, 300.0)
+        assert action.text() == "コマを削除"
+
+        state.add_balloon(Rect(200.0, 200.0, 300.0, 200.0))
+        state.select(None)
+        right_click(window_with_panel, 300.0, 300.0)
+        assert action.text() == "吹き出しを削除"
+
+        state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
+        state.select(None)
+        right_click(window_with_panel, 300.0, 300.0)
+        assert action.text() == "セリフを削除"
+
+    def test_何も選んでいなければ無効(self, window_with_panel):
+        right_click(window_with_panel, *EMPTY)
+        assert window_with_panel.delete_action.text() == "削除"
+        assert not window_with_panel.delete_action.isEnabled()
+
+    def test_名前と実際に消えるものが揃っている(self, window_with_panel):
+        """`delete_target` が両方の出所。別々に持つと食い違わせられる。"""
+        state = window_with_panel.state
+        state.add_balloon(Rect(200.0, 200.0, 300.0, 200.0))
+        state.select(None)
+        right_click(window_with_panel, 300.0, 300.0)
+
+        assert window_with_panel.delete_action.text() == "吹き出しを削除"
+        window_with_panel.delete_selected()
+
+        assert [f for f in state.page.floating if isinstance(f, BalloonObject)] == []
+        assert len(state.page.panels) == 1
+
+
+class TestDeleteImageHere:
+    """コマを選んだままでも、カーソルの下の画像を消せる。
+
+    この項目が無いと、メニューに並ぶのは「コマを削除」だけになり、
+    画像を消すつもりでコマが消える（→ `_add_delete_image_here`）。
+    """
+
+    @pytest.fixture
+    def window_with_image(self, window_with_panel, png_bytes):
+        panel = window_with_panel.state.page.panels[0]
+        window_with_panel.state.place_image(panel.id, png_bytes)
+        # 置いた直後は画像が選ばれている。コマを選んだ状態に戻す
+        window_with_panel.state.select(panel.id)
+        return window_with_panel
+
+    def test_画像の上でだけ出る(self, window_with_image):
+        panel = window_with_image.state.page.panels[0]
+        image = panel.children[0]
+        cx, cy = image.rect.center
+
+        assert "この画像を削除" in labels(right_click(window_with_image, cx, cy))
+
+        # コマの中でも画像から外れていれば出さない
+        corner = (PANEL.x + 5.0, PANEL.y + 5.0)
+        assert not image.rect.contains(*corner)
+        assert "この画像を削除" not in labels(right_click(window_with_image, *corner))
+
+    def test_画像だけ消えてコマは残る(self, window_with_image):
+        state = window_with_image.state
+        panel = state.page.panels[0]
+        cx, cy = panel.children[0].rect.center
+
+        menu = right_click(window_with_image, cx, cy)
+        find(menu, "この画像を削除").trigger()
+
+        assert len(state.page.panels) == 1
+        assert state.page.panels[0].children == []
+
+    def test_コマを選んだままでも消せる(self, window_with_image):
+        """踏み込まずに消せることがこの項目の目的。"""
+        state = window_with_image.state
+        panel = state.page.panels[0]
+        cx, cy = panel.children[0].rect.center
+
+        menu = right_click(window_with_image, cx, cy)
+        # 選ばれているのはコマのまま（「コマを削除」も並んでいる）
+        assert state.selected_panel is not None
+        assert "コマを削除" in labels(menu)
+
+        find(menu, "この画像を削除").trigger()
+        assert state.page.panels[0].children == []
