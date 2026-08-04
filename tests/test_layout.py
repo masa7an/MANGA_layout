@@ -23,6 +23,8 @@ from manga_layout.layout import (
     snap_moved_rect,
     snap_point,
     split_panel,
+    text_at,
+    text_ink_bands,
 )
 
 # 座標の計算そのものは単位に依らないので、値は px 化の前から変えていない。
@@ -441,3 +443,82 @@ class TestDefaultPanel:
         assert rect.w >= SETTINGS.min_panel_size
         assert rect.h >= SETTINGS.min_panel_size
         assert rect.right <= page.size.w and rect.bottom <= page.size.h
+
+
+class TestTextAt:
+    """セリフの当たり判定は**字の並んでいる範囲**だけ（要件定義 6.5）。
+
+    枠は既定で 230×422 あり、数文字のセリフでは大半が空いている。
+    そこまで拾うと、フキダシの中に置いたマークが**見えているのに
+    掴めない**（2026-08-04 の不具合）。吹き出しを外接矩形ではなく
+    楕円で判定しているのと同じ線引き（→ 6.4）。
+    """
+
+    @pytest.fixture
+    def page_with_text(self):
+        """縦書き（既定）で1列3文字。枠はそれよりずっと大きい。"""
+        project = new_project()
+        page = project.pages[0]
+        text = project.add_text(page, "セリフ", Rect(250.0, 250.0, 200.0, 150.0))
+        return page, text
+
+    def test_字の上なら拾う(self, page_with_text):
+        page, text = page_with_text
+        # 1列のときの列の中心は枠の横中央（→ `vertical.layout`）
+        assert text_at(page, 350.0, 300.0) is text
+
+    def test_字から外れた場所では拾わない(self, page_with_text):
+        page, _ = page_with_text
+        # 枠の中だが列の左右（列の幅は 42px × 1.33）
+        assert text_at(page, 300.0, 300.0) is None
+        assert text_at(page, 400.0, 300.0) is None
+
+    def test_列の間は拾う(self):
+        """字と字・列と列の隙間で下へ抜けると、掴み所が虫食いになる。"""
+        project = new_project()
+        page = project.pages[0]
+        text = project.add_text(page, "あ\nい", Rect(250.0, 250.0, 200.0, 150.0))
+        bands = text_ink_bands(text)
+        assert len(bands) == 2
+        left, right = sorted(bands, key=lambda b: b.x)
+        # 列送り（1.33）ぶんの帯が隙間なく並ぶ
+        assert left.right == pytest.approx(right.x)
+
+    def test_空のセリフは枠全体で拾う(self):
+        """空のときは点線の枠を描いているので、そこが描いてある範囲。
+
+        字の無い扱いにすると、作った直後のセリフを選べなくなる。
+        """
+        project = new_project()
+        page = project.pages[0]
+        rect = Rect(250.0, 250.0, 200.0, 150.0)
+        text = project.add_text(page, "", rect)
+        assert text_ink_bands(text) == [rect]
+        assert text_at(page, 260.0, 260.0) is text
+
+    def test_横書きは行の帯だけに絞る(self):
+        """字送りはフォント依存で幅を出せないので、幅は枠のまま。
+
+        既定の枠は縦長で余っているのも上下なので、これで用は足りる。
+        """
+        project = new_project()
+        page = project.pages[0]
+        rect = Rect(250.0, 250.0, 200.0, 400.0)
+        text = project.add_text(page, "セリフ", rect)
+        text.direction = "horizontal"
+
+        band = text_ink_bands(text)[0]
+        assert band.x == rect.x and band.w == rect.w
+        assert band.center[1] == pytest.approx(rect.center[1])
+        # 上下の余りは下へ譲る
+        assert text_at(page, 350.0, 260.0) is None
+        assert text_at(page, 350.0, 450.0) is text
+
+    def test_重なっていれば手前が返る(self):
+        project = new_project()
+        page = project.pages[0]
+        rect = Rect(250.0, 250.0, 200.0, 150.0)
+        back = project.add_text(page, "あ", rect)
+        front = project.add_text(page, "あ", rect)
+        assert front.z > back.z
+        assert text_at(page, 350.0, 325.0) is front

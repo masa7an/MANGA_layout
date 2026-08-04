@@ -31,6 +31,15 @@ PANEL = Rect(120.0, 120.0, 720.0, 540.0)
 # 用紙（A4 相当 1240×1754）の中で、上のコマから充分に離れた場所
 EMPTY = (1000.0, 1400.0)
 
+# セリフ1つぶん。中身は改行なしの3文字なので、既定の縦書きでは1列になる
+TEXT_RECT = Rect(250.0, 250.0, 200.0, 150.0)
+TEXT_CONTENT = "セリフ"
+# その列の上の点。**枠の中ならどこでもよいわけではない。**
+# セリフは字の並んでいる帯だけを拾うので（→ `layout.text_ink_bands`）、
+# 枠の左寄り（x=300）では字から外れ、下のフキダシやコマが選ばれる。
+# 1列のときの列の中心は枠の横中央にくる（→ `vertical.layout`）
+ON_TEXT = (350.0, 300.0)
+
 
 @pytest.fixture
 def window(qapp):
@@ -118,10 +127,10 @@ class TestSelection:
         """
         state = window_with_panel.state
         state.add_balloon(Rect(200.0, 200.0, 400.0, 300.0))
-        state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
+        state.add_text(TEXT_RECT, TEXT_CONTENT)
         state.select(None)
 
-        right_click(window_with_panel, 300.0, 300.0)
+        right_click(window_with_panel, *ON_TEXT)
 
         assert state.selected_text is not None
 
@@ -191,10 +200,10 @@ class TestContents:
         assert "フキダシを削除" in found
 
     def test_セリフの品書き(self, window_with_panel):
-        window_with_panel.state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
+        window_with_panel.state.add_text(TEXT_RECT, TEXT_CONTENT)
         window_with_panel.state.select(None)
 
-        menu = right_click(window_with_panel, 300.0, 300.0)
+        menu = right_click(window_with_panel, *ON_TEXT)
         found = labels(menu)
         assert "文字を入力..." in found
         assert "縦書き" in found
@@ -203,20 +212,20 @@ class TestContents:
 
     def test_道具に持ち替える項目は出さない(self, window_with_panel):
         """「ここに〜」と役割が重なるため外している（→ `_copy_actions`）。"""
-        window_with_panel.state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
+        window_with_panel.state.add_text(TEXT_RECT, TEXT_CONTENT)
         window_with_panel.state.select(None)
 
-        menu = right_click(window_with_panel, 300.0, 300.0)
+        menu = right_click(window_with_panel, *ON_TEXT)
 
         for action in window_with_panel._tool_actions.values():
             assert action not in menu.actions()
 
     def test_区切り線が先頭や連続で並ばない(self, window_with_panel):
         """道具の項目を外した跡に区切り線だけが残らないこと。"""
-        window_with_panel.state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
+        window_with_panel.state.add_text(TEXT_RECT, TEXT_CONTENT)
         window_with_panel.state.select(None)
 
-        actions = right_click(window_with_panel, 300.0, 300.0).actions()
+        actions = right_click(window_with_panel, *ON_TEXT).actions()
 
         assert not actions[0].isSeparator()
         assert not actions[-1].isSeparator()
@@ -229,10 +238,10 @@ class TestSharedActions:
     """項目はメニューバーと同じ実体。作り直さない（→ `_context_menu`）。"""
 
     def test_同じ項目を並べている(self, window_with_panel):
-        window_with_panel.state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
+        window_with_panel.state.add_text(TEXT_RECT, TEXT_CONTENT)
         window_with_panel.state.select(None)
 
-        menu = right_click(window_with_panel, 300.0, 300.0)
+        menu = right_click(window_with_panel, *ON_TEXT)
 
         assert window_with_panel.bold_action in menu.actions()
         assert window_with_panel.delete_action in menu.actions()
@@ -368,9 +377,9 @@ class TestDeleteTarget:
         right_click(window_with_panel, 300.0, 300.0)
         assert action.text() == "フキダシを削除"
 
-        state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
+        state.add_text(TEXT_RECT, TEXT_CONTENT)
         state.select(None)
-        right_click(window_with_panel, 300.0, 300.0)
+        right_click(window_with_panel, *ON_TEXT)
         assert action.text() == "セリフを削除"
 
     def test_何も選んでいなければ無効(self, window_with_panel):

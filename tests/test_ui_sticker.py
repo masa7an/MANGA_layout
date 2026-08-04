@@ -126,6 +126,9 @@ class Test選択の取り合い:
     """重なりの順（フキダシ → マーク → セリフ）どおりに拾えること。
 
     描く順と拾う順がずれると、**見えているものを掴めなくなる**。
+
+    順が合っていても、**上のものが描いていない場所まで拾う**と同じことが
+    起きる。セリフを字の範囲だけで判定しているのはそのため（→ 下）。
     """
 
     def test_フキダシより先にマークを拾う(self, window_with_panel):
@@ -145,6 +148,26 @@ class Test選択の取り合い:
 
         click(window_with_panel.view, 450.0, 400.0)
         assert state.selected_id == text.id
+
+    def test_セリフの字から外れた所ではマークを拾う(self, window_with_panel):
+        """**フキダシの中に置いたマークが掴めること**（2026-08-04 の不具合）。
+
+        セリフ枠はフキダシの内側をほぼ埋める大きさなので、枠全体を拾って
+        いた頃は**字が1つも無い場所でもセリフに取られて**、マークを
+        選べなかった。字の並んでいる範囲だけ拾う形に直してある
+        （→ `layout.text_ink_bands`、要件定義 6.5）。
+
+        押す点はフキダシの内側でもあるので、マークがフキダシより先に
+        拾われることも同時に見ている。
+        """
+        state = window_with_panel.state
+        state.add_balloon(Rect(300.0, 200.0, 333.0, 400.0))
+        state.add_text(Rect(350.0, 240.0, 230.0, 330.0), "あ")
+        sticker = state.add_sticker(STICKER_EXCLAIM, 400.0, 300.0)
+        state.select(None)
+
+        click(window_with_panel.view, 400.0, 300.0)
+        assert state.selected_id == sticker.id
 
     def test_マークの外ではコマを拾う(self, window_with_sticker):
         state = window_with_sticker.state

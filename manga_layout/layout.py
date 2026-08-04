@@ -14,6 +14,7 @@ import dataclasses
 import math
 from dataclasses import dataclass
 
+from . import vertical
 from .geometry import EPS, Polygon, Rect
 from .model import (
     SLANT_DIRECTIONS,
@@ -1060,15 +1061,66 @@ def sticker_at(page: Page, x: float, y: float) -> StickerObject | None:
     return None
 
 
+def text_ink_bands(text: TextObject) -> list[Rect]:
+    """セリフのうち、**字が並んでいる範囲**。空なら枠そのもの。
+
+    枠は既定で 230×422 あるが、字が数文字ならその大半は空いている。
+    空いた場所まで拾うと、そこに置いたマークが**見えているのに掴めない**
+    （2026-08-04 の不具合）。吹き出しを外接矩形ではなく楕円で判定して
+    いるのと同じ理由で、描いていない場所は下へ譲る（要件定義 6.4、6.5）。
+
+    **空のセリフは枠全体を返す。** 空のときは点線の枠を描いているので
+    （`PageRenderer._draw_text`）、そこが「描いてある範囲」になる。
+    ここを字の無い扱いにすると、作った直後のセリフを選べなくなる。
+
+    字ではなく**帯**を返すのは、字と字の間・列と列の間で下へ抜けると
+    掴み所が虫食いになるため。列の送りは字の大きさの 1.33 倍あり、
+    その隙間はセリフの一部と見るのが自然。
+    """
+    rect = text.rect
+    if not text.content or text.font.size_px <= 0.0:
+        return [rect]
+
+    size = text.font.size_px
+    if text.direction == "vertical":
+        # 列ごとに1本。位置の出所は縦書きの計算そのもの（→ `vertical.layout`）。
+        # ここで組み直すと、字の置き場所と掴み所が別々にずれていく
+        bands: dict[float, Rect] = {}
+        for glyph in vertical.layout(text.content, rect, size, text.align):
+            cell = glyph.cell
+            left = cell.center[0] - size * vertical.COLUMN_PITCH / 2.0
+            band = bands.get(left)
+            if band is None:
+                bands[left] = Rect(left, cell.y, size * vertical.COLUMN_PITCH, cell.h)
+            else:
+                bottom = max(band.bottom, cell.bottom)
+                top = min(band.y, cell.y)
+                bands[left] = Rect(left, top, band.w, bottom - top)
+        return list(bands.values())
+
+    # 横書きは Qt が行を組むので、**字送りが分からない＝横幅を出せない**。
+    # 幅は枠のままにし、行の帯だけに絞る。既定の枠は縦長（230×422）で
+    # 余っているのもほとんどが上下なので、これで用は足りる。
+    # 行送りは縦書きの列の送りと同じ値を使う（→ `vertical.COLUMN_PITCH`）
+    lines = text.content.split("\n")
+    used = size * vertical.COLUMN_PITCH * len(lines)
+    top = rect.y + (rect.h - used) / 2.0
+    return [Rect(rect.x, top, rect.w, used)]
+
+
+def text_contains(text: TextObject, x: float, y: float) -> bool:
+    """その点がセリフの字の上か（→ `text_ink_bands`）。"""
+    return any(band.contains(x, y) for band in text_ink_bands(text))
+
+
 def text_at(page: Page, x: float, y: float) -> TextObject | None:
     """その位置にあるセリフ。重なっていれば手前のものを返す。
 
-    枠は矩形なので、そのまま矩形で判定する。吹き出しと違って
-    「四隅に何も無い」ということが起きない。
+    **枠の矩形ではなく、字の並んでいる範囲で判定する**（→ `text_ink_bands`）。
     """
     texts = [f for f in page.floating if isinstance(f, TextObject)]
     for text in sorted(texts, key=lambda t: t.z, reverse=True):
-        if text.rect.contains(x, y):
+        if text_contains(text, x, y):
             return text
     return None
 
