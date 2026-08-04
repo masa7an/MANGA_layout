@@ -83,6 +83,28 @@ def align_label(align: str, direction: str) -> str:
     )
     return labels.get(align, align)
 
+
+# 右クリックの「ここに ●● を追加」の前置きと後置き。
+# 分けて持つのは、2つめから落とすため（→ `place_here_label`）
+PLACE_HERE_PREFIX = "ここに"
+PLACE_HERE_SUFFIX = "を追加"
+
+
+def place_here_label(name: str, *, first: bool) -> str:
+    """「ここに ●● を追加」。**2つめからは前後を落として名前だけにする。**
+
+    右クリックのメニューは項目が多く（吹き出しを選んだだけで10前後）、
+    同じ前置きが縦に並ぶと、選ぶために読む字数がそのまま増える。
+    違うのは真ん中の名前だけなので、そこだけ残す。
+
+    先頭を空白で埋めるのは、名前の頭を1つめと縦に揃えるため。
+    詰めてしまうと、前置きの掛かっていない別の項目に見える。
+    「ここに」は全角3字なので、全角の空白3つで幅が揃う。
+    """
+    if first:
+        return f"{PLACE_HERE_PREFIX} {name} {PLACE_HERE_SUFFIX}"
+    return f"{'　' * len(PLACE_HERE_PREFIX)} {name}"
+
 # 「開く」の窓に出す対象。作品フォルダそのものではなく、その中の
 # project.json を選ばせる（理由は `open_project`）
 PROJECT_FILE_FILTER = f"作品ファイル ({PROJECT_FILENAME});;すべてのファイル (*)"
@@ -651,13 +673,17 @@ class MainWindow(QMainWindow):
         名前を「ここに」で始めるのは、メニューバー側の「〜を追加」
         （道具に持ち替えて、次に押した場所に置く）と区別するため。
         こちらは道具を持ち替えず、その場で置いて終わる。
+
+        **前置きを出すのは、実際に並んだ1つめだけ**（→ `place_here_label`）。
+        `kinds` で絞ったあとの並び順で決める。ここに書いた順ではないので、
+        「コマ」が外れる場面では次の種類が1つめになる。
         """
         items = (
-            ("panel", "ここに コマ を追加", lambda: self.view.add_panel_at(x, y)),
+            ("panel", "コマ", lambda: self.view.add_panel_at(x, y)),
             *(
                 (
                     "balloon",
-                    f"ここに {name} を追加",
+                    name,
                     lambda _=False, s=style: self.view.add_balloon_at(x, y, s),
                 )
                 for style, name in BALLOON_STYLE_LABELS.items()
@@ -665,16 +691,19 @@ class MainWindow(QMainWindow):
             *(
                 (
                     "sticker",
-                    f"ここに {name} を追加",
+                    name,
                     lambda _=False, k=kind: self.view.add_sticker_at(x, y, k),
                 )
                 for kind, name in STICKER_KIND_LABELS.items()
             ),
-            ("text", "ここに セリフ を追加", lambda: self.view.add_text_at(x, y)),
+            ("text", "セリフ", lambda: self.view.add_text_at(x, y)),
         )
-        for kind, label, slot in items:
-            if kind in kinds:
-                self._menu_act(menu, label, slot)
+        shown = 0
+        for kind, name, slot in items:
+            if kind not in kinds:
+                continue
+            self._menu_act(menu, place_here_label(name, first=shown == 0), slot)
+            shown += 1
 
     def _add_delete_image_here(
         self, menu: QMenu, panel: Panel, x: float, y: float

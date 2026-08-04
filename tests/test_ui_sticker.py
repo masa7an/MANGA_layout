@@ -22,6 +22,7 @@ from manga_layout.ui.state import (
     TOOL_STICKER_EXCLAIM_QUESTION,
 )
 from manga_layout.stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION
+from manga_layout.ui.window import place_here_label
 
 from test_ui_balloon import click, drag
 
@@ -320,14 +321,19 @@ class Test右クリックのメニュー:
         window_with_panel.state.select(window_with_panel.state.page.panels[0].id)
         menu = window_with_panel._context_menu(*CENTER)
         labels = [a.text() for a in menu.actions()]
-        assert f"ここに {STICKER_KIND_LABELS[STICKER_EXCLAIM]} を追加" in labels
+        # フキダシが並びの1つめなので、マークは前置きが落ちた形で出る
+        # （→ `manga_layout.ui.window.place_here_label`）
+        expected = place_here_label(STICKER_KIND_LABELS[STICKER_EXCLAIM], first=False)
+        assert expected in labels
         menu.deleteLater()
 
     def test_何も無いところでも置ける(self, window):
         window.state.select(None)
         menu = window._context_menu(60.0, 60.0)
         labels = [a.text() for a in menu.actions()]
-        assert f"ここに {STICKER_KIND_LABELS[STICKER_EXCLAIM]} を追加" in labels
+        # ここではコマが並びの1つめ
+        expected = place_here_label(STICKER_KIND_LABELS[STICKER_EXCLAIM], first=False)
+        assert expected in labels
         menu.deleteLater()
 
     def test_その場で置ける_道具は変わらない(self, window_with_panel):

@@ -21,10 +21,21 @@ from manga_layout import Rect
 from manga_layout.model import BalloonObject, Panel, TextObject
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
+from manga_layout.ui.window import PLACE_HERE_PREFIX, place_here_label
 
 # 呼び名は1箇所（`BALLOON_STYLE_LABELS`）から取る。書き写すと、
 # 改名したときにテストだけが古い名前を通してしまう
 JAGGED = BALLOON_STYLE_LABELS["jagged"]
+
+
+def place_first(name: str) -> str:
+    """並びの1つめ（前置きが付く形）の名前。"""
+    return place_here_label(name, first=True)
+
+
+def place_rest(name: str) -> str:
+    """2つめ以降（前置きを空白に落とした形）の名前。"""
+    return place_here_label(name, first=False)
 
 # 座標は px（要件定義 3章）。既定の吹き出し・セリフが中に収まる大きさ
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
@@ -171,7 +182,7 @@ class TestContents:
     def test_何も無いところの品書き(self, window_with_panel):
         menu = right_click(window_with_panel, *EMPTY)
         found = labels(menu)
-        assert "ここに コマ を追加" in found
+        assert place_first("コマ") in found
         assert "ページ全面にコマを作る" in found
         # 選んでいるものが無いので、選択に効く項目は出さない
         assert not any(label.endswith("を削除") for label in found)
@@ -181,12 +192,13 @@ class TestContents:
         found = labels(menu)
         for label in ("ここで横に割る", "ここで縦に割る", "ここで斜めに割る"):
             assert label in found
-        assert f"ここに {BALLOON_STYLE_LABELS['ellipse']} を追加" in found
+        # コマを選ぶと「コマ」が外れるので、フキダシが並びの1つめになる
+        assert place_first(BALLOON_STYLE_LABELS["ellipse"]) in found
         assert "貼り付け" in found
         # 何が消えるかを名前に出す（→ MainWindow.delete_target）
         assert "コマを削除" in found
         # コマの上に重ねてコマを作る道は用意しない（割るほうが素直）
-        assert "ここに コマ を追加" not in found
+        assert not any("コマ" in label and "追加" in label for label in found)
 
     def test_フキダシの品書き(self, window_with_panel):
         window_with_panel.state.add_balloon(Rect(200.0, 200.0, 300.0, 200.0))
@@ -196,7 +208,8 @@ class TestContents:
         found = labels(menu)
         assert f"{JAGGED}にする" in found
         assert "しっぽを消す" in found
-        assert "ここに セリフ を追加" in found
+        # フキダシを選ぶとマークが1つめになるので、セリフは前置きが落ちる
+        assert place_rest("セリフ") in found
         assert "フキダシを削除" in found
 
     def test_セリフの品書き(self, window_with_panel):
@@ -219,6 +232,22 @@ class TestContents:
 
         for action in window_with_panel._tool_actions.values():
             assert action not in menu.actions()
+
+    def test_ここにの前置きは1つめだけに付く(self, window_with_panel):
+        """並んだ2つめからは前置きを空白に落とす（→ `place_here_label`）。
+
+        読む字数を減らすための省略なので、**前置きが2つ以上出ていたら
+        効いていない。** 場面によって1つめの種類が変わるため、名前を
+        決め打ちせず「前置きの付いた項目がちょうど1つ」で見る。
+        """
+        menu = right_click(window_with_panel, *EMPTY)
+        found = labels(menu)
+
+        prefixed = [label for label in found if label.startswith(PLACE_HERE_PREFIX)]
+        assert len(prefixed) == 1, prefixed
+        # 残りは同じ幅の空白で始まる（名前の頭が1つめと縦に揃う）
+        pad = "　" * len(PLACE_HERE_PREFIX)
+        assert len([label for label in found if label.startswith(pad)]) > 1
 
     def test_区切り線が先頭や連続で並ばない(self, window_with_panel):
         """道具の項目を外した跡に区切り線だけが残らないこと。"""
@@ -295,7 +324,7 @@ class TestActions:
 
     def test_ここにコマを追加(self, window):
         menu = right_click(window, *EMPTY)
-        find(menu, "ここに コマ を追加").trigger()
+        find(menu, place_first("コマ")).trigger()
 
         panels = window.state.page.panels
         assert len(panels) == 1
@@ -306,7 +335,7 @@ class TestActions:
 
     def test_ここに吹き出しを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, f"ここに {JAGGED} を追加").trigger()
+        find(menu, place_rest(JAGGED)).trigger()
 
         balloon = only(window_with_panel.state.page, BalloonObject)
         assert balloon.style == "jagged"
@@ -316,7 +345,7 @@ class TestActions:
 
     def test_ここにセリフを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, "ここに セリフ を追加").trigger()
+        find(menu, place_rest("セリフ")).trigger()
 
         text = only(window_with_panel.state.page, TextObject)
         assert text.rect.contains(400.0, 300.0)
