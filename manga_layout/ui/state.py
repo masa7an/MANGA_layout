@@ -54,17 +54,39 @@ TOOL_BALLOON_JAGGED = "balloon_jagged"
 TOOL_BALLOON_WAVY = "balloon_wavy"
 TOOL_TEXT = "text"
 
+# どの道具がどの種類の吹き出しを作るか
+BALLOON_TOOLS = {
+    TOOL_BALLOON: "ellipse",
+    TOOL_BALLOON_JAGGED: "jagged",
+    TOOL_BALLOON_WAVY: "wavy",
+}
+
+# 吹き出しの種類の呼び名。**道具・メニュー・状態表示・操作後の案内で共通に使う。**
+#
+# 左側の `ellipse` などは**保存形式に書かれる値なので変えない**。呼び名だけを
+# ここで変える。値のほうを変えると、それまでに保存した作品が開けなくなる。
+#
+# 呼び名を1箇所に集めてあるのは、書き分けると片方だけ古いままになり、
+# 「ふわふわ_フキダシにした」のに「丸い_フキダシを選択中」と出る
+# 食い違いが作れるため（2026-08-04 の改名では、ここ1箇所で全部が変わった）
+BALLOON_STYLE_LABELS = {
+    "ellipse": "丸い_フキダシ",
+    "jagged": "ギザギザ_フキダシ",
+    "wavy": "ふわふわ_フキダシ",
+}
+
 TOOL_LABELS = {
     TOOL_SELECT: "選択",
     TOOL_PANEL: "コマ追加",
     TOOL_SPLIT_H: "横に分割",
     TOOL_SPLIT_V: "縦に分割",
     TOOL_SPLIT_SLANT: "斜めに縦割り",
-    # 「吹き出し」メニューの中にも並べるので、そこで
-    # 「吹き出し > 吹き出し」と重ならない言い方にしてある
-    TOOL_BALLOON: "楕円を追加",
-    TOOL_BALLOON_JAGGED: "ギザギザを追加",
-    TOOL_BALLOON_WAVY: "波形を追加",
+    # 吹き出しの3種は呼び名から作る。ここに書き写すと、改名したときに
+    # 道具の名前だけ古いまま残る
+    **{
+        tool: f"{BALLOON_STYLE_LABELS[style]}を追加"
+        for tool, style in BALLOON_TOOLS.items()
+    },
     TOOL_TEXT: "セリフを追加",
 }
 
@@ -80,18 +102,6 @@ TOOL_LABELS = {
 # 文字だけ大きくすると枠に 6 文字しか入らず、置くたびに広げる操作が
 # 要る状態になった（2026-08-03、20px から 42px へ変えたときに実測）
 DEFAULT_TEXT_SIZE = (230.0, 422.0)
-
-# どの道具がどの種類の吹き出しを作るか
-BALLOON_TOOLS = {
-    TOOL_BALLOON: "ellipse",
-    TOOL_BALLOON_JAGGED: "jagged",
-    TOOL_BALLOON_WAVY: "wavy",
-}
-
-# 吹き出しの種類の呼び名。**メニュー・状態表示・操作後の案内で共通に使う。**
-# 別々に書くと、種類を足したときに片方だけ古いままになり、
-# 「波形にした」のに「楕円を選択中」と出るような食い違いが作れる
-BALLOON_STYLE_LABELS = {"ellipse": "楕円", "jagged": "ギザギザ", "wavy": "波形"}
 
 
 class EditorState(QObject):

@@ -562,20 +562,13 @@ class MainWindow(QMainWindow):
         """
         items = (
             ("panel", "ここにコマを追加", lambda: self.view.add_panel_at(x, y)),
-            (
-                "balloon",
-                "ここに吹き出しを追加",
-                lambda: self.view.add_balloon_at(x, y, "ellipse"),
-            ),
             *(
                 (
                     "balloon",
                     f"ここに{name}を追加",
                     lambda _=False, s=style: self.view.add_balloon_at(x, y, s),
                 )
-                # 楕円は上で「吹き出し」の名前で出しているので、ここでは出さない
                 for style, name in BALLOON_STYLE_LABELS.items()
-                if style != "ellipse"
             ),
             ("text", "ここにセリフを追加", lambda: self.view.add_text_at(x, y)),
         )

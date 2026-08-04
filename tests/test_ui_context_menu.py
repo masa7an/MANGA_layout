@@ -20,7 +20,11 @@ from PySide6.QtWidgets import QMenu
 from manga_layout import Rect
 from manga_layout.model import BalloonObject, Panel, TextObject
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.state import TOOL_SELECT
+from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
+
+# 呼び名は1箇所（`BALLOON_STYLE_LABELS`）から取る。書き写すと、
+# 改名したときにテストだけが古い名前を通してしまう
+JAGGED = BALLOON_STYLE_LABELS["jagged"]
 
 # 座標は px（要件定義 3章）。既定の吹き出し・セリフが中に収まる大きさ
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
@@ -168,7 +172,7 @@ class TestContents:
         found = labels(menu)
         for label in ("ここで横に割る", "ここで縦に割る", "ここで斜めに割る"):
             assert label in found
-        assert "ここに吹き出しを追加" in found
+        assert f"ここに{BALLOON_STYLE_LABELS['ellipse']}を追加" in found
         assert "貼り付け" in found
         # 何が消えるかを名前に出す（→ MainWindow.delete_target）
         assert "コマを削除" in found
@@ -181,7 +185,7 @@ class TestContents:
 
         menu = right_click(window_with_panel, 300.0, 300.0)
         found = labels(menu)
-        assert "ギザギザにする" in found
+        assert f"{JAGGED}にする" in found
         assert "しっぽを消す" in found
         assert "ここにセリフを追加" in found
         assert "吹き出しを削除" in found
@@ -268,7 +272,7 @@ class TestActions:
 
     def test_ここに吹き出しを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, "ここにギザギザを追加").trigger()
+        find(menu, f"ここに{JAGGED}を追加").trigger()
 
         balloon = only(window_with_panel.state.page, BalloonObject)
         assert balloon.style == "jagged"

@@ -13,6 +13,7 @@ from manga_layout import Rect
 from manga_layout.model import BalloonObject
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import (
+    BALLOON_STYLE_LABELS,
     TOOL_BALLOON,
     TOOL_BALLOON_JAGGED,
     TOOL_BALLOON_WAVY,
@@ -157,7 +158,7 @@ class TestBalloonMenu:
     def test_選択を外すと編集の項目は戻る(self, window_with_balloon):
         window_with_balloon.state.select(None)
         labels = {a.text(): a.isEnabled() for a in balloon_menu_items(window_with_balloon)}
-        assert labels["楕円にする"] is False
+        assert labels[f"{BALLOON_STYLE_LABELS['ellipse']}にする"] is False
         assert labels["しっぽを消す"] is False
 
 
