@@ -84,14 +84,15 @@ def align_label(align: str, direction: str) -> str:
     return labels.get(align, align)
 
 
-# 右クリックの「ここに ●● を追加」の前置きと後置き。
-# 分けて持つのは、2つめから落とすため（→ `place_here_label`）
+# 右クリックの「ここに ●● を追加」「ここで ●●」の前置きと後置き。
+# 分けて持つのは、2つめから落とすため（→ `here_label`）
 PLACE_HERE_PREFIX = "ここに"
 PLACE_HERE_SUFFIX = "を追加"
+SPLIT_HERE_PREFIX = "ここで"
 
 
-def place_here_label(name: str, *, first: bool) -> str:
-    """「ここに ●● を追加」。**2つめからは前後を落として名前だけにする。**
+def here_label(name: str, *, prefix: str, suffix: str = "", first: bool) -> str:
+    """押した場所に効く項目の名前。**2つめからは前後を落として名前だけにする。**
 
     右クリックのメニューは項目が多く（吹き出しを選んだだけで10前後）、
     同じ前置きが縦に並ぶと、選ぶために読む字数がそのまま増える。
@@ -99,11 +100,33 @@ def place_here_label(name: str, *, first: bool) -> str:
 
     先頭を空白で埋めるのは、名前の頭を1つめと縦に揃えるため。
     詰めてしまうと、前置きの掛かっていない別の項目に見える。
-    「ここに」は全角3字なので、全角の空白3つで幅が揃う。
+    「ここに」も「ここで」も全角3字なので、全角の空白3つで幅が揃う。
+    **2つの組が同じメニューに並んでも頭が揃う**のは、幅を前置きの
+    字数から出しているため。決め打ちの空白にすると、片方だけずれる。
+
+    落とした言葉は捨てず、カーソルを乗せた間だけステータスバーに出す
+    （→ `MainWindow._show_tips_in_status_bar`）。
     """
     if first:
-        return f"{PLACE_HERE_PREFIX} {name} {PLACE_HERE_SUFFIX}"
-    return f"{'　' * len(PLACE_HERE_PREFIX)} {name}"
+        return f"{prefix} {name} {suffix}" if suffix else f"{prefix} {name}"
+    return f"{'　' * len(prefix)} {name}"
+
+
+def place_here_label(name: str, *, first: bool) -> str:
+    """「ここに ●● を追加」。"""
+    return here_label(
+        name, prefix=PLACE_HERE_PREFIX, suffix=PLACE_HERE_SUFFIX, first=first
+    )
+
+
+def split_here_label(name: str, *, first: bool) -> str:
+    """「ここで ●●に割る」。
+
+    後置きを持たないのは、変わるのが向き（横・縦・斜め）だけで、
+    「に割る」まで名前に含めたほうが1行で意味が通るため。
+    ここを「ここで 横 に割る」と切ると、残るのが1字になって読みにくい。
+    """
+    return here_label(name, prefix=SPLIT_HERE_PREFIX, first=first)
 
 # 「開く」の窓に出す対象。作品フォルダそのものではなく、その中の
 # project.json を選ばせる（理由は `open_project`）
@@ -756,18 +779,24 @@ class MainWindow(QMainWindow):
 
         メニューバー側は道具の切り替え（選んでから、割る場所を押す）だが、
         右クリックは押した場所が既に分かっているので、その場で割る。
+
+        **前置きを出すのは1つめだけ**（→ `split_here_label`）。3つとも
+        必ず一緒に出るので、1つめは常に「横」になる。
         """
-        for label, tool in (
-            ("ここで横に割る", TOOL_SPLIT_H),
-            ("ここで縦に割る", TOOL_SPLIT_V),
-            ("ここで斜めに割る", TOOL_SPLIT_SLANT),
+        for index, (name, tool) in enumerate(
+            (
+                ("横に割る", TOOL_SPLIT_H),
+                ("縦に割る", TOOL_SPLIT_V),
+                ("斜めに割る", TOOL_SPLIT_SLANT),
+            )
         ):
             self._menu_act(
                 menu,
-                label,
+                split_here_label(name, first=index == 0),
                 # 既定値で受けているのは、triggered が渡す checked を
                 # tool の位置で受け取らないようにするため
                 lambda _checked=False, t=tool: self.view.split_at(x, y, t),
+                tip=split_here_label(name, first=True),
             )
 
     @staticmethod

@@ -21,7 +21,12 @@ from manga_layout import Rect
 from manga_layout.model import BalloonObject, Panel, TextObject
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
-from manga_layout.ui.window import PLACE_HERE_PREFIX, place_here_label
+from manga_layout.ui.window import (
+    PLACE_HERE_PREFIX,
+    SPLIT_HERE_PREFIX,
+    place_here_label,
+    split_here_label,
+)
 
 # 呼び名は1箇所（`BALLOON_STYLE_LABELS`）から取る。書き写すと、
 # 改名したときにテストだけが古い名前を通してしまう
@@ -36,6 +41,16 @@ def place_first(name: str) -> str:
 def place_rest(name: str) -> str:
     """2つめ以降（前置きを空白に落とした形）の名前。"""
     return place_here_label(name, first=False)
+
+
+def split_first(name: str) -> str:
+    """割る項目の1つめ（前置きが付く形）の名前。"""
+    return split_here_label(name, first=True)
+
+
+def split_rest(name: str) -> str:
+    """割る項目の2つめ以降（前置きを空白に落とした形）の名前。"""
+    return split_here_label(name, first=False)
 
 # 座標は px（要件定義 3章）。既定の吹き出し・セリフが中に収まる大きさ
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
@@ -190,8 +205,10 @@ class TestContents:
     def test_コマの品書き(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
         found = labels(menu)
-        for label in ("ここで横に割る", "ここで縦に割る", "ここで斜めに割る"):
-            assert label in found
+        # 3つとも必ず一緒に出るので、前置きが付くのは常に「横」
+        assert split_first("横に割る") in found
+        for name in ("縦に割る", "斜めに割る"):
+            assert split_rest(name) in found
         # コマを選ぶと「コマ」が外れるので、フキダシが並びの1つめになる
         assert place_first(BALLOON_STYLE_LABELS["ellipse"]) in found
         assert "貼り付け" in found
@@ -248,6 +265,27 @@ class TestContents:
         # 残りは同じ幅の空白で始まる（名前の頭が1つめと縦に揃う）
         pad = "　" * len(PLACE_HERE_PREFIX)
         assert len([label for label in found if label.startswith(pad)]) > 1
+
+    def test_ここでの前置きも1つめだけに付く(self, window_with_panel):
+        """割る項目にも同じ省略を当てている（→ `split_here_label`）。"""
+        found = labels(right_click(window_with_panel, 400.0, 300.0))
+
+        prefixed = [label for label in found if label.startswith(SPLIT_HERE_PREFIX)]
+        assert len(prefixed) == 1, prefixed
+
+    def test_ここにとここでは同じ列に揃う(self, window_with_panel):
+        """コマを選ぶと2つの組が同じメニューに並ぶ。
+
+        **頭の位置は前置きの字数から出している。** 決め打ちの空白にすると、
+        前置きの長さが違ったときに片方だけずれる。
+        """
+        found = labels(right_click(window_with_panel, 400.0, 300.0))
+
+        indented = [label for label in found if label.startswith("　")]
+        # 割る2つ（縦・斜め）と、置く5つ（フキダシ2・マーク2・セリフ）
+        assert len(indented) == 7
+        # 空白の数が1種類なら、どちらの組も同じ列から名前が始まる
+        assert len({len(label) - len(label.lstrip("　")) for label in indented}) == 1
 
     def test_区切り線が先頭や連続で並ばない(self, window_with_panel):
         """道具の項目を外した跡に区切り線だけが残らないこと。"""
@@ -396,7 +434,7 @@ class TestActions:
 
     def test_ここで横に割る(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, "ここで横に割る").trigger()
+        find(menu, split_first("横に割る")).trigger()
 
         panels = window_with_panel.state.page.panels
         assert len(panels) == 2
@@ -410,7 +448,7 @@ class TestActions:
         持ち替えると、次に画面を押したときに割るつもりのない場所が割れる。
         """
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, "ここで縦に割る").trigger()
+        find(menu, split_rest("縦に割る")).trigger()
 
         assert window_with_panel.state.tool == TOOL_SELECT
 
