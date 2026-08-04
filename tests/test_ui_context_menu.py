@@ -171,7 +171,7 @@ class TestContents:
     def test_何も無いところの品書き(self, window_with_panel):
         menu = right_click(window_with_panel, *EMPTY)
         found = labels(menu)
-        assert "ここに コマを追加" in found
+        assert "ここに コマ を追加" in found
         assert "ページ全面にコマを作る" in found
         # 選んでいるものが無いので、選択に効く項目は出さない
         assert not any(label.endswith("を削除") for label in found)
@@ -181,12 +181,12 @@ class TestContents:
         found = labels(menu)
         for label in ("ここで横に割る", "ここで縦に割る", "ここで斜めに割る"):
             assert label in found
-        assert f"ここに {BALLOON_STYLE_LABELS['ellipse']}を追加" in found
+        assert f"ここに {BALLOON_STYLE_LABELS['ellipse']} を追加" in found
         assert "貼り付け" in found
         # 何が消えるかを名前に出す（→ MainWindow.delete_target）
         assert "コマを削除" in found
         # コマの上に重ねてコマを作る道は用意しない（割るほうが素直）
-        assert "ここに コマを追加" not in found
+        assert "ここに コマ を追加" not in found
 
     def test_フキダシの品書き(self, window_with_panel):
         window_with_panel.state.add_balloon(Rect(200.0, 200.0, 300.0, 200.0))
@@ -196,7 +196,7 @@ class TestContents:
         found = labels(menu)
         assert f"{JAGGED}にする" in found
         assert "しっぽを消す" in found
-        assert "ここに セリフを追加" in found
+        assert "ここに セリフ を追加" in found
         assert "フキダシを削除" in found
 
     def test_セリフの品書き(self, window_with_panel):
@@ -295,7 +295,7 @@ class TestActions:
 
     def test_ここにコマを追加(self, window):
         menu = right_click(window, *EMPTY)
-        find(menu, "ここに コマを追加").trigger()
+        find(menu, "ここに コマ を追加").trigger()
 
         panels = window.state.page.panels
         assert len(panels) == 1
@@ -306,7 +306,7 @@ class TestActions:
 
     def test_ここに吹き出しを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, f"ここに {JAGGED}を追加").trigger()
+        find(menu, f"ここに {JAGGED} を追加").trigger()
 
         balloon = only(window_with_panel.state.page, BalloonObject)
         assert balloon.style == "jagged"
@@ -316,7 +316,7 @@ class TestActions:
 
     def test_ここにセリフを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, "ここに セリフを追加").trigger()
+        find(menu, "ここに セリフ を追加").trigger()
 
         text = only(window_with_panel.state.page, TextObject)
         assert text.rect.contains(400.0, 300.0)

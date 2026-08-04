@@ -320,14 +320,14 @@ class Test右クリックのメニュー:
         window_with_panel.state.select(window_with_panel.state.page.panels[0].id)
         menu = window_with_panel._context_menu(*CENTER)
         labels = [a.text() for a in menu.actions()]
-        assert f"ここに {STICKER_KIND_LABELS[STICKER_EXCLAIM]}を追加" in labels
+        assert f"ここに {STICKER_KIND_LABELS[STICKER_EXCLAIM]} を追加" in labels
         menu.deleteLater()
 
     def test_何も無いところでも置ける(self, window):
         window.state.select(None)
         menu = window._context_menu(60.0, 60.0)
         labels = [a.text() for a in menu.actions()]
-        assert f"ここに {STICKER_KIND_LABELS[STICKER_EXCLAIM]}を追加" in labels
+        assert f"ここに {STICKER_KIND_LABELS[STICKER_EXCLAIM]} を追加" in labels
         menu.deleteLater()
 
     def test_その場で置ける_道具は変わらない(self, window_with_panel):
