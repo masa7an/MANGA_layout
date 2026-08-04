@@ -77,6 +77,11 @@ class BalloonSettings:
     jagged_spikes: int = 14
     # ギザギザの谷の深さ。半径に対する割合（0.25 なら谷が 75% の位置）
     jagged_depth: float = 0.22
+    # 波形の波の数。ギザギザより多くして、細かく震えて見えるようにする
+    wavy_waves: int = 16
+    # 波形の谷の深さ。半径に対する割合。**ギザギザより浅くする。**
+    # 深くすると花びらのように見え、叫びとの差でなく別の物になる
+    wavy_depth: float = 0.09
     # 楕円を何本の線分で近似するか。書き出しでも同じ値を使う
     ellipse_segments: int = 72
 
@@ -829,23 +834,62 @@ def jagged_points(
     )
 
 
+# 波形の1波を最低何本の線分で描くか（→ `wavy_points`）
+WAVY_MIN_SEGMENTS_PER_WAVE = 8
+
+
+def wavy_points(
+    rect: Rect, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], ...]:
+    """波形（不安）の輪郭。
+
+    ギザギザと同じく楕円の半径を増減させて作るが、**交互ではなく
+    なめらかに**増減させる。角が立たないぶん、叫びではなく震えに見える。
+
+    **頂点数は波の数の整数倍にする。** 半端だと最後の波だけ途中で
+    打ち切られ、始点との継ぎ目に角が出る。
+
+    1波あたりの本数には下限を置く。少ない本数で描くと山と谷の間が
+    直線になって**角が立ち、ギザギザとの差が消える**。なめらかさが
+    この形の意味そのものなので、分割数の設定より下限を優先する。
+    """
+    waves = max(2, settings.wavy_waves)
+    depth = min(max(settings.wavy_depth, 0.0), 0.9)
+    per_wave = max(
+        WAVY_MIN_SEGMENTS_PER_WAVE, -(-max(8, settings.ellipse_segments) // waves)
+    )
+    n = per_wave * waves
+    step = 2.0 * math.pi / n
+    half = depth / 2.0
+    # 山で 1.0、谷で 1.0 - depth。cos なので始点（角度 0）は必ず山になり、
+    # 一周してちょうど山へ戻る
+    return tuple(
+        _on_ellipse(rect, i * step, 1.0 - half + half * math.cos(waves * i * step))
+        for i in range(n)
+    )
+
+
 def balloon_outline(
     balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
 ) -> tuple[tuple[float, float], ...]:
     """吹き出し本体の輪郭。種類で切り替える。"""
     if balloon.style == "jagged":
         return jagged_points(balloon.rect, settings)
+    if balloon.style == "wavy":
+        return wavy_points(balloon.rect, settings)
     return ellipse_points(balloon.rect, settings)
 
 
 def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float:
     """しっぽの付け根を、楕円の何割の位置に置くか。
 
-    輪郭より必ず内側に置く。外側だと、輪郭が凹んでいる箇所（ギザギザの谷）で
-    本体と三角形が離れ、継ぎ目に隙間が空く。
+    輪郭より必ず内側に置く。外側だと、輪郭が凹んでいる箇所（ギザギザの谷、
+    波形の谷）で本体と三角形が離れ、継ぎ目に隙間が空く。
     """
     if balloon.style == "jagged":
         return 1.0 - min(max(settings.jagged_depth, 0.0), 0.9)
+    if balloon.style == "wavy":
+        return 1.0 - min(max(settings.wavy_depth, 0.0), 0.9)
     return 0.95
 
 

@@ -45,8 +45,10 @@ from .export import (
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .saving import SaveAsDialog, default_parent
 from .state import (
+    BALLOON_STYLE_LABELS,
     TOOL_BALLOON,
     TOOL_BALLOON_JAGGED,
+    TOOL_BALLOON_WAVY,
     TOOL_LABELS,
     TOOL_PANEL,
     TOOL_SELECT,
@@ -220,6 +222,7 @@ class MainWindow(QMainWindow):
             (TOOL_SPLIT_SLANT, "K"),
             (TOOL_BALLOON, "B"),
             (TOOL_BALLOON_JAGGED, "G"),
+            (TOOL_BALLOON_WAVY, "W"),
             (TOOL_TEXT, "T"),
         ):
             action = QAction(f"{TOOL_LABELS[tool]} ({shortcut})", self)
@@ -351,15 +354,17 @@ class MainWindow(QMainWindow):
         # メニュー全体がグレーになり、どこから作るのか分からなくなる
         balloon_menu.addAction(self._tool_actions[TOOL_BALLOON])
         balloon_menu.addAction(self._tool_actions[TOOL_BALLOON_JAGGED])
+        balloon_menu.addAction(self._tool_actions[TOOL_BALLOON_WAVY])
         balloon_menu.addSeparator()
 
-        # ここから下は選択中の吹き出しに対する操作
+        # ここから下は選択中の吹き出しに対する操作。
+        # 種類の一覧は `BALLOON_STYLE_LABELS` から作る。書き並べると、
+        # 種類を足したときにここへ足し忘れて相互に変えられなくなる
         self.balloon_actions: list[QAction] = []
-        for label, slot in (
-            ("楕円にする", lambda: self.set_balloon_style("ellipse")),
-            ("ギザギザにする", lambda: self.set_balloon_style("jagged")),
-        ):
-            action = self._act(label, slot)
+        for style, name in BALLOON_STYLE_LABELS.items():
+            action = self._act(
+                f"{name}にする", lambda _=False, s=style: self.set_balloon_style(s)
+            )
             balloon_menu.addAction(action)
             self.balloon_actions.append(action)
         balloon_menu.addSeparator()
@@ -562,10 +567,15 @@ class MainWindow(QMainWindow):
                 "ここに吹き出しを追加",
                 lambda: self.view.add_balloon_at(x, y, "ellipse"),
             ),
-            (
-                "balloon",
-                "ここにギザギザを追加",
-                lambda: self.view.add_balloon_at(x, y, "jagged"),
+            *(
+                (
+                    "balloon",
+                    f"ここに{name}を追加",
+                    lambda _=False, s=style: self.view.add_balloon_at(x, y, s),
+                )
+                # 楕円は上で「吹き出し」の名前で出しているので、ここでは出さない
+                for style, name in BALLOON_STYLE_LABELS.items()
+                if style != "ellipse"
             ),
             ("text", "ここにセリフを追加", lambda: self.view.add_text_at(x, y)),
         )
@@ -719,7 +729,7 @@ class MainWindow(QMainWindow):
         balloon = self.state.selected_balloon
         if balloon is not None:
             r = balloon.rect
-            kind = "ギザギザ" if balloon.style == "jagged" else "楕円"
+            kind = BALLOON_STYLE_LABELS.get(balloon.style, balloon.style)
             tied = "コマに紐づけ" if balloon.attached_panel_id else "紐づけなし"
             return f"吹き出しを選択中: {kind} / {r.w:.0f} × {r.h:.0f} px / {tied}"
 
@@ -916,9 +926,7 @@ class MainWindow(QMainWindow):
         if balloon is None or balloon.style == style:
             return
         self.state.set_balloon_style(balloon.id, style)
-        self.state.message.emit(
-            "ギザギザにしました" if style == "jagged" else "楕円にしました"
-        )
+        self.state.message.emit(f"{BALLOON_STYLE_LABELS.get(style, style)}にしました")
 
     def toggle_tail(self) -> None:
         balloon = self.state.selected_balloon

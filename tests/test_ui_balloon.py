@@ -15,6 +15,7 @@ from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import (
     TOOL_BALLOON,
     TOOL_BALLOON_JAGGED,
+    TOOL_BALLOON_WAVY,
     TOOL_PANEL,
     TOOL_SELECT,
 )
@@ -130,9 +131,8 @@ class TestBalloonMenu:
 
     def test_追加の項目が先頭にある(self, window):
         items = balloon_menu_items(window)
-        assert items[0].isEnabled() and items[1].isEnabled()
-        assert "追加" in items[0].text()
-        assert "追加" in items[1].text()
+        assert all(a.isEnabled() for a in items[:3])
+        assert all("追加" in a.text() for a in items[:3])
 
     def test_追加の項目から道具に切り替わる(self, window):
         items = balloon_menu_items(window)
@@ -140,12 +140,15 @@ class TestBalloonMenu:
         assert window.state.tool == TOOL_BALLOON
         items[1].trigger()
         assert window.state.tool == TOOL_BALLOON_JAGGED
+        items[2].trigger()
+        assert window.state.tool == TOOL_BALLOON_WAVY
 
     def test_道具バーと同じ項目を指す(self, window):
         """別々の項目にすると、選ばれている印が片方にしか付かない。"""
         items = balloon_menu_items(window)
         assert items[0] is window._tool_actions[TOOL_BALLOON]
         assert items[1] is window._tool_actions[TOOL_BALLOON_JAGGED]
+        assert items[2] is window._tool_actions[TOOL_BALLOON_WAVY]
 
     def test_選択中だけ使える項目もある(self, window_with_balloon):
         items = balloon_menu_items(window_with_balloon)
@@ -194,6 +197,11 @@ class TestAdd:
         window_with_panel.state.set_tool(TOOL_BALLOON_JAGGED)
         click(window_with_panel.view, 360.0, 300.0)
         assert window_with_panel.state.page.floating[0].style == "jagged"
+
+    def test_波形の道具で種類が変わる(self, window_with_panel):
+        window_with_panel.state.set_tool(TOOL_BALLOON_WAVY)
+        click(window_with_panel.view, 360.0, 300.0)
+        assert window_with_panel.state.page.floating[0].style == "wavy"
 
     def test_コマの上でも作れる(self, window_with_panel):
         """吹き出しはコマの上に置くもの。空白限定にすると置き場所が無い。"""
@@ -407,7 +415,7 @@ class TestBalloonDrawing:
         # 角はコマの下地のまま
         assert not is_fill(image.pixelColor(int(rect.x) + 1, int(rect.y) + 1))
 
-    @pytest.mark.parametrize("style", ["ellipse", "jagged"])
+    @pytest.mark.parametrize("style", ["ellipse", "jagged", "wavy"])
     def test_本体としっぽの継ぎ目に隙間が空かない(self, drawn, style):
         """別々に描くと、輪郭が凹んだ位置で本体と三角形が離れる。
 
@@ -426,7 +434,7 @@ class TestBalloonDrawing:
         ]
         assert gaps == [], f"継ぎ目に隙間: {gaps[:5]}"
 
-    @pytest.mark.parametrize("style", ["ellipse", "jagged"])
+    @pytest.mark.parametrize("style", ["ellipse", "jagged", "wavy"])
     @pytest.mark.parametrize("root_y", [-1.0, -0.5, 0.0, 0.5, 1.0])
     def test_付け根をどこにずらしても隙間が空かない(self, drawn, style, root_y):
         """付け根の位置が変われば、輪郭の凹凸との噛み合わせも変わる。

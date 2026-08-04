@@ -68,7 +68,9 @@ ID_PREFIX_TEXT = "txt"
 
 _ID_RE = re.compile(r"^[a-z]+_(\d+)$")
 
-BALLOON_STYLES = ("ellipse", "jagged")
+# 吹き出しの種類。`wavy`（波形）は**不安・動揺・弱った声**を表す。
+# ギザギザで代用すると叫びに読めてしまい、意味が逆になる
+BALLOON_STYLES = ("ellipse", "jagged", "wavy")
 TEXT_ALIGNS = ("left", "center", "right")
 TEXT_DIRECTIONS = ("horizontal", "vertical")
 

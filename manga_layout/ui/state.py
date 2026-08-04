@@ -51,6 +51,7 @@ TOOL_SPLIT_V = "split_v"
 TOOL_SPLIT_SLANT = "split_slant"
 TOOL_BALLOON = "balloon"
 TOOL_BALLOON_JAGGED = "balloon_jagged"
+TOOL_BALLOON_WAVY = "balloon_wavy"
 TOOL_TEXT = "text"
 
 TOOL_LABELS = {
@@ -63,6 +64,7 @@ TOOL_LABELS = {
     # 「吹き出し > 吹き出し」と重ならない言い方にしてある
     TOOL_BALLOON: "楕円を追加",
     TOOL_BALLOON_JAGGED: "ギザギザを追加",
+    TOOL_BALLOON_WAVY: "波形を追加",
     TOOL_TEXT: "セリフを追加",
 }
 
@@ -80,7 +82,16 @@ TOOL_LABELS = {
 DEFAULT_TEXT_SIZE = (230.0, 422.0)
 
 # どの道具がどの種類の吹き出しを作るか
-BALLOON_TOOLS = {TOOL_BALLOON: "ellipse", TOOL_BALLOON_JAGGED: "jagged"}
+BALLOON_TOOLS = {
+    TOOL_BALLOON: "ellipse",
+    TOOL_BALLOON_JAGGED: "jagged",
+    TOOL_BALLOON_WAVY: "wavy",
+}
+
+# 吹き出しの種類の呼び名。**メニュー・状態表示・操作後の案内で共通に使う。**
+# 別々に書くと、種類を足したときに片方だけ古いままになり、
+# 「波形にした」のに「楕円を選択中」と出るような食い違いが作れる
+BALLOON_STYLE_LABELS = {"ellipse": "楕円", "jagged": "ギザギザ", "wavy": "波形"}
 
 
 class EditorState(QObject):

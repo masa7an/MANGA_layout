@@ -15,6 +15,7 @@ import pytest
 from manga_layout import Rect, new_project
 from manga_layout.layout import (
     BalloonSettings,
+    WAVY_MIN_SEGMENTS_PER_WAVE,
     attach_target,
     balloon_at,
     balloon_contains,
@@ -29,6 +30,7 @@ from manga_layout.layout import (
     tail_base_angle,
     tail_root_point,
     tail_triangle,
+    wavy_points,
 )
 
 SETTINGS = BalloonSettings()
@@ -93,12 +95,68 @@ class TestJagged:
         assert len(points) >= 6
 
 
+class TestWavy:
+    def test_山と谷の間に収まる(self):
+        """半径は 1.0（山）から 1 - depth（谷）の間だけを動く。"""
+        for point in wavy_points(RECT, SETTINGS):
+            ratio = distance_ratio(RECT, point)
+            assert 1.0 - SETTINGS.wavy_depth - 1e-9 <= ratio <= 1.0 + 1e-9
+
+    def test_頂点数は波の数の整数倍(self):
+        """半端だと最後の波だけ途中で切れ、始点との継ぎ目に角が出る。"""
+        for waves in (2, 5, 16, 23):
+            points = wavy_points(RECT, BalloonSettings(wavy_waves=waves))
+            assert len(points) % waves == 0
+
+    def test_始点は山で一周して戻る(self):
+        """位相が閉じていないと、始点と終点の間だけ形が違う。"""
+        points = wavy_points(RECT, SETTINGS)
+        assert distance_ratio(RECT, points[0]) == pytest.approx(1.0)
+        # 1波ぶん進んだ点も山。ここがずれていれば位相が閉じていない
+        per_wave = len(points) // SETTINGS.wavy_waves
+        assert distance_ratio(RECT, points[per_wave]) == pytest.approx(1.0)
+
+    def test_ギザギザと違って隣同士が跳ねない(self):
+        """なめらかさがこの形の意味そのもの。角が立つとギザギザになる。
+
+        ギザギザは隣り合う頂点で 1.0 と 1 - depth を往復するが、
+        波形は谷の深さより小さい幅でしか動かない。
+        """
+        ratios = [distance_ratio(RECT, p) for p in wavy_points(RECT, SETTINGS)]
+        steps = [abs(b - a) for a, b in zip(ratios, ratios[1:] + ratios[:1])]
+        assert max(steps) < SETTINGS.wavy_depth
+
+    def test_1波あたりの本数に下限がある(self):
+        """波が多いほど1波は細かくなるが、角が立つ手前で止める。"""
+        points = wavy_points(RECT, BalloonSettings(wavy_waves=60))
+        assert len(points) == 60 * WAVY_MIN_SEGMENTS_PER_WAVE
+
+    def test_谷が深すぎても中心を越えない(self):
+        points = wavy_points(RECT, BalloonSettings(wavy_depth=5.0))
+        assert min(distance_ratio(RECT, p) for p in points) > 0.0
+
+    def test_波が少なすぎても形になる(self):
+        points = wavy_points(RECT, BalloonSettings(wavy_waves=0))
+        assert len(points) >= 8
+
+    def test_外接矩形に収まる(self):
+        for x, y in wavy_points(RECT, SETTINGS):
+            assert RECT.x - 1e-9 <= x <= RECT.right + 1e-9
+            assert RECT.y - 1e-9 <= y <= RECT.bottom + 1e-9
+
+    def test_同じ点が重複しない(self):
+        points = wavy_points(RECT, SETTINGS)
+        assert len(set(points)) == len(points)
+
+
 class TestOutline:
     def test_種類で切り替わる(self, balloon):
         balloon.style = "ellipse"
         assert len(balloon_outline(balloon, SETTINGS)) == SETTINGS.ellipse_segments
         balloon.style = "jagged"
         assert len(balloon_outline(balloon, SETTINGS)) == SETTINGS.jagged_spikes * 2
+        balloon.style = "wavy"
+        assert balloon_outline(balloon, SETTINGS) == wavy_points(RECT, SETTINGS)
 
 
 class TestTail:
@@ -113,6 +171,14 @@ class TestTail:
         balloon.tail.tip = (30.0, 90.0)
         base1, _, base2 = tail_triangle(balloon, SETTINGS)
         limit = 1.0 - SETTINGS.jagged_depth
+        assert distance_ratio(RECT, base1) <= limit + 1e-9
+        assert distance_ratio(RECT, base2) <= limit + 1e-9
+
+    def test_波形でも付け根は谷より内側にある(self, balloon):
+        balloon.style = "wavy"
+        balloon.tail.tip = (30.0, 90.0)
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+        limit = 1.0 - SETTINGS.wavy_depth
         assert distance_ratio(RECT, base1) <= limit + 1e-9
         assert distance_ratio(RECT, base2) <= limit + 1e-9
 
