@@ -114,6 +114,11 @@ BALLOON_ACCENT = QColor("#8E24AA")
 # マークを選んでいるときの色。上の3色（青・橙・紫）と重ならない色にする。
 # マークは吹き出しに重ねて置くので、吹き出しの紫と見分けが付くことが要る
 STICKER_ACCENT = QColor("#00897B")
+# セリフを選んでいるときの色。上の4色（青・橙・紫・緑）と重ならない色にする。
+# セリフは吹き出しに重ねて置くので、吹き出しの紫と見分けが付くことが要る。
+# 以前はここが漏れており、コマ（青）にフォールバックしていたため、
+# セリフを選んでいるのかコマを選んでいるのか枠の色では区別できなかった
+TEXT_ACCENT = QColor("#E53935")
 
 # 画面上での大きさ（画面ピクセル）。表示倍率で割ってシーンの px に直して使う
 HANDLE_PX = 9.0
@@ -284,6 +289,8 @@ class PageScene(QGraphicsScene):
             return BALLOON_ACCENT
         if self.state.selected_sticker is not None:
             return STICKER_ACCENT
+        if self.state.selected_text is not None:
+            return TEXT_ACCENT
         return ACCENT
 
     def _draw_tail_handle(
