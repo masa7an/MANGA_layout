@@ -220,6 +220,47 @@ class TestTail:
 
         assert base_length(wide) > base_length(narrow)
 
+    def test_縦長では上下も左右と同じ太さになる(self, balloon):
+        """向きによって幅が変わっていた不具合（2026-08-05）の直し。
+
+        縦長の吹き出しでは、輪郭を1ラジアン進む長さが上下と左右で違うため、
+        半角を揃えるだけでは見た目の太さが変わってしまう
+        （実測 333×496 で左右 51.8px、上下 23.4px）。
+        """
+        balloon.rect = Rect(0.0, 0.0, 333.0, 496.0)
+        cx, cy = balloon.rect.center
+
+        def width_at(dx: float, dy: float) -> float:
+            balloon.tail.tip = (cx + dx, cy + dy)
+            (x1, y1), _, (x2, y2) = tail_triangle(balloon, SETTINGS)
+            return math.hypot(x2 - x1, y2 - y1)
+
+        left_right = width_at(400.0, 0.0)
+        up_down = width_at(0.0, 400.0)
+        assert up_down == pytest.approx(left_right, rel=0.01)
+
+    def test_左右の太さは基準のまま変わらない(self, balloon):
+        """上下を太くする直しで、左右まで変わっては本末転倒。
+
+        左右（角度0）での太さは、直す前の式（半径をそのまま使う）と
+        一致する必要がある。
+        """
+        balloon.rect = Rect(0.0, 0.0, 333.0, 496.0)
+        cx, cy = balloon.rect.center
+        balloon.tail.tip = (cx + 400.0, cy)
+
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+        got = math.hypot(base2[0] - base1[0], base2[1] - base1[1])
+
+        # 直す前の式：半径そのものを atan2 の分母に使う。角度0での2点は
+        # x が等しく y だけ ±b*sin(half) に離れるので、弦の長さは 2*b*sin(half)
+        ratio = 0.95  # 楕円の _tail_base_ratio
+        a = balloon.rect.w / 2.0 * ratio
+        b = balloon.rect.h / 2.0 * ratio
+        half = math.atan2(balloon.tail.width / 2.0, a)
+        want = 2.0 * b * math.sin(half)
+        assert got == pytest.approx(want, rel=1e-6)
+
     def test_小さな吹き出しでも付け根が一周しない(self, balloon):
         """付け根が広がりすぎると、しっぽが本体を飲み込む。"""
         balloon.rect = Rect(0.0, 0.0, 4.0, 4.0)

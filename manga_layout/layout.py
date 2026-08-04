@@ -673,6 +673,34 @@ def root_y_at(rect: Rect, y: float) -> float:
     return min(max(ratio, -1.0), 1.0)
 
 
+def _tail_base_half_angle(
+    rect: Rect, angle: float, ratio: float, width: float
+) -> float | None:
+    """付け根の幅（px）を、`angle` の位置での半角（ラジアン）に直す。
+
+    楕円は向きによって「輪郭を1ラジアン進んだときの長さ」が違う。半角を
+    どの向きでも同じにすると、縦長の吹き出しでは真上・真下だけ幅が半分
+    以下に痩せる（実測 333×496 で 51.8px → 23.4px、2026-08-05）。
+
+    **左右（角度0）に見える幅を基準にする。** 均等にする直し方（設定の
+    px 値どおりに全方向を揃える）も試したが、それだと左右のしっぽが
+    今より細くなってしまう。左右は今のまま、上下だけ太くなる向きに
+    寄せてほしいと利用者から指定があった（2026-08-06）。
+
+    左右の半角は `atan2(width/2, a)`（`a` は横方向の半径）。他の向きは、
+    「半角 × その向きで進む速さ」＝見える幅が、左右のときと同じになるよう
+    半角を決め直す。
+    """
+    a = rect.w / 2.0 * ratio
+    b = rect.h / 2.0 * ratio
+    speed = math.hypot(a * math.sin(angle), b * math.cos(angle))
+    if speed < 1e-9:
+        return None
+    reference_half = math.atan2(width / 2.0, a)
+    # 小さい吹き出しで付け根が一周しないよう頭を押さえる
+    return min(reference_half * b / speed, math.pi / 3.0)
+
+
 def tail_triangle(
     balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
 ) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]] | None:
@@ -688,16 +716,11 @@ def tail_triangle(
         return None
 
     rect = balloon.rect
-    cx, cy = rect.center
     tip = balloon.tail.tip
     ratio = _tail_base_ratio(balloon, settings)
-    base_center = _on_ellipse(rect, angle, ratio)
-    radius = math.hypot(base_center[0] - cx, base_center[1] - cy)
-    if radius < 1e-9:
+    half = _tail_base_half_angle(rect, angle, ratio, balloon.tail.width)
+    if half is None:
         return None
-
-    # 付け根の幅を角度に直す。小さい吹き出しで付け根が一周しないよう頭を押さえる
-    half = min(math.atan2(balloon.tail.width / 2.0, radius), math.pi / 3.0)
     return (
         _on_ellipse(rect, angle - half, ratio),
         tip,
