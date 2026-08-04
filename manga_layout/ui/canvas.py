@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
+from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -497,6 +497,11 @@ class TextEditorItem(QGraphicsTextItem):
 class PageView(QGraphicsView):
     """マウスとキーの受け口。当たり判定はシーンの px 空間で行う。"""
 
+    # 右クリックされた（シーンの x, y, 画面上の位置）。
+    # メニューの中身は `MainWindow` が組む。項目の実体（QAction）は
+    # メニューバーのものを使い回すので、持ち主のところで組むほうが早い
+    context_menu_requested = Signal(float, float, QPoint)
+
     def __init__(self, state: EditorState):
         # Qt の初期化より先に属性を持たせない（基底の __init__ が済むまで代入できない）
         scene = PageScene(state)
@@ -789,53 +794,72 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        # セリフは吹き出しより手前。吹き出しの上に乗せるものなので、
-        # 先に拾わないと文字を掴んだつもりで吹き出しが動く
+        self.state.select(self._pick_at(x, y))
+        if self.state.selected_id is not None:
+            self._mode = "move"
+            # 掴む矩形は `selected_bounds` に任せる。斜めの組なら組の外側が
+            # 返るので、片方だけ動く見た目にならない
+            self._origin_rect = self.state.selected_bounds
+            self._grab = (x, y)
+            self._scene.preview_rect = self._origin_rect
+            if self.state.selected_slant_pair is not None:
+                self.state.message.emit("斜めに割った2枚は、まとめて動きます")
+        event.accept()
+
+    def _pick_at(self, x: float, y: float) -> str | None:
+        """その位置で選ぶものの id。何も無ければ None。
+
+        **手前にあるものから順に見る。** セリフは吹き出しの上に、
+        吹き出しはコマの上に乗せるものなので、この順で拾わないと
+        「文字を掴んだつもりで吹き出しが動く」ことになる。
+
+        **左クリックと右クリックで同じ判定を使う。** 別々に書くと、
+        右クリックで選ばれるものと、そのまま引いたときに動くものが
+        食い違う。
+        """
+        text = text_at(self.state.page, x, y)
         if text is not None:
-            self.state.select(text.id)
-            self._mode = "move"
-            self._origin_rect = text.rect
-            self._grab = (x, y)
-            self._scene.preview_rect = text.rect
-            event.accept()
-            return
+            return text.id
 
-        # 吹き出しはコマより手前にある。コマより先に拾わないと、
-        # 吹き出しを掴んだつもりで下のコマが動く
+        balloon = balloon_at(self.state.page, x, y)
         if balloon is not None:
-            self.state.select(balloon.id)
-            self._mode = "move"
-            self._origin_rect = balloon.rect
-            self._grab = (x, y)
-            self._scene.preview_rect = balloon.rect
-            event.accept()
-            return
+            return balloon.id
 
-        # 選択中の画像の上なら、コマに持ち替えずにその画像を動かす。
+        panel = panel_at(self.state.page, x, y)
+
+        # 選択中の画像の上なら、コマに持ち替えずにその画像のまま。
         # ここで奪われると、選んだ絵をドラッグした瞬間にコマが動く
         image = self.state.selected_image
-        if image is not None and image.rect.contains(x, y) and hit is not None:
-            self._mode = "move"
-            self._origin_rect = image.rect
-            self._grab = (x, y)
-            self._scene.preview_rect = self._origin_rect
-            event.accept()
+        if image is not None and image.rect.contains(x, y) and panel is not None:
+            return image.id
+
+        return None if panel is None else panel.id
+
+    def contextMenuEvent(self, event) -> None:
+        """右クリック。**押した場所のものを選んでから**メニューを出す。
+
+        選び直さずに出すと、「セリフを太字に」が直前に選んでいた別の
+        セリフに効く。Windows の右クリックの慣例どおり、狙ったものが
+        選ばれた状態でメニューが出る。
+
+        画面移動の最中（スペース押し・中ボタン）は出さない。掴んだまま
+        メニューが割り込むと、離しても移動が終わらない。
+        """
+        if self._space_held or self._pan_from is not None:
             return
 
-        self.state.select(hit.id if hit is not None else None)
-        if hit is not None:
-            self._mode = "move"
-            # 斜めの組なら組の外側を掴む。片方だけ動く見た目にならない
-            pair = self.state.page.slant_pair_of(hit.id)
-            self._origin_rect = (
-                hit.shape.bounds()
-                if pair is None
-                else self.state.page.slant_bounds(pair)
-            )
-            self._grab = (x, y)
-            self._scene.preview_rect = self._origin_rect
-            if pair is not None:
-                self.state.message.emit("斜めに割った2枚は、まとめて動きます")
+        # 入力中に画面を触ったら、そこで確定してから次の操作へ移る
+        # （左クリックと同じ扱い）。入力欄に Qt 標準の右クリックメニューを
+        # 出させてはいけない。メニューに焦点を奪われた時点で focusOut が
+        # 走り、メニューを開いたまま入力欄がシーンから外れる
+        self.finish_text_edit(commit=True)
+        self._reset_drag()
+
+        point = self.mapToScene(event.pos())
+        x, y = point.x(), point.y()
+        self.state.select(self._pick_at(x, y))
+        self.viewport().update()
+        self.context_menu_requested.emit(x, y, event.globalPos())
         event.accept()
 
     # -- セリフのその場編集 --------------------------------------------------
@@ -1169,6 +1193,28 @@ class PageView(QGraphicsView):
         else:
             self.viewport().unsetCursor()
 
+    # -- 位置を指定して置く（右クリックのメニュー用） ------------------------
+    #
+    # どれも**ドラッグの無い経路**。大きさ0の矩形を渡して、クリックだけで
+    # 置いたときと同じ道（`_apply_*`）を通している。既定の大きさ・案内文・
+    # 道具の戻し方をここに書き写すと、2か所を直すことになる。
+
+    def add_panel_at(self, x: float, y: float) -> None:
+        """その位置に既定の大きさのコマを1つ置く。"""
+        self._apply_create(Rect(x, y, 0.0, 0.0), (x, y))
+
+    def add_balloon_at(self, x: float, y: float, style: str) -> None:
+        """その位置に既定の大きさの吹き出しを1つ置く。"""
+        self._apply_create_balloon(Rect(x, y, 0.0, 0.0), (x, y), style)
+
+    def add_text_at(self, x: float, y: float) -> None:
+        """その位置にセリフを1つ置き、そのまま入力を始める。"""
+        self._apply_create_text(Rect(x, y, 0.0, 0.0), (x, y))
+
+    def split_at(self, x: float, y: float, tool: str) -> None:
+        """その位置でコマを割る。道具は持ち替えない。"""
+        self._apply_split(x, y, tool)
+
     # -- 確定 --------------------------------------------------------------
 
     def _apply_create(self, rect: Rect, press: tuple[float, float]) -> None:
@@ -1192,11 +1238,16 @@ class PageView(QGraphicsView):
             "位置と大きさを調整できます"
         )
 
-    def _apply_create_balloon(self, rect: Rect, press: tuple[float, float]) -> None:
+    def _apply_create_balloon(
+        self, rect: Rect, press: tuple[float, float], style: str | None = None
+    ) -> None:
         """吹き出しを1つ作り、選択の道具に戻す。
 
         コマ追加と同じ「1回きり」の扱い（要件定義 6.9）。置いたあとは
         位置と大きさ、しっぽの向きを整えるほうが先に来る。
+
+        `style` を渡さなければ今の道具から決める。右クリックのメニューは
+        道具を持ち替えずに種類を指定するので、そこからは明示的に渡す。
         """
         minimum = MIN_CREATE_PX / self.view_scale
         if rect.w < minimum or rect.h < minimum:
@@ -1204,7 +1255,8 @@ class PageView(QGraphicsView):
                 self.state.page, press[0], press[1], self.state.balloon_settings
             )
 
-        style = BALLOON_TOOLS.get(self.state.tool, "ellipse")
+        if style is None:
+            style = BALLOON_TOOLS.get(self.state.tool, "ellipse")
         balloon = self.state.add_balloon(rect, style)
         self.state.set_tool(TOOL_SELECT)
 
@@ -1403,13 +1455,15 @@ class PageView(QGraphicsView):
         )
         self.viewport().update()
 
-    def _apply_split(self, x: float, y: float) -> None:
+    def _apply_split(self, x: float, y: float, tool: str | None = None) -> None:
+        """その位置でコマを割る。`tool` を渡さなければ今の道具で決める。"""
         panel = self._split_target(x, y)
         if panel is None:
             self.state.message.emit("コマの上でクリックしてください")
             return
 
-        tool = self.state.tool
+        if tool is None:
+            tool = self.state.tool
         panel_id = panel.id
         try:
             with self.state.edit("コマの分割") as project:

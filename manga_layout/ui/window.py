@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFontDialog,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QToolBar,
 )
@@ -142,6 +143,7 @@ class MainWindow(QMainWindow):
         self.state.page_changed.connect(self._refresh)
         self.state.tool_changed.connect(self._sync_tool_actions)
         self.state.message.connect(lambda text: self.statusBar().showMessage(text, 6000))
+        self.view.context_menu_requested.connect(self._show_context_menu)
 
         self._refresh()
 
@@ -237,6 +239,8 @@ class MainWindow(QMainWindow):
         どこから作るのか分からなくなる（吹き出しで一度やった失敗）。
         """
         menu = self.menuBar().addMenu("セリフ(&X)")
+        # 右クリックのメニューが項目を写して使う（→ `_copy_actions`）
+        self.text_menu = menu
         menu.addAction(self._tool_actions[TOOL_TEXT])
         menu.addSeparator()
 
@@ -304,9 +308,10 @@ class MainWindow(QMainWindow):
         edit_menu.addSeparator()
         self.delete_action = self._act("削除", self.delete_selected, "Delete")
         edit_menu.addAction(self.delete_action)
-        edit_menu.addAction(
-            self._act("ページ全面にコマを作る", self.add_full_page_panel, "Ctrl+Shift+A")
+        self.full_page_action = self._act(
+            "ページ全面にコマを作る", self.add_full_page_panel, "Ctrl+Shift+A"
         )
+        edit_menu.addAction(self.full_page_action)
 
         panel_menu = self.menuBar().addMenu("コマ(&M)")
         # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
@@ -325,10 +330,12 @@ class MainWindow(QMainWindow):
         panel_menu.addAction(self.slant_flip_action)
 
         image_menu = self.menuBar().addMenu("画像(&I)")
-        image_menu.addAction(
-            self._act("貼り付け", self.paste_image, "Ctrl+V", "クリップボードの画像を置く")
+        self.paste_action = self._act(
+            "貼り付け", self.paste_image, "Ctrl+V", "クリップボードの画像を置く"
         )
-        image_menu.addAction(self._act("ファイルから読み込み...", self.open_image_file))
+        self.open_image_action = self._act("ファイルから読み込み...", self.open_image_file)
+        image_menu.addAction(self.paste_action)
+        image_menu.addAction(self.open_image_action)
         image_menu.addSeparator()
         self.fit_action = self._act(
             "コマにフィット", self.fit_image, "Ctrl+Shift+F", "選択中の画像でコマを埋める"
@@ -338,6 +345,8 @@ class MainWindow(QMainWindow):
         image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
 
         balloon_menu = self.menuBar().addMenu("吹き出し(&B)")
+        # 右クリックのメニューが項目を写して使う（→ `_copy_actions`）
+        self.balloon_menu = balloon_menu
         # まず「作る」を置く。これが無いと、吹き出しを1つも選んでいない間は
         # メニュー全体がグレーになり、どこから作るのか分からなくなる
         balloon_menu.addAction(self._tool_actions[TOOL_BALLOON])
@@ -452,6 +461,147 @@ class MainWindow(QMainWindow):
         self.hint_label = QLabel()
         self.statusBar().addPermanentWidget(self.hint_label)
         self.statusBar().addPermanentWidget(self.page_label)
+
+    # -- 右クリックのメニュー ------------------------------------------------
+
+    def _show_context_menu(self, x: float, y: float, global_pos) -> None:
+        """画面を右クリックされた。押した場所に応じたメニューを出す。
+
+        押した場所のものは `PageView` 側で既に選び直されている。項目の
+        有効・無効はその選択を見て `_refresh` が決めているので、ここでは
+        並べて出すだけでよい。
+        """
+        menu = self._context_menu(x, y)
+        menu.exec(global_pos)
+        # 押した場所を覚えている項目があるので使い回せない。毎回捨てる
+        menu.deleteLater()
+
+    def _context_menu(self, x: float, y: float) -> QMenu:
+        """右クリックのメニューを組む。`x`, `y` は押した場所（シーンの px）。
+
+        **項目は既にある QAction を写して並べる。作り直さない。**
+        有効・無効の切り替えと文言の書き換え（「しっぽを消す／出す」など）は
+        `_refresh` が1か所でやっている。ここで別の QAction を立てると同じ
+        処理をもう1組書くことになり、片方だけ直し忘れる。
+
+        例外は「ここに〜」「ここで〜」の項目だけ。押した場所を持てるのは
+        右クリックだけで、メニューバー側には対応する項目が無い（場所が
+        決まらないため、道具に持ち替える形になっている）。
+        """
+        menu = QMenu(self)
+        state = self.state
+
+        if state.selected_text is not None:
+            self._copy_actions(menu, self.text_menu)
+
+        elif state.selected_balloon is not None:
+            self._copy_actions(menu, self.balloon_menu)
+            menu.addSeparator()
+            self._add_place_here(menu, x, y, ("text",))
+
+        elif state.selected_image is not None:
+            menu.addAction(self.fit_action)
+
+        elif state.selected_panel is not None:
+            self._add_split_here(menu, x, y)
+            menu.addAction(self.slant_flip_action)
+            menu.addSeparator()
+            self._add_place_here(menu, x, y, ("balloon", "text"))
+            menu.addSeparator()
+            menu.addAction(self.paste_action)
+            menu.addAction(self.open_image_action)
+
+        else:
+            # 何も無いところ。選択に効く項目はどれも使えないので出さない。
+            # 代わりに、ここでしか呼べない「元に戻す」を添える
+            self._add_place_here(menu, x, y, ("panel", "balloon", "text"))
+            menu.addAction(self.full_page_action)
+            menu.addSeparator()
+            menu.addAction(self.undo_action)
+            menu.addAction(self.redo_action)
+            return menu
+
+        menu.addSeparator()
+        menu.addAction(self.delete_action)
+        return menu
+
+    def _copy_actions(self, menu: QMenu, source: QMenu) -> None:
+        """メニューバーのメニューから項目を写して並べる。
+
+        QAction は写しても実体は1つなので、有効・無効も文言も
+        メニューバー側と自動で揃う。
+
+        **道具の切り替え（「楕円を追加」など）は外す。** 右クリック側は
+        押した場所が分かっているので「ここに〜」を別に出しており、道具に
+        持ち替える項目まで並べると、同じことが2通り並ぶ。
+        """
+        tools = set(self._tool_actions.values())
+        for action in source.actions():
+            if action in tools:
+                continue
+            # 道具を外した跡に区切り線だけが残る。先頭と連続は出さない
+            last = menu.actions()[-1] if menu.actions() else None
+            if action.isSeparator() and (last is None or last.isSeparator()):
+                continue
+            menu.addAction(action)
+
+    def _add_place_here(
+        self, menu: QMenu, x: float, y: float, kinds: tuple[str, ...]
+    ) -> None:
+        """押した場所に1つ置く項目。`kinds` に挙げた種類だけ出す。
+
+        名前を「ここに」で始めるのは、メニューバー側の「〜を追加」
+        （道具に持ち替えて、次に押した場所に置く）と区別するため。
+        こちらは道具を持ち替えず、その場で置いて終わる。
+        """
+        items = (
+            ("panel", "ここにコマを追加", lambda: self.view.add_panel_at(x, y)),
+            (
+                "balloon",
+                "ここに吹き出しを追加",
+                lambda: self.view.add_balloon_at(x, y, "ellipse"),
+            ),
+            (
+                "balloon",
+                "ここにギザギザを追加",
+                lambda: self.view.add_balloon_at(x, y, "jagged"),
+            ),
+            ("text", "ここにセリフを追加", lambda: self.view.add_text_at(x, y)),
+        )
+        for kind, label, slot in items:
+            if kind in kinds:
+                self._menu_act(menu, label, slot)
+
+    def _add_split_here(self, menu: QMenu, x: float, y: float) -> None:
+        """押した場所で1回きり割る項目。
+
+        メニューバー側は道具の切り替え（選んでから、割る場所を押す）だが、
+        右クリックは押した場所が既に分かっているので、その場で割る。
+        """
+        for label, tool in (
+            ("ここで横に割る", TOOL_SPLIT_H),
+            ("ここで縦に割る", TOOL_SPLIT_V),
+            ("ここで斜めに割る", TOOL_SPLIT_SLANT),
+        ):
+            self._menu_act(
+                menu,
+                label,
+                # 既定値で受けているのは、triggered が渡す checked を
+                # tool の位置で受け取らないようにするため
+                lambda _checked=False, t=tool: self.view.split_at(x, y, t),
+            )
+
+    @staticmethod
+    def _menu_act(menu: QMenu, label: str, slot) -> QAction:
+        """そのメニュー限りの項目。
+
+        親をメニューにしてあるので、メニューを捨てれば一緒に消える。
+        ウィンドウに持たせると、右クリックのたびに溜まっていく。
+        """
+        action = QAction(label, menu)
+        action.triggered.connect(slot)
+        menu.addAction(action)
+        return action
 
     def zoom_actual(self) -> None:
         """紙に刷ったときと同じ大きさで表示する。
