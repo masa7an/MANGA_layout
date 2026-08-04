@@ -1,8 +1,22 @@
-"""吹き出しの操作まわりの検証（画面なし）。
+"""フキダシの操作まわりの検証（画面なし）。
 
 形そのものは tests/test_balloon_shape.py で押さえている。ここでは
 「操作 → モデルの変更 → 履歴に積む」がつながっているか、
-コマ・画像・吹き出しの選択が取り合いにならないかを確かめる。
+コマ・画像・フキダシの選択が取り合いにならないかを確かめる。
+
+## 画面に出る文字の扱い
+
+**「探すための文字」と「確かめるための文字」を分ける。**
+
+- **探すため**（メニューや項目を見つける）には文字を使わない。部品そのものか
+  `BALLOON_STYLE_LABELS` を通す。呼び名を変えるたびに「見つかりません」で
+  落ちると、**呼び名の変更なのか項目が消えたのかが区別できない**
+- **確かめるため**（表示がその文字であること自体が仕様）は決め打ちのままにする。
+  Undo の表示や削除の項目名がこれ。呼び名を変えたときにここが落ちるのは正しく、
+  画面の文字を変えたことを見落とさないための歯止めになる
+
+2026-08-04 の改名（吹き出し → フキダシ）で 11 件が落ち、その内訳が
+「探すため」6 件・「確かめるため」5 件だったことからこの形にした。
 """
 
 from __future__ import annotations
@@ -111,11 +125,26 @@ def click(view, x: float, y: float) -> None:
 
 
 def balloon_menu_items(window):
-    """「吹き出し」メニューの項目（区切り線を除く）。"""
+    """フキダシメニューの項目（区切り線を除く）。
+
+    **名前でも `window.balloon_menu` でも探さない。中身で探す。**
+    メニューバーを辿り、「種類を変える項目」を含むメニューを見つける。
+
+    - **名前で探さない。** 呼び名を変えるたびに「見つかりません」で落ち、
+      **呼び名の変更なのかメニューが消えたのか区別できない**
+    - **`window.balloon_menu` は使わない。** その参照は C++ 側の実体が
+      既に消えていることがある（2026-08-04、6件がこれで落ちた。
+      アプリ側に同じ危うさがあるかは別途）
+
+    目印に「種類を変える項目」を使うのは、道具の項目だと**道具メニューにも
+    同じものが並んでいる**ため。こちらはフキダシメニューにしか無い。
+    """
+    marker = window.balloon_actions[0]
     for action in window.menuBar().actions():
-        if action.text().startswith("吹き出し"):
-            return [a for a in action.menu().actions() if not a.isSeparator()]
-    raise AssertionError("吹き出しメニューが見つかりません")
+        menu = action.menu()
+        if menu is not None and marker in menu.actions():
+            return [a for a in menu.actions() if not a.isSeparator()]
+    raise AssertionError("フキダシメニューが見つかりません")
 
 
 class TestBalloonMenu:
@@ -211,7 +240,9 @@ class TestAdd:
         assert len(window_with_panel.state.page.floating) == 1
 
     def test_履歴に積まれる(self, window_with_balloon):
-        assert window_with_balloon.state.history.undo_label == "吹き出しの追加"
+        # Undo の表示は画面に出る文字なので、ここは決め打ちのままにする。
+        # 呼び名を変えたらこのテストが落ちるのが正しい（→ 冒頭の説明）
+        assert window_with_balloon.state.history.undo_label == "フキダシの追加"
         window_with_balloon.state.undo()
         assert window_with_balloon.state.page.floating == []
 

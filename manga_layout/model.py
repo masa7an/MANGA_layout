@@ -1060,7 +1060,7 @@ class Project:
                     continue
                 if obj.attached_balloon_id not in balloon_ids:
                     self.load_warnings.append(
-                        f"{obj.id} が存在しない吹き出し {obj.attached_balloon_id} を"
+                        f"{obj.id} が存在しないフキダシ {obj.attached_balloon_id} を"
                         "指していたため、紐づけを外しました"
                     )
                     obj.attached_balloon_id = None

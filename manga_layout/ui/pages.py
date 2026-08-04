@@ -521,7 +521,7 @@ class PageSizeDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         note = QLabel(
-            "大きさを変えても、置いてあるコマや吹き出しは動きません。\n"
+            "大きさを変えても、置いてあるコマやフキダシは動きません。\n"
             "小さくすると用紙からはみ出すことがあります。",
             self,
         )

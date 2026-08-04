@@ -460,7 +460,7 @@ class EditorState(QObject):
         attached = attach_target(page, rect)
         tip = default_tail_tip(rect)
 
-        with self.edit("吹き出しの追加") as project:
+        with self.edit("フキダシの追加") as project:
             balloon = project.add_balloon(
                 project.pages[self._page_index], rect, style, attached
             )
@@ -560,7 +560,7 @@ class EditorState(QObject):
         return scope()
 
     def set_balloon_style(self, balloon_id: str, style: str) -> None:
-        with self._edit_balloon(balloon_id, "吹き出しの種類変更") as balloon:
+        with self._edit_balloon(balloon_id, "フキダシの種類変更") as balloon:
             balloon.style = style
 
     def set_tail_tip(self, balloon_id: str, tip: tuple[float, float]) -> None:

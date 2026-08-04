@@ -347,7 +347,7 @@ class MainWindow(QMainWindow):
         image_menu.addSeparator()
         image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
 
-        balloon_menu = self.menuBar().addMenu("吹き出し(&B)")
+        balloon_menu = self.menuBar().addMenu("フキダシ(&B)")
         # 右クリックのメニューが項目を写して使う（→ `_copy_actions`）
         self.balloon_menu = balloon_menu
         # まず「作る」を置く。これが無いと、吹き出しを1つも選んでいない間は
@@ -710,7 +710,7 @@ class MainWindow(QMainWindow):
         if text is not None:
             font = text.font
             weight = " 太字" if font.bold else ""
-            tied = "吹き出しに紐づけ" if text.attached_balloon_id else "紐づけなし"
+            tied = "フキダシに紐づけ" if text.attached_balloon_id else "紐づけなし"
             lines = text.content.count("\n") + 1 if text.content else 0
             body = f"{lines} 行" if lines else "（未入力）"
             lay = "縦書き" if text.direction == "vertical" else "横書き"
@@ -724,7 +724,7 @@ class MainWindow(QMainWindow):
             r = balloon.rect
             kind = BALLOON_STYLE_LABELS.get(balloon.style, balloon.style)
             tied = "コマに紐づけ" if balloon.attached_panel_id else "紐づけなし"
-            return f"吹き出しを選択中: {kind} / {r.w:.0f} × {r.h:.0f} px / {tied}"
+            return f"フキダシを選択中: {kind} / {r.w:.0f} × {r.h:.0f} px / {tied}"
 
         panel = self.state.selected_panel
         if panel is not None:
@@ -761,7 +761,7 @@ class MainWindow(QMainWindow):
         if self.state.selected_text is not None:
             return "セリフ", self.delete_text
         if self.state.selected_balloon is not None:
-            return "吹き出し", self.delete_balloon
+            return "フキダシ", self.delete_balloon
         if self.state.selected_panel is not None:
             return "コマ", self.delete_panel
         return None
@@ -773,15 +773,15 @@ class MainWindow(QMainWindow):
             target[1]()
 
     def delete_balloon(self) -> None:
-        """吹き出しを消す。上に乗っていたセリフは残り、紐づけだけ外れる。"""
+        """フキダシを消す。上に乗っていたセリフは残り、紐づけだけ外れる。"""
         balloon = self.state.selected_balloon
         if balloon is None:
             return
         balloon_id = balloon.id
-        with self.state.edit("吹き出しの削除") as project:
+        with self.state.edit("フキダシの削除") as project:
             project.pages[self.state.page_index].remove_floating(balloon_id)
         self.state.select(None)
-        self.state.message.emit("吹き出しを削除しました")
+        self.state.message.emit("フキダシを削除しました")
 
     def delete_panel(self) -> None:
         panel = self.state.selected_panel
@@ -1155,7 +1155,7 @@ class MainWindow(QMainWindow):
 
         page = self.state.page
         count = len(page.panels) + len(page.floating)
-        placed = f"コマ・吹き出し・セリフが {count} 個置かれています。\n" if count else ""
+        placed = f"コマ・フキダシ・セリフが {count} 個置かれています。\n" if count else ""
         answer = QMessageBox.question(
             self,
             "ページを削除しますか",

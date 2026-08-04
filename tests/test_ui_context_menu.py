@@ -179,7 +179,7 @@ class TestContents:
         # コマの上に重ねてコマを作る道は用意しない（割るほうが素直）
         assert "ここにコマを追加" not in found
 
-    def test_吹き出しの品書き(self, window_with_panel):
+    def test_フキダシの品書き(self, window_with_panel):
         window_with_panel.state.add_balloon(Rect(200.0, 200.0, 300.0, 200.0))
         window_with_panel.state.select(None)
 
@@ -188,7 +188,7 @@ class TestContents:
         assert f"{JAGGED}にする" in found
         assert "しっぽを消す" in found
         assert "ここにセリフを追加" in found
-        assert "吹き出しを削除" in found
+        assert "フキダシを削除" in found
 
     def test_セリフの品書き(self, window_with_panel):
         window_with_panel.state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
@@ -315,7 +315,7 @@ class TestActions:
         state.select(None)
 
         menu = right_click(window_with_panel, 300.0, 300.0)
-        find(menu, "吹き出しを削除").trigger()
+        find(menu, "フキダシを削除").trigger()
 
         assert [f for f in state.page.floating if isinstance(f, BalloonObject)] == []
         # コマは残る
@@ -341,7 +341,7 @@ class TestDeleteTarget:
         state.add_balloon(Rect(200.0, 200.0, 300.0, 200.0))
         state.select(None)
         right_click(window_with_panel, 300.0, 300.0)
-        assert action.text() == "吹き出しを削除"
+        assert action.text() == "フキダシを削除"
 
         state.add_text(Rect(250.0, 250.0, 200.0, 150.0), "セリフ")
         state.select(None)
@@ -360,7 +360,7 @@ class TestDeleteTarget:
         state.select(None)
         right_click(window_with_panel, 300.0, 300.0)
 
-        assert window_with_panel.delete_action.text() == "吹き出しを削除"
+        assert window_with_panel.delete_action.text() == "フキダシを削除"
         window_with_panel.delete_selected()
 
         assert [f for f in state.page.floating if isinstance(f, BalloonObject)] == []

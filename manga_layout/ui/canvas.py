@@ -1262,7 +1262,7 @@ class PageView(QGraphicsView):
 
         where = "コマに紐づけました" if balloon.attached_panel_id else "コマの外です"
         self.state.message.emit(
-            f"吹き出しを追加しました（{where}）。丸い印を引くとしっぽの向きが変わります"
+            f"フキダシを追加しました（{where}）。丸い印を引くとしっぽの向きが変わります"
         )
 
     def _apply_create_text(self, rect: Rect, press: tuple[float, float]) -> None:
@@ -1346,7 +1346,7 @@ class PageView(QGraphicsView):
             # 指すページ座標なので、吹き出しの置き場所を変えても
             # 指す相手は変わらない（要件定義 4章）。
             # 上に乗ったセリフは一緒に動く
-            with self.state.edit("吹き出しの移動") as project:
+            with self.state.edit("フキダシの移動") as project:
                 project.pages[self.state.page_index].move_balloon(object_id, dx, dy)
             return
 
@@ -1383,7 +1383,7 @@ class PageView(QGraphicsView):
             if balloon.rect == rect:
                 return
             balloon_id = balloon.id
-            with self.state.edit("吹き出しの大きさ変更") as project:
+            with self.state.edit("フキダシの大きさ変更") as project:
                 target = project.pages[self.state.page_index].find(balloon_id)
                 if isinstance(target, BalloonObject):
                     target.rect = rect
