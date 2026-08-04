@@ -46,6 +46,8 @@ from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .saving import SaveAsDialog, default_parent
 from .state import (
     BALLOON_STYLE_LABELS,
+    STICKER_KIND_LABELS,
+    STICKER_TOOLS,
     TOOL_BALLOON,
     TOOL_BALLOON_JAGGED,
     TOOL_BALLOON_WAVY,
@@ -55,6 +57,8 @@ from .state import (
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
+    TOOL_STICKER_EXCLAIM,
+    TOOL_STICKER_EXCLAIM_QUESTION,
     TOOL_TEXT,
     EditorState,
 )
@@ -214,6 +218,9 @@ class MainWindow(QMainWindow):
         """
         group = QActionGroup(self)
         group.setExclusive(True)
+        # ショートカットが None の道具もある。**1文字キーを全部の道具に
+        # 割り当てない。** 覚えられる数を超えると、余ったキーが誤爆の元に
+        # なるだけになる。よく使うほうにだけ付ける（→ 6.14）
         for tool, shortcut in (
             (TOOL_SELECT, "V"),
             (TOOL_PANEL, "P"),
@@ -223,16 +230,43 @@ class MainWindow(QMainWindow):
             (TOOL_BALLOON, "B"),
             (TOOL_BALLOON_JAGGED, "G"),
             (TOOL_BALLOON_WAVY, "W"),
+            (TOOL_STICKER_EXCLAIM, "M"),
+            (TOOL_STICKER_EXCLAIM_QUESTION, None),
             (TOOL_TEXT, "T"),
         ):
-            action = QAction(f"{TOOL_LABELS[tool]} ({shortcut})", self)
+            label = TOOL_LABELS[tool]
+            action = QAction(f"{label} ({shortcut})" if shortcut else label, self)
             action.setCheckable(True)
-            action.setShortcut(QKeySequence(shortcut))
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
             action.triggered.connect(lambda _checked=False, t=tool: self.state.set_tool(t))
             group.addAction(action)
             self.addAction(action)
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
+
+    def _build_sticker_menu(self) -> None:
+        """マークのメニュー（要件定義 6.14）。
+
+        アクセスキーは `&K`。`&M` はコマのメニューが使っている。
+
+        先頭に「作る」を置くのは、フキダシ・セリフと同じ理由（1つも
+        選んでいない間にメニュー全体がグレーにならないようにする）。
+        """
+        menu = self.menuBar().addMenu("マーク(&K)")
+        # 右クリックのメニューが項目を写して使う（→ `_copy_actions`）
+        self.sticker_menu = menu
+        for tool in STICKER_TOOLS:
+            menu.addAction(self._tool_actions[tool])
+        menu.addSeparator()
+
+        # ここから下は選択中のマークに対する操作
+        self.sticker_actions: list[QAction] = []
+        self.sticker_attach_action = self._act(
+            "コマへの紐づけを解除", self.toggle_sticker_attachment
+        )
+        menu.addAction(self.sticker_attach_action)
+        self.sticker_actions.append(self.sticker_attach_action)
 
     def _build_text_menu(self) -> None:
         """セリフのメニュー。
@@ -387,6 +421,7 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.attach_action)
         self.balloon_actions.append(self.attach_action)
 
+        self._build_sticker_menu()
         self._build_text_menu()
 
         tool_menu = self.menuBar().addMenu("道具(&T)")
@@ -499,10 +534,15 @@ class MainWindow(QMainWindow):
         if state.selected_text is not None:
             self._copy_actions(menu, self.text_menu)
 
+        elif state.selected_sticker is not None:
+            self._copy_actions(menu, self.sticker_menu)
+            menu.addSeparator()
+            self._add_place_here(menu, x, y, ("text",))
+
         elif state.selected_balloon is not None:
             self._copy_actions(menu, self.balloon_menu)
             menu.addSeparator()
-            self._add_place_here(menu, x, y, ("text",))
+            self._add_place_here(menu, x, y, ("sticker", "text"))
 
         elif state.selected_image is not None:
             menu.addAction(self.fit_action)
@@ -511,7 +551,7 @@ class MainWindow(QMainWindow):
             self._add_split_here(menu, x, y)
             menu.addAction(self.slant_flip_action)
             menu.addSeparator()
-            self._add_place_here(menu, x, y, ("balloon", "text"))
+            self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()
             menu.addAction(self.paste_action)
             menu.addAction(self.open_image_action)
@@ -520,7 +560,7 @@ class MainWindow(QMainWindow):
         else:
             # 何も無いところ。選択に効く項目はどれも使えないので出さない。
             # 代わりに、ここでしか呼べない「元に戻す」を添える
-            self._add_place_here(menu, x, y, ("panel", "balloon", "text"))
+            self._add_place_here(menu, x, y, ("panel", "balloon", "sticker", "text"))
             menu.addAction(self.full_page_action)
             menu.addSeparator()
             menu.addAction(self.undo_action)
@@ -569,6 +609,14 @@ class MainWindow(QMainWindow):
                     lambda _=False, s=style: self.view.add_balloon_at(x, y, s),
                 )
                 for style, name in BALLOON_STYLE_LABELS.items()
+            ),
+            *(
+                (
+                    "sticker",
+                    f"ここに{name}を追加",
+                    lambda _=False, k=kind: self.view.add_sticker_at(x, y, k),
+                )
+                for kind, name in STICKER_KIND_LABELS.items()
             ),
             ("text", "ここにセリフを追加", lambda: self.view.add_text_at(x, y)),
         )
@@ -694,6 +742,16 @@ class MainWindow(QMainWindow):
                 else "重なっているコマに紐づける"
             )
 
+        sticker = self.state.selected_sticker
+        for action in self.sticker_actions:
+            action.setEnabled(sticker is not None)
+        if sticker is not None:
+            self.sticker_attach_action.setText(
+                "コマへの紐づけを解除"
+                if sticker.attached_panel_id
+                else "重なっているコマに紐づける"
+            )
+
     def _hint(self) -> str:
         """いま何を選んでいるかを状態表示に出す。
 
@@ -717,6 +775,16 @@ class MainWindow(QMainWindow):
             return (
                 f"セリフを選択中: {body} / {font.family} {self._size_label(font.size_px)}{weight}"
                 f" / {lay} / {align_label(text.align, text.direction)} / {tied}"
+            )
+
+        sticker = self.state.selected_sticker
+        if sticker is not None:
+            r = sticker.rect
+            w, h = sticker.src_px
+            tied = "コマに紐づけ" if sticker.attached_panel_id else "紐づけなし"
+            return (
+                f"{self._sticker_label(sticker)}を選択中: "
+                f"{r.w:.0f} × {r.h:.0f} px（元 {w}×{h} px）/ {tied}"
             )
 
         balloon = self.state.selected_balloon
@@ -760,6 +828,8 @@ class MainWindow(QMainWindow):
             return "画像", self.delete_image
         if self.state.selected_text is not None:
             return "セリフ", self.delete_text
+        if self.state.selected_sticker is not None:
+            return self._sticker_label(self.state.selected_sticker), self.delete_sticker
         if self.state.selected_balloon is not None:
             return "フキダシ", self.delete_balloon
         if self.state.selected_panel is not None:
@@ -782,6 +852,48 @@ class MainWindow(QMainWindow):
             project.pages[self.state.page_index].remove_floating(balloon_id)
         self.state.select(None)
         self.state.message.emit("フキダシを削除しました")
+
+    @staticmethod
+    def _sticker_label(sticker) -> str:
+        """マークの呼び名。**表に無い `kind` も来る**（→ 5章）。
+
+        素材が増えたあとの作品を古いアプリで開くと、知らない値が入る。
+        そのときは種類を言わず「マーク」とだけ呼ぶ。
+        """
+        return STICKER_KIND_LABELS.get(sticker.kind, "マーク")
+
+    def delete_sticker(self) -> None:
+        """マークを消す。紐づいていたコマはそのまま残る。"""
+        sticker = self.state.selected_sticker
+        if sticker is None:
+            return
+        label = self._sticker_label(sticker)
+        sticker_id = sticker.id
+        with self.state.edit(f"{label}の削除") as project:
+            project.pages[self.state.page_index].remove_floating(sticker_id)
+        self.state.select(None)
+        self.state.message.emit(f"{label}を削除しました")
+
+    def toggle_sticker_attachment(self) -> None:
+        """マークのコマへの紐づけを付け外しする。
+
+        フキダシと同じ扱い（→ `toggle_attachment`）。紐づけておくと、
+        コマを動かしたときにマークが付いて回る。
+        """
+        sticker = self.state.selected_sticker
+        if sticker is None:
+            return
+        if sticker.attached_panel_id is not None:
+            self.state.set_sticker_attachment(sticker.id, None)
+            self.state.message.emit("コマへの紐づけを解除しました")
+            return
+
+        panel_id = attach_target(self.state.page, sticker.rect)
+        if panel_id is None:
+            self.state.message.emit("重なっているコマがありません")
+            return
+        self.state.set_sticker_attachment(sticker.id, panel_id)
+        self.state.message.emit("コマに紐づけました")
 
     def delete_panel(self) -> None:
         panel = self.state.selected_panel

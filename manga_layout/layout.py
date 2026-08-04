@@ -26,6 +26,7 @@ from .model import (
     Project,
     SceneObject,
     SlantPair,
+    StickerObject,
     TextObject,
 )
 
@@ -1016,6 +1017,49 @@ def balloon_at(page: Page, x: float, y: float) -> BalloonObject | None:
     return None
 
 
+# 置いた直後のマークの長辺（px）。**素材の原寸に近い値にしてある。**
+#
+# 組み込み素材は長辺 240〜297px（余白を削ったあと）。ここを大きく取ると
+# 置いた瞬間から拡大されて輪郭がぼけ、小さく取ると「大きな！」として
+# 置き直す手数が毎回かかる。A4（1240×1754px）の幅の 2 割弱にあたる
+STICKER_DEFAULT_LONG_PX = 240.0
+
+
+def default_sticker_rect(
+    page: Page, x: float, y: float, src_px: tuple[int, int]
+) -> Rect:
+    """クリックした位置に置く、既定の大きさのマーク。用紙の中へ収める。
+
+    **縦横比は必ず保つ。** 画像なので、比を崩すと記号の形が壊れる。
+    """
+    aspect = aspect_of(src_px)
+    if aspect <= 0.0:
+        w = h = STICKER_DEFAULT_LONG_PX
+    elif aspect >= 1.0:
+        w, h = STICKER_DEFAULT_LONG_PX, STICKER_DEFAULT_LONG_PX / aspect
+    else:
+        w, h = STICKER_DEFAULT_LONG_PX * aspect, STICKER_DEFAULT_LONG_PX
+
+    w, h = min(w, page.size.w), min(h, page.size.h)
+    left = min(max(x - w / 2.0, 0.0), max(page.size.w - w, 0.0))
+    top = min(max(y - h / 2.0, 0.0), max(page.size.h - h, 0.0))
+    return Rect(left, top, w, h)
+
+
+def sticker_at(page: Page, x: float, y: float) -> StickerObject | None:
+    """その位置にあるマーク。重なっていれば手前のものを返す。
+
+    **矩形で判定する。** 素材は透明な余白を削ってあるので、記号と矩形の
+    ずれは傾いた記号の四隅くらいしか残らない。透明度を見る判定は、
+    掴みにくさが実際に出てから入れる（要件定義 6.14）。
+    """
+    stickers = [f for f in page.floating if isinstance(f, StickerObject)]
+    for sticker in sorted(stickers, key=lambda s: s.z, reverse=True):
+        if sticker.rect.contains(x, y):
+            return sticker
+    return None
+
+
 def text_at(page: Page, x: float, y: float) -> TextObject | None:
     """その位置にあるセリフ。重なっていれば手前のものを返す。
 
@@ -1030,10 +1074,10 @@ def text_at(page: Page, x: float, y: float) -> TextObject | None:
 
 
 def attach_target(page: Page, rect: Rect) -> str | None:
-    """その吹き出しを紐づけるコマの id。重なっていなければ None。
+    """それを紐づけるコマの id。重なっていなければ None。
 
     中心が乗っているコマを選ぶ。作成時に自動で紐づけるのに使う
-    （要件定義 6.4）。
+    （吹き出し → 6.4、マーク → 6.14）。
     """
     cx, cy = rect.center
     panel = panel_at(page, cx, cy)
@@ -1047,7 +1091,7 @@ def full_page_rect(page: Page, settings: LayoutSettings = DEFAULT_SETTINGS) -> R
 
 
 def outside_page(page: Page) -> list[SceneObject]:
-    """用紙からはみ出しているコマ・吹き出し・セリフ。
+    """用紙からはみ出しているコマ・吹き出し・マーク・セリフ。
 
     ページの大きさを変えたあとに数えて知らせるためのもの（要件定義 6.1）。
     小さい用紙に変えると、それまで紙の上にあったものが黙って外へ出る。

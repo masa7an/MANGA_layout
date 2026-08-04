@@ -1,12 +1,12 @@
 """1ページぶんの絵を描く処理。
 
 画面（`PageScene`）とページ一覧のサムネイルが**同じ経路**を通るようにするため、
-用紙・コマ・画像・吹き出し・セリフの描画をここへ集めてある。分けて書くと、
-片方だけ直したときにサムネイルと本画面が食い違い、しかも気づきにくい。
+用紙・コマ・画像・吹き出し・マーク・セリフの描画をここへ集めてある。分けて
+書くと、片方だけ直したときにサムネイルと本画面が食い違い、しかも気づきにくい。
 
 重ねる順（奥から手前）は**種類で決まる**。z は同じ種類の中でしか効かない。
 
-    用紙 → コマ（と中の画像）→ 吹き出し → セリフ
+    用紙 → コマ（と中の画像）→ 吹き出し → マーク → セリフ
 
 段の定義は `model.floating_order` にある。詳しい理由はそちらに書いた。
 
@@ -34,6 +34,7 @@ from ..model import (
     ImageObject,
     Page,
     Panel,
+    StickerObject,
     TextObject,
     floating_order,
 )
@@ -283,7 +284,15 @@ class PageRenderer:
             self._draw_image(painter, image)
         painter.restore()
 
-    def _draw_image(self, painter: QPainter, image: ImageObject) -> None:
+    def _draw_image(
+        self, painter: QPainter, image: ImageObject | StickerObject
+    ) -> None:
+        """1枚の画像を矩形いっぱいに描く。
+
+        マーク（→ 6.14）もここを通る。持っている項目が同じで、違うのは
+        切り抜かれるかどうか＝**呼ばれる場所**だけ。描き方を書き分けると、
+        透明度の扱いや欠けたときの目印が片方だけ古くなる。
+        """
         preview = self.images(image.asset)
         if preview is None:
             self._draw_missing(painter, image)
@@ -292,7 +301,9 @@ class PageRenderer:
         painter.drawImage(qrect(image.rect), preview.image)
         painter.setOpacity(1.0)
 
-    def _draw_missing(self, painter: QPainter, image: ImageObject) -> None:
+    def _draw_missing(
+        self, painter: QPainter, image: ImageObject | StickerObject
+    ) -> None:
         """実体が無い・壊れている画像の場所。
 
         何も描かないと、絵が消えたのか最初から無かったのか分からない。
@@ -315,11 +326,15 @@ class PageRenderer:
         """ページ直下のもの。**段が先、z が後**（`model.floating_order`）。
 
         セリフは常に吹き出しより手前。z だけで重ねると、セリフを書いた
-        あとに載せた吹き出しが文字を塗り潰してしまう。
+        あとに載せた吹き出しが文字を塗り潰してしまう。マークはその間で、
+        吹き出しの上・セリフの下（要件定義 6.14）。
         """
         for obj in sorted(page.floating, key=floating_order):
             if isinstance(obj, BalloonObject):
                 self._draw_balloon(painter, obj, preview)
+            elif isinstance(obj, StickerObject):
+                # 切り抜かない。コマからはみ出して置くためのもの
+                self._draw_image(painter, obj)
             elif isinstance(obj, TextObject):
                 self._draw_text(painter, obj, preview)
 

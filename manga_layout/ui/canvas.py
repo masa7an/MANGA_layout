@@ -61,10 +61,18 @@ from ..layout import (
     snap_point,
     split_panel,
     split_panel_slant,
+    sticker_at,
     tail_root_point,
     text_at,
 )
-from ..model import SLANT_RIGHT, BalloonObject, ImageObject, Panel, TextObject
+from ..model import (
+    SLANT_RIGHT,
+    BalloonObject,
+    ImageObject,
+    Panel,
+    StickerObject,
+    TextObject,
+)
 from .render import (
     TEXT_ALIGN_FLAGS,
     DragPreview,
@@ -77,6 +85,8 @@ from .render import (
 from .state import (
     BALLOON_TOOLS,
     DEFAULT_TEXT_SIZE,
+    STICKER_KIND_LABELS,
+    STICKER_TOOLS,
     TOOL_PANEL,
     TOOL_SELECT,
     TOOL_SPLIT_H,
@@ -96,6 +106,9 @@ ACCENT = QColor("#1E88E5")
 IMAGE_ACCENT = QColor("#FB8C00")
 # 吹き出しを選んでいるときの色。コマ（青）・画像（橙）と重ならない色にする
 BALLOON_ACCENT = QColor("#8E24AA")
+# マークを選んでいるときの色。上の3色（青・橙・紫）と重ならない色にする。
+# マークは吹き出しに重ねて置くので、吹き出しの紫と見分けが付くことが要る
+STICKER_ACCENT = QColor("#00897B")
 
 # 画面上での大きさ（画面ピクセル）。表示倍率で割ってシーンの px に直して使う
 HANDLE_PX = 9.0
@@ -252,6 +265,8 @@ class PageScene(QGraphicsScene):
             return IMAGE_ACCENT
         if self.state.selected_balloon is not None:
             return BALLOON_ACCENT
+        if self.state.selected_sticker is not None:
+            return STICKER_ACCENT
         return ACCENT
 
     def _draw_tail_handle(
@@ -718,10 +733,16 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        # 吹き出しとセリフはコマの上に置くものなので、下に何があっても作れる。
-        # コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で作れない
-        if tool in BALLOON_TOOLS or tool == TOOL_TEXT:
-            self._mode = "create_balloon" if tool in BALLOON_TOOLS else "create_text"
+        # 吹き出し・マーク・セリフはコマの上に置くものなので、下に何があっても
+        # 作れる。コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で
+        # 作れない
+        if tool in BALLOON_TOOLS or tool in STICKER_TOOLS or tool == TOOL_TEXT:
+            if tool in BALLOON_TOOLS:
+                self._mode = "create_balloon"
+            elif tool in STICKER_TOOLS:
+                self._mode = "create_sticker"
+            else:
+                self._mode = "create_text"
             self._grab = (x, y)
             self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
             event.accept()
@@ -729,6 +750,7 @@ class PageView(QGraphicsView):
 
         handle = self._handle_at_point(x, y)
         text = text_at(self.state.page, x, y)
+        sticker = sticker_at(self.state.page, x, y)
         balloon = balloon_at(self.state.page, x, y)
         hit = panel_at(self.state.page, x, y)
 
@@ -739,6 +761,7 @@ class PageView(QGraphicsView):
             and handle is None
             and hit is None
             and balloon is None
+            and sticker is None
             and text is None
         ):
             self._mode = "create"
@@ -809,9 +832,10 @@ class PageView(QGraphicsView):
     def _pick_at(self, x: float, y: float) -> str | None:
         """その位置で選ぶものの id。何も無ければ None。
 
-        **手前にあるものから順に見る。** セリフは吹き出しの上に、
-        吹き出しはコマの上に乗せるものなので、この順で拾わないと
-        「文字を掴んだつもりで吹き出しが動く」ことになる。
+        **手前にあるものから順に見る。** セリフはマークの上に、マークは
+        吹き出しの上に、吹き出しはコマの上に乗せるものなので、この順で
+        拾わないと「文字を掴んだつもりで吹き出しが動く」ことになる。
+        並び順の出所は `model.floating_order`（描く順と同じ）。
 
         **左クリックと右クリックで同じ判定を使う。** 別々に書くと、
         右クリックで選ばれるものと、そのまま引いたときに動くものが
@@ -820,6 +844,10 @@ class PageView(QGraphicsView):
         text = text_at(self.state.page, x, y)
         if text is not None:
             return text.id
+
+        sticker = sticker_at(self.state.page, x, y)
+        if sticker is not None:
+            return sticker.id
 
         balloon = balloon_at(self.state.page, x, y)
         if balloon is not None:
@@ -1031,7 +1059,7 @@ class PageView(QGraphicsView):
             xs, ys = self._candidates(None)
             self._scene.preview_rect = snap_moved_rect(rect.normalized(), xs, ys, threshold)
 
-        elif self._mode in ("create_balloon", "create_text"):
+        elif self._mode in ("create_balloon", "create_sticker", "create_text"):
             rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
             self._scene.preview_rect = rect.normalized()
 
@@ -1112,6 +1140,8 @@ class PageView(QGraphicsView):
                 self._apply_create(preview, press)
             elif mode == "create_balloon":
                 self._apply_create_balloon(preview, press)
+            elif mode == "create_sticker":
+                self._apply_create_sticker(preview, press)
             elif mode == "create_text":
                 self._apply_create_text(preview, press)
             elif mode == "move" and origin is not None:
@@ -1152,11 +1182,18 @@ class PageView(QGraphicsView):
         return bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
 
     def _locked_aspect(self, event) -> float:
-        """Shift を押しながら画像をリサイズしているときの縦横比。
+        """リサイズ中に保つ縦横比。縛らないなら 0（自由に伸縮）。
 
-        画像以外、または Shift を押していなければ 0（自由に伸縮）。
-        コマは絵ではないので、等比に縛る意味がない。
+        コマの中の画像は **Shift を押している間だけ**（→ 6.3）。コマは絵では
+        ないので、等比に縛る意味がない。
+
+        マークは**常に保つ**（→ 6.14）。記号そのものなので、比を崩すと形が
+        壊れるだけで使い道がない。Shift で外せる余地も作らない。
         """
+        sticker = self.state.selected_sticker
+        if sticker is not None:
+            return aspect_of(sticker.src_px)
+
         image = self.state.selected_image
         if image is None or not self._shift_held(event):
             return 0.0
@@ -1165,7 +1202,11 @@ class PageView(QGraphicsView):
     def _update_cursor(self, x: float, y: float) -> None:
         handle = self._handle_at_point(x, y)
         image = self.state.selected_image
-        if self.state.tool in BALLOON_TOOLS or self.state.tool == TOOL_TEXT:
+        if (
+            self.state.tool in BALLOON_TOOLS
+            or self.state.tool in STICKER_TOOLS
+            or self.state.tool == TOOL_TEXT
+        ):
             # どこを押しても作れるので、常に十字
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
         elif text_at(self.state.page, x, y) is not None:
@@ -1182,6 +1223,8 @@ class PageView(QGraphicsView):
             # 角と辺のつまみより後に見る（先に見ると出る形が実際と食い違う）
             self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
         elif image is not None and image.rect.contains(x, y):
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+        elif sticker_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif balloon_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
@@ -1206,6 +1249,10 @@ class PageView(QGraphicsView):
     def add_balloon_at(self, x: float, y: float, style: str) -> None:
         """その位置に既定の大きさの吹き出しを1つ置く。"""
         self._apply_create_balloon(Rect(x, y, 0.0, 0.0), (x, y), style)
+
+    def add_sticker_at(self, x: float, y: float, kind: str) -> None:
+        """その位置に既定の大きさのマークを1つ置く。"""
+        self._apply_create_sticker(Rect(x, y, 0.0, 0.0), (x, y), kind)
 
     def add_text_at(self, x: float, y: float) -> None:
         """その位置にセリフを1つ置き、そのまま入力を始める。"""
@@ -1263,6 +1310,39 @@ class PageView(QGraphicsView):
         where = "コマに紐づけました" if balloon.attached_panel_id else "コマの外です"
         self.state.message.emit(
             f"フキダシを追加しました（{where}）。丸い印を引くとしっぽの向きが変わります"
+        )
+
+    def _apply_create_sticker(
+        self, rect: Rect, press: tuple[float, float], kind: str | None = None
+    ) -> None:
+        """マークを1つ置き、選択の道具に戻す（要件定義 6.14）。
+
+        コマ・フキダシと同じ「1回きり」の扱い（要件定義 6.9）。
+
+        囲った範囲は**そのままの形では使わない**。画像なので縦横比を保った
+        まま中へ収める（`state.add_sticker`）。範囲がドラッグと呼べない
+        大きさなら、クリックで置いたものとして既定の大きさにする。
+
+        `kind` を渡さなければ今の道具から決める。右クリックのメニューは
+        道具を持ち替えずに種類を指定するので、そこからは明示的に渡す。
+        """
+        if kind is None:
+            kind = STICKER_TOOLS.get(self.state.tool, "")
+        minimum = MIN_CREATE_PX / self.view_scale
+        box = None if rect.w < minimum or rect.h < minimum else rect
+
+        try:
+            sticker = self.state.add_sticker(kind, press[0], press[1], box)
+        except MangaLayoutError as e:
+            self.state.set_tool(TOOL_SELECT)
+            self.state.message.emit(str(e))
+            return
+        self.state.set_tool(TOOL_SELECT)
+
+        label = STICKER_KIND_LABELS.get(kind, "マーク")
+        where = "コマに紐づけました" if sticker.attached_panel_id else "コマの外です"
+        self.state.message.emit(
+            f"{label}を追加しました（{where}）。角を引くと大きさが変わります"
         )
 
     def _apply_create_text(self, rect: Rect, press: tuple[float, float]) -> None:
@@ -1341,6 +1421,13 @@ class PageView(QGraphicsView):
                     text.rect = text.rect.translated(dx, dy)
             return
 
+        if self.state.selected_sticker is not None:
+            with self.state.edit("マークの移動") as project:
+                sticker = project.pages[self.state.page_index].find(object_id)
+                if isinstance(sticker, StickerObject):
+                    sticker.rect = sticker.rect.translated(dx, dy)
+            return
+
         if self.state.selected_balloon is not None:
             # **しっぽの先端は動かさない。** 先端はしゃべっている人物を
             # 指すページ座標なので、吹き出しの置き場所を変えても
@@ -1374,6 +1461,18 @@ class PageView(QGraphicsView):
             with self.state.edit("セリフの大きさ変更") as project:
                 target = project.pages[self.state.page_index].find(text_id)
                 if isinstance(target, TextObject):
+                    target.rect = rect
+            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
+            return
+
+        sticker = self.state.selected_sticker
+        if sticker is not None:
+            if sticker.rect == rect:
+                return
+            sticker_id = sticker.id
+            with self.state.edit("マークの大きさ変更") as project:
+                target = project.pages[self.state.page_index].find(sticker_id)
+                if isinstance(target, StickerObject):
                     target.rect = rect
             self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return

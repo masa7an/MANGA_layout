@@ -24,6 +24,7 @@ from ..layout import (
     attach_target,
     balloon_at,
     contain_rect_in,
+    default_sticker_rect,
     default_tail_tip,
     flip_slant_pair,
     outside_page,
@@ -37,10 +38,12 @@ from ..model import (
     Project,
     SceneObject,
     SlantPair,
+    StickerObject,
     Tail,
     TextObject,
     new_project,
 )
+from ..stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION, read_sticker
 from ..storage import load_project, save_project
 
 # 道具（ツール）
@@ -53,12 +56,31 @@ TOOL_BALLOON = "balloon"
 TOOL_BALLOON_JAGGED = "balloon_jagged"
 TOOL_BALLOON_WAVY = "balloon_wavy"
 TOOL_TEXT = "text"
+TOOL_STICKER_EXCLAIM = "sticker_exclaim"
+TOOL_STICKER_EXCLAIM_QUESTION = "sticker_exclaim_question"
 
 # どの道具がどの種類の吹き出しを作るか
 BALLOON_TOOLS = {
     TOOL_BALLOON: "ellipse",
     TOOL_BALLOON_JAGGED: "jagged",
     TOOL_BALLOON_WAVY: "wavy",
+}
+
+# どの道具がどの種類のマークを置くか（要件定義 6.14）
+STICKER_TOOLS = {
+    TOOL_STICKER_EXCLAIM: STICKER_EXCLAIM,
+    TOOL_STICKER_EXCLAIM_QUESTION: STICKER_EXCLAIM_QUESTION,
+}
+
+# マークの種類の呼び名。**フキダシと同じ形**（→ `BALLOON_STYLE_LABELS`）。
+# 左側は保存形式に書かれる `kind` なので変えない。
+#
+# **表に無い値も来る。** `kind` は選択肢を固定せずに読むので（→ 5章）、
+# 素材が増えたあとの作品を古いアプリで開くと知らない値が入る。
+# 引くときは必ず既定を添える（`STICKER_KIND_LABELS.get(kind, "マーク")`）
+STICKER_KIND_LABELS = {
+    STICKER_EXCLAIM: "ビックリマーク",
+    STICKER_EXCLAIM_QUESTION: "ビックリはてなマーク",
 }
 
 # 吹き出しの種類の呼び名。**道具・メニュー・状態表示・操作後の案内で共通に使う。**
@@ -86,6 +108,11 @@ TOOL_LABELS = {
     **{
         tool: f"{BALLOON_STYLE_LABELS[style]}を追加"
         for tool, style in BALLOON_TOOLS.items()
+    },
+    # マークも同じ理由で呼び名から作る
+    **{
+        tool: f"{STICKER_KIND_LABELS[kind]}を追加"
+        for tool, kind in STICKER_TOOLS.items()
     },
     TOOL_TEXT: "セリフを追加",
 }
@@ -187,6 +214,12 @@ class EditorState(QObject):
         return obj if isinstance(obj, BalloonObject) else None
 
     @property
+    def selected_sticker(self) -> StickerObject | None:
+        """選択中のマーク。"""
+        obj = self.selected_object
+        return obj if isinstance(obj, StickerObject) else None
+
+    @property
     def selected_text(self) -> TextObject | None:
         """選択中のセリフ。"""
         obj = self.selected_object
@@ -209,7 +242,7 @@ class EditorState(QObject):
         if isinstance(obj, Panel):
             pair = self.page.slant_pair_of(obj.id)
             return obj.shape.bounds() if pair is None else self.page.slant_bounds(pair)
-        if isinstance(obj, (ImageObject, BalloonObject, TextObject)):
+        if isinstance(obj, (ImageObject, BalloonObject, StickerObject, TextObject)):
             return obj.rect
         return None
 
@@ -469,6 +502,50 @@ class EditorState(QObject):
             )
         self.select(balloon.id)
         return balloon
+
+    # -- マーク ------------------------------------------------------------
+
+    def add_sticker(
+        self, kind: str, x: float, y: float, box: Rect | None = None
+    ) -> StickerObject:
+        """マークを1つ置く。置いたものを選択状態にする（要件定義 6.14）。
+
+        `box` はドラッグで囲った範囲。渡されたら**その中に縦横比を保って
+        収める**。渡さなければ (x, y) を中心に既定の大きさで置く。
+
+        重なっているコマに自動で紐づける（フキダシと同じ → 6.4）。
+        紐づけておくと、あとでコマを動かしたときに付いて回る。**切り抜かれ
+        ない**のはページ直下に置いているため。
+
+        素材は組み込みだが、**実体は既存の経路で `assets/` に入る**。
+        こうしておくと作品が自己完結し、あとで素材を差し替えても既にある
+        作品の見た目は変わらない。
+        """
+        ref, px = self.import_bytes(read_sticker(kind))
+        page = self.page
+        rect = (
+            contain_rect_in(box, px)
+            if box is not None and box.w > 0.0 and box.h > 0.0
+            else default_sticker_rect(page, x, y, px)
+        )
+        attached = attach_target(page, rect)
+
+        label = STICKER_KIND_LABELS.get(kind, "マーク")
+        with self.edit(f"{label}の追加") as project:
+            sticker = project.add_sticker(
+                project.pages[self._page_index], kind, ref, rect, px, attached
+            )
+        self.select(sticker.id)
+        return sticker
+
+    def set_sticker_attachment(self, sticker_id: str, panel_id: str | None) -> None:
+        """コマへの紐づけを付け替える。None で解除。"""
+        label = "コマへの紐づけ" if panel_id else "紐づけの解除"
+        with self.edit(label) as project:
+            target = project.pages[self._page_index].find(sticker_id)
+            if not isinstance(target, StickerObject):
+                raise KeyError(f"マークが見つかりません: {sticker_id}")
+            target.attached_panel_id = panel_id
 
     # -- セリフ ------------------------------------------------------------
 

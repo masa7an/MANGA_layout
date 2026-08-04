@@ -8,12 +8,13 @@
           │    └ Image[]           コマ枠で切り抜かれる
           └ Floating[]             ページ直下に置かれ、切り抜かれない
                ├ Balloon           吹き出し
+               ├ Sticker           マーク（！など。要件定義 6.14）
                └ Text              セリフ
 
 吹き出しをコマの「子」にしていないのが要点。漫画の吹き出しはコマ枠から
 はみ出すのが常態なので、子にすると切り抜きに巻き込まれて切られてしまう。
 代わりに `attached_panel_id` で紐づけ、**移動は追随するが切り抜かれない**
-という狙った挙動だけを取っている。
+という狙った挙動だけを取っている。マークも同じ理由でここに置く。
 
 保存形式との対応は 1 対 1 で、`to_dict()` / `from_dict()` を往復しても
 情報が落ちない。この性質が Undo/Redo（要件定義 6.8、スナップショット方式）
@@ -65,6 +66,7 @@ ID_PREFIX_PANEL = "panel"
 ID_PREFIX_IMAGE = "img"
 ID_PREFIX_BALLOON = "bal"
 ID_PREFIX_TEXT = "txt"
+ID_PREFIX_STICKER = "stk"
 
 _ID_RE = re.compile(r"^[a-z]+_(\d+)$")
 
@@ -430,10 +432,75 @@ class TextObject(SceneObject):
         )
 
 
+@dataclass
+class StickerObject(SceneObject):
+    """マーク（！など）。ページ直下に置かれ、コマ枠で切り抜かれない。
+
+    中身は画像なので `ImageObject` と同じ項目を持つ。**違うのは置き場所**で、
+    コマの子ではないため切り抜かれない。マークはコマからはみ出して置くのが
+    普通なので、切り抜かれる置き方では要求そのものを満たせない（要件定義 6.14）。
+
+    `rotation` は常に 0。**傾きは素材の PNG に焼き込む。** 回転を入れると
+    当たり判定・つまみ・吸着が一斉に矩形の前提を失うので、角度違いが要る
+    ときは素材を1枚足す。
+    """
+
+    # どの組み込み素材から作ったか。**描画には使わない**（描くのは `asset`）。
+    # 画面の呼び名を引くためだけに持つ
+    kind: str = ""
+    asset: str = ""
+    rect: Rect = field(default_factory=lambda: Rect(0.0, 0.0, 0.0, 0.0))
+    src_px: tuple[int, int] = (0, 0)
+    rotation: float = 0.0
+    opacity: float = 1.0
+    attached_panel_id: str | None = None
+
+    TYPE = "sticker"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "type": self.TYPE,
+            "kind": self.kind,
+            "asset": self.asset,
+            "rect": self.rect.to_dict(),
+            "src_px": [self.src_px[0], self.src_px[1]],
+            "rotation": self.rotation,
+            "opacity": self.opacity,
+            "attached_panel_id": self.attached_panel_id,
+            "z": self.z,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> "StickerObject":
+        d = v.req_mapping(data, where)
+        px = v.req_list(d.get("src_px", [0, 0]), f"{where}.src_px")
+        if len(px) != 2:
+            raise ProjectFormatError(f"{where}.src_px: [幅, 高さ] の 2 要素が必要です")
+        opacity = v.number(d, "opacity", where, 1.0)
+        if not 0.0 <= opacity <= 1.0:
+            raise ProjectFormatError(f"{where}.opacity: 0.0〜1.0 の範囲外です（{opacity}）")
+        return cls(
+            id=v.text(d, "id", where),
+            z=v.integer(d, "z", where, 0),
+            # **選択肢を固定しない。** 素材が増えたあとの作品を古いアプリで
+            # 開いたとき、知らない値で読み込みごと断るのは重すぎる。
+            # 呼び名の表に無い値は「マーク」と呼ぶだけにする（→ 5章）
+            kind=v.text(d, "kind", where, ""),
+            asset=v.text(d, "asset", where),
+            rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
+            src_px=(int(px[0]), int(px[1])),
+            rotation=v.number(d, "rotation", where, 0.0),
+            opacity=opacity,
+            attached_panel_id=v.opt_text(d, "attached_panel_id", where),
+        )
+
+
 # ページ直下に置けるもの。将来 EffectObject などを足すときはここに登録する
-FloatingObject = BalloonObject | TextObject
+FloatingObject = BalloonObject | StickerObject | TextObject
 _FLOATING_TYPES: dict[str, Any] = {
     BalloonObject.TYPE: BalloonObject,
+    StickerObject.TYPE: StickerObject,
     TextObject.TYPE: TextObject,
 }
 
@@ -456,32 +523,44 @@ def _floating_from_dict(data: Any, where: str) -> FloatingObject:
 
 # 重なりの順は**種類で決まる**。奥から手前へ
 #
-#     用紙 → コマ（と中の画像）→ 吹き出し → セリフ
+#     用紙 → コマ（と中の画像）→ 吹き出し → マーク → セリフ
 #
 # 用紙とコマは描く場所そのものが分かれているので、ここで段を持つのは
-# ページ直下のもの（吹き出し・セリフ）だけ。
+# ページ直下のもの（吹き出し・マーク・セリフ）だけ。
 #
 # **z ではこの順を覆せない。** 以前は z だけで重ねていたため、セリフを
 # 書いたあとに吹き出しを載せると、後から作った吹き出しのほうが z が大きく、
 # 白い塗りが文字を塗り潰して**セリフが消えた**。吹き出しは後から足すのが
 # 普通の手順なので、作った順で見た目が変わらないようにする。
 #
-# z は同じ段の中の前後（吹き出しどうし・セリフどうし）にだけ効く。
+# マークは吹き出しの上・**セリフの下**（要件定義 6.14）。上に置くと、
+# 位置を誤ったときにセリフが読めなくなる。上と同じ形の事故なので、
+# 段の順で最初から起こらないようにする。
+#
+# **段は保存しない。** 種類から毎回ここで求めるので、段を1つ増やしても
+# 既にある作品には影響しない。
+#
+# z は同じ段の中の前後（吹き出しどうし・マークどうし）にだけ効く。
 LAYER_BALLOON = 0
-LAYER_TEXT = 1
+LAYER_STICKER = 1
+LAYER_TEXT = 2
 
 
 def floating_layer(obj: FloatingObject) -> int:
     """そのものが載る段。大きいほど手前。"""
-    return LAYER_TEXT if isinstance(obj, TextObject) else LAYER_BALLOON
+    if isinstance(obj, TextObject):
+        return LAYER_TEXT
+    if isinstance(obj, StickerObject):
+        return LAYER_STICKER
+    return LAYER_BALLOON
 
 
 def floating_order(obj: FloatingObject) -> tuple[int, int]:
     """奥から手前へ並べるときの鍵。`sorted(page.floating, key=...)` に使う。
 
-    段が先、z が後。当たり判定（`layout.text_at` を `layout.balloon_at` より
-    先に見る）もこの順に合わせてある。描く順と拾う順がずれると、
-    見えているものを掴めなくなる。
+    段が先、z が後。当たり判定（`layout.text_at` → `layout.sticker_at` →
+    `layout.balloon_at` の順に見る）もこの順に合わせてある。描く順と拾う順が
+    ずれると、見えているものを掴めなくなる。
     """
     return (floating_layer(obj), obj.z)
 
@@ -594,7 +673,7 @@ class Page:
         return None
 
     def attached_to(self, panel_id: str) -> list[FloatingObject]:
-        """そのコマに紐づいた吹き出し・セリフ。"""
+        """そのコマに紐づいた吹き出し・マーク・セリフ。"""
         return [f for f in self.floating if f.attached_panel_id == panel_id]
 
     def slant_pair_of(self, panel_id: str) -> SlantPair | None:
@@ -691,7 +770,7 @@ class Page:
                     moved.add(text.id)
 
     def remove_floating(self, object_id: str) -> "FloatingObject":
-        """ページ直下のもの（吹き出し・セリフ）を消す。
+        """ページ直下のもの（吹き出し・マーク・セリフ）を消す。
 
         吹き出しを消しても、上に乗っていたセリフは消さず紐づけだけ外す。
         コマ削除と同じ考え方で、手のかかっているセリフを巻き添えにしない。
@@ -832,6 +911,27 @@ class Project:
         page.floating.append(balloon)
         return balloon
 
+    def add_sticker(
+        self,
+        page: Page,
+        kind: str,
+        asset: str,
+        rect: Rect,
+        src_px: tuple[int, int],
+        attached_panel_id: str | None = None,
+    ) -> StickerObject:
+        sticker = StickerObject(
+            id=self._new_id(ID_PREFIX_STICKER),
+            z=self._next_floating_z(page),
+            kind=kind,
+            asset=asset,
+            rect=rect,
+            src_px=src_px,
+            attached_panel_id=attached_panel_id,
+        )
+        page.floating.append(sticker)
+        return sticker
+
     def add_text(
         self, page: Page, content: str, rect: Rect, attached_panel_id: str | None = None
     ) -> TextObject:
@@ -879,9 +979,20 @@ class Project:
             if isinstance(obj, ImageObject):
                 yield obj
 
+    def iter_stickers(self) -> Iterator[StickerObject]:
+        for _, obj in self.iter_objects():
+            if isinstance(obj, StickerObject):
+                yield obj
+
     def referenced_assets(self) -> set[str]:
-        """どこかの画像が参照している assets/ のパス一覧。"""
-        return {img.asset for img in self.iter_images() if img.asset}
+        """どこかが参照している assets/ のパス一覧。
+
+        **マークも数える。** 数え漏らすと「未使用ファイルを整理」が
+        マークの実体を `_unused/` へ移し、次に開いたときに×印だけが残る。
+        """
+        used = {img.asset for img in self.iter_images() if img.asset}
+        used |= {s.asset for s in self.iter_stickers() if s.asset}
+        return used
 
     # -- 変換 --------------------------------------------------------------
 
