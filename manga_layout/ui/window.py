@@ -375,7 +375,7 @@ class MainWindow(QMainWindow):
         add("文字を入力...", self.edit_text, "F2")
         menu.addSeparator()
 
-        self.vertical_action = add("縦書き", self.toggle_vertical, "Ctrl+T")
+        self.vertical_action = add("縦書き", self.toggle_vertical, "F7")
         self.vertical_action.setCheckable(True)
         menu.addSeparator()
 
@@ -426,6 +426,11 @@ class MainWindow(QMainWindow):
         edit_menu = self.menuBar().addMenu("編集(&E)")
         self.undo_action = self._act("元に戻す", self.state.undo, "Ctrl+Z")
         self.redo_action = self._act("やり直す", self.state.redo, "Ctrl+Y")
+        # Ctrl+Shift+Z も「やり直す」に割り当てる。ソフトによって Ctrl+Y と
+        # Ctrl+Shift+Z のどちらが「やり直す」かが割れているため、両方通す
+        self.redo_action.setShortcuts(
+            [QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")]
+        )
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
         edit_menu.addSeparator()
