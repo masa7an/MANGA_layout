@@ -255,6 +255,31 @@ class TestSharedActions:
         menu = right_click(window_with_panel, 400.0, 300.0)
         assert window_with_panel.fit_action not in menu.actions()
 
+    def test_メニューバーを辿られても組める(self, window_with_panel):
+        """`QAction.menu()` を呼ばれた後でも右クリックのメニューが出ること。
+
+        PySide6 では `QAction.menu()` がその QMenu を呼び出し側の QAction に
+        引き取らせる。QAction を使い捨てにすると、片付いた時点で QMenu の
+        Python 側の参照が無効になる（→ `MainWindow._items_to_copy`）。
+        以前は写す元として QMenu そのものを持っていたため、これで
+        `RuntimeError: Internal C++ object already deleted` になった。
+        """
+        import gc
+
+        state = window_with_panel.state
+        state.add_balloon(Rect(200.0, 200.0, 300.0, 200.0))
+        state.select(None)
+
+        # 使い捨ての QAction からメニューを取る。テストや外部の道具が
+        # メニューバーを辿るときの典型的な書き方
+        for action in window_with_panel.menuBar().actions():
+            action.menu()
+        gc.collect()
+
+        found = labels(right_click(window_with_panel, 300.0, 300.0))
+        assert "しっぽを消す" in found
+        assert f"{JAGGED}にする" in found
+
 
 class TestActions:
     """メニューを押した結果。押した場所が効いていることを確かめる。"""
