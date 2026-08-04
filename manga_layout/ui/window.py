@@ -653,11 +653,11 @@ class MainWindow(QMainWindow):
         こちらは道具を持ち替えず、その場で置いて終わる。
         """
         items = (
-            ("panel", "ここにコマを追加", lambda: self.view.add_panel_at(x, y)),
+            ("panel", "ここに コマを追加", lambda: self.view.add_panel_at(x, y)),
             *(
                 (
                     "balloon",
-                    f"ここに{name}を追加",
+                    f"ここに {name}を追加",
                     lambda _=False, s=style: self.view.add_balloon_at(x, y, s),
                 )
                 for style, name in BALLOON_STYLE_LABELS.items()
@@ -665,12 +665,12 @@ class MainWindow(QMainWindow):
             *(
                 (
                     "sticker",
-                    f"ここに{name}を追加",
+                    f"ここに {name}を追加",
                     lambda _=False, k=kind: self.view.add_sticker_at(x, y, k),
                 )
                 for kind, name in STICKER_KIND_LABELS.items()
             ),
-            ("text", "ここにセリフを追加", lambda: self.view.add_text_at(x, y)),
+            ("text", "ここに セリフを追加", lambda: self.view.add_text_at(x, y)),
         )
         for kind, label, slot in items:
             if kind in kinds:
