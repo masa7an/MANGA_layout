@@ -532,6 +532,11 @@ class MainWindow(QMainWindow):
         決まらないため、道具に持ち替える形になっている）。
         """
         menu = QMenu(self)
+        # 区切り線が薄くて目立たないとの指摘（2026-08-05）を受けて明るくする。
+        # このメニューはここでしか作らないので、メニューバー側の見た目には響かない。
+        menu.setStyleSheet(
+            "QMenu::separator { height: 1px; background: #cccccc; margin: 4px 8px; }"
+        )
         state = self.state
 
         if state.selected_text is not None:
