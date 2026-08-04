@@ -407,6 +407,11 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.tail_action)
         self.balloon_actions.append(self.tail_action)
 
+        # 付け根を細かく選ぶ3つ（上端・中央・下端）は右クリックには出さない。
+        # 選択中の吹き出しだけでも右クリックのメニューは項目数が多く
+        # （実測13、3つ外しても10）、これ以上増やすと選びにくくなる
+        # （相談 2026-08-05）。「自動に戻す」は数え直しの起点として残す。
+        tail_root_position_actions: list[QAction] = []
         for label, ratio in (
             ("付け根を上端へ", -1.0),
             ("付け根を中央へ", 0.0),
@@ -416,13 +421,17 @@ class MainWindow(QMainWindow):
             action = self._act(label, lambda _=False, r=ratio: self.set_tail_root(r))
             balloon_menu.addAction(action)
             self.balloon_actions.append(action)
+            if ratio is not None:
+                tail_root_position_actions.append(action)
 
         self.attach_action = self._act("コマへの紐づけを解除", self.toggle_attachment)
         balloon_menu.addAction(self.attach_action)
         self.balloon_actions.append(self.attach_action)
 
         # 右クリックのメニューが写して使う（→ `_items_to_copy`）
-        self.balloon_copy_items = self._items_to_copy(balloon_menu)
+        self.balloon_copy_items = self._items_to_copy(
+            balloon_menu, extra_exclude=tuple(tail_root_position_actions)
+        )
 
         self._build_sticker_menu()
         self._build_text_menu()
@@ -579,7 +588,9 @@ class MainWindow(QMainWindow):
         menu.addAction(self.delete_action)
         return menu
 
-    def _items_to_copy(self, source: QMenu) -> list[QAction | None]:
+    def _items_to_copy(
+        self, source: QMenu, extra_exclude: tuple[QAction, ...] = ()
+    ) -> list[QAction | None]:
         """メニューバーのメニューから、右クリック側へ写す項目を控えておく。
 
         **QMenu も、そのメニューが持つ区切り線も持ち帰らない。**
@@ -604,8 +615,11 @@ class MainWindow(QMainWindow):
         **道具の切り替え（「フキダシを追加」など）は外す。** 右クリック側は
         押した場所が分かっているので「ここに〜」を別に出しており、道具に
         持ち替える項目まで並べると、同じことが2通り並ぶ。
+
+        `extra_exclude` は道具以外で個別に外したい項目（→ しっぽの
+        付け根を細かく選ぶ3項目、`_build_menus`）。
         """
-        tools = set(self._tool_actions.values())
+        tools = set(self._tool_actions.values()) | set(extra_exclude)
         items: list[QAction | None] = []
         for action in source.actions():
             if action in tools:
