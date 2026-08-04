@@ -263,6 +263,48 @@ class TestContents:
         )
 
 
+class TestStatusTips:
+    """カーソルを乗せた項目の説明（→ `_show_tips_in_status_bar`）。
+
+    名前から落とした「ここに」「を追加」はここで補っている。
+    **繋ぎ忘れても例外は出ず、黙って何も出なくなるだけ**なので、
+    画面を見ないと気づけない。テストで押さえておく。
+    """
+
+    def hover(self, window, menu, label):
+        """本番のカーソル移動と同じ経路（`hovered`）で項目を光らせる。"""
+        menu.show()
+        window.statusBar().clearMessage()
+        menu.setActiveAction(find(menu, label))
+        return window.statusBar().currentMessage()
+
+    def test_省略した前置きが説明に出る(self, window_with_panel):
+        menu = right_click(window_with_panel, *EMPTY)
+
+        message = self.hover(window_with_panel, menu, place_rest("セリフ"))
+
+        # 名前は短いまま、説明のほうが完全な文になる
+        assert message == place_first("セリフ")
+        menu.hide()
+
+    def test_1つめも同じ説明を持つ(self, window_with_panel):
+        """名前が既に完全な文でも、説明が空だと項目ごとに挙動が変わる。"""
+        menu = right_click(window_with_panel, *EMPTY)
+
+        message = self.hover(window_with_panel, menu, place_first("コマ"))
+
+        assert message == place_first("コマ")
+        menu.hide()
+
+    def test_閉じると説明は消える(self, window_with_panel):
+        menu = right_click(window_with_panel, *EMPTY)
+        self.hover(window_with_panel, menu, place_rest("セリフ"))
+
+        menu.hide()
+
+        assert window_with_panel.statusBar().currentMessage() == ""
+
+
 class TestSharedActions:
     """項目はメニューバーと同じ実体。作り直さない（→ `_context_menu`）。"""
 

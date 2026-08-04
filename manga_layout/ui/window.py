@@ -568,6 +568,7 @@ class MainWindow(QMainWindow):
         menu.setStyleSheet(
             "QMenu::separator { height: 1px; background: #cccccc; margin: 4px 8px; }"
         )
+        self._show_tips_in_status_bar(menu)
         state = self.state
 
         if state.selected_text is not None:
@@ -609,6 +610,23 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(self.delete_action)
         return menu
+
+    def _show_tips_in_status_bar(self, menu: QMenu) -> None:
+        """カーソルを乗せた項目の説明をステータスバーに出す。
+
+        **宛先はこのウィンドウだと明示する。** メニューバーから開いた
+        メニューには「呼び出し元のウィジェット」があり、Qt はそこへ説明を
+        送るのでステータスバーまで届く。右クリックのメニューには呼び出し元が
+        無いため、Qt は QMenu 自身へ送る。**説明は親へ伝わらないので、
+        そのままでは誰も受け取らない**（2026-08-05 に実測。メニューへ送ると
+        空、ウィンドウへ送ると出る）。
+
+        `hovered` はキーボードの上下でも鳴るので、マウスを使わない場合も
+        同じように出る。閉じたら消すのは、選び終わったあとに古い説明が
+        残らないようにするため。
+        """
+        menu.hovered.connect(lambda action: action.showStatusText(self))
+        menu.aboutToHide.connect(self.statusBar().clearMessage)
 
     def _items_to_copy(
         self, source: QMenu, extra_exclude: tuple[QAction, ...] = ()
@@ -702,7 +720,15 @@ class MainWindow(QMainWindow):
         for kind, name, slot in items:
             if kind not in kinds:
                 continue
-            self._menu_act(menu, place_here_label(name, first=shown == 0), slot)
+            self._menu_act(
+                menu,
+                place_here_label(name, first=shown == 0),
+                slot,
+                # 名前から落とした「ここに」「を追加」は、カーソルを乗せた
+                # 間だけステータスバーに出す。名前に戻すと縦に並んだときの
+                # 字数が増え、省略した意味が無くなる
+                tip=place_here_label(name, first=True),
+            )
             shown += 1
 
     def _add_delete_image_here(
@@ -745,13 +771,20 @@ class MainWindow(QMainWindow):
             )
 
     @staticmethod
-    def _menu_act(menu: QMenu, label: str, slot) -> QAction:
+    def _menu_act(menu: QMenu, label: str, slot, tip: str = "") -> QAction:
         """そのメニュー限りの項目。
 
         親をメニューにしてあるので、メニューを捨てれば一緒に消える。
         ウィンドウに持たせると、右クリックのたびに溜まっていく。
+
+        `tip` はカーソルを乗せた間だけステータスバーに出る説明
+        （メニューバー側の `_act` と同じ仕組み）。**名前を短く保ったまま
+        言葉を補いたいときに使う。** 名前のほうを長くすると、項目が
+        縦に並んだときに読む字数がそのまま増える。
         """
         action = QAction(label, menu)
+        if tip:
+            action.setStatusTip(tip)
         action.triggered.connect(slot)
         menu.addAction(action)
         return action
