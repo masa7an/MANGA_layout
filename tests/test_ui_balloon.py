@@ -21,6 +21,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 from manga_layout import Rect
@@ -60,6 +62,14 @@ def window_with_balloon(window_with_panel):
     """コマの中に吹き出しを1つ置いた状態。吹き出しが選ばれている。"""
     window_with_panel.state.add_balloon(Rect(180.0, 180.0, 240.0, 156.0))
     return window_with_panel
+
+
+@pytest.fixture
+def messages(window_with_balloon):
+    """状態表示に流れた文言を順に控える。"""
+    seen = []
+    window_with_balloon.state.message.connect(seen.append)
+    return seen
 
 
 def press(view, x: float, y: float) -> None:
@@ -603,6 +613,38 @@ class TestTailRoot:
 
         assert state.selected_balloon.tail.root_y == pytest.approx(1.0)
 
+    def test_先端の反対側までは動かない(self, window_with_balloon):
+        """離れるほどしっぽが針に痩せる（→ `TAIL_ROOT_MAX_GAP`）。
+
+        止めずに通すと、印だけ上へ飛んでしっぽは下から出たままになる。
+        """
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        rect = state.selected_balloon.rect
+        before = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        drag(view, before[0], before[1], before[0], rect.y)  # 上端まで
+
+        after = tail_root_point(state.selected_balloon, state.balloon_settings)
+        assert after[1] < before[1]  # 少しは上がる
+        assert after[1] > rect.center[1]  # が、先端の側に留まる
+
+    def test_止まった先の高さを知らせる(self, window_with_balloon, messages):
+        """言われた値を出すと、印が動いていないのに「上端」と名乗る。"""
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        rect = state.selected_balloon.rect
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+
+        drag(view, root[0], root[1], root[0], rect.y)
+
+        assert messages[-1].startswith("しっぽの付け根: ")
+        assert "上端" not in messages[-1]
+
     def test_履歴に1手だけ積む(self, window_with_balloon):
         from manga_layout.layout import tail_root_point
 
@@ -631,28 +673,114 @@ class TestTailRoot:
         assert state.selected_balloon.rect == rect
         assert state.selected_balloon.tail.tip == tip
 
-    @pytest.mark.parametrize(
-        "ratio,label", [(-1.0, "上端"), (0.0, "中央"), (1.0, "下端"), (None, "自動")]
-    )
-    def test_メニューから位置を決められる(self, window_with_balloon, ratio, label):
-        window_with_balloon.set_tail_root(ratio)
-        assert window_with_balloon.state.selected_balloon.tail.root_y == ratio
+    def test_当たり判定はひし形より広い(self, window_with_balloon):
+        """ひし形は同じ大きさの四角より面積が半分で、狙っても外れやすい。"""
+        from manga_layout.layout import tail_root_point
+        from manga_layout.ui.canvas import HANDLE_PX, TAIL_ROOT_HANDLE_PX
 
-    def test_自動に戻せる(self, window_with_balloon):
-        window_with_balloon.set_tail_root(-1.0)
-        window_with_balloon.set_tail_root(None)
-        assert window_with_balloon.state.selected_balloon.tail.root_y is None
+        state = window_with_balloon.state
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+        # 描いてある印の外、広げた判定の内。判定は画面ピクセルなので、
+        # 表示倍率で割ってから使う
+        scale = window_with_balloon.view.view_scale
+        off = (HANDLE_PX + TAIL_ROOT_HANDLE_PX) / 2.0 / scale / 2.0
+
+        press(window_with_balloon.view, root[0] + off, root[1])
+
+        assert window_with_balloon.view._mode == "tail_root"
+
+    def test_角のつまみまでは奪わない(self, window_with_balloon):
+        """付け根は角のつまみより先に判定される。広げすぎると覆い隠す。"""
+        rect = window_with_balloon.state.selected_balloon.rect
+
+        press(window_with_balloon.view, rect.right, rect.bottom)
+
+        assert window_with_balloon.view._mode == "resize"
+
+
+class TestTailTurn:
+    """メニューからしっぽの向きを変える。付け根だけでなく**先端も回る**。"""
+
+    @pytest.mark.parametrize(
+        "ratio,expected", [(-1.0, "上"), (0.0, "横"), (1.0, "下")]
+    )
+    def test_先端が指定した側へ回る(self, window_with_balloon, ratio, expected):
+        state = window_with_balloon.state
+        rect = state.selected_balloon.rect
+
+        window_with_balloon.turn_tail(ratio)
+
+        tip = state.selected_balloon.tail.tip
+        if expected == "上":
+            assert tip[1] < rect.y
+        elif expected == "下":
+            assert tip[1] > rect.bottom
+        else:
+            assert tip[0] > rect.right
+
+    def test_付け根も指定した高さへ動く(self, window_with_balloon):
+        from manga_layout.layout import tail_root_point
+
+        state = window_with_balloon.state
+        rect = state.selected_balloon.rect
+
+        window_with_balloon.turn_tail(-1.0)
+
+        root = tail_root_point(state.selected_balloon, state.balloon_settings)
+        assert root[1] == pytest.approx(
+            rect.center[1] - rect.h / 2.0 * 0.95, abs=0.01
+        )
+
+    def test_しっぽの長さは変わらない(self, window_with_panel):
+        """先端は回すだけ。長さまで変わると、しっぽの印象が変わってしまう。"""
+        state = window_with_panel.state
+        # 真円で測る。楕円だと縦横の伸びが効いて px の長さは変わる
+        # （変わらないのは**フキダシに対する割合**のほう）
+        balloon = state.add_balloon(Rect(200.0, 200.0, 200.0, 200.0))
+        center = balloon.rect.center
+        before = balloon.tail.tip
+        length = math.dist(center, before)
+
+        window_with_panel.turn_tail(-1.0)
+
+        after = state.selected_balloon.tail.tip
+        assert after != before
+        assert math.dist(center, after) == pytest.approx(length)
+
+    def test_付け根の指定は自動へ戻る(self, window_with_balloon):
+        """回した先では高さと先端の向きが一致する。値を残すと後で効く。"""
+        state = window_with_balloon.state
+        state.set_tail_root(state.selected_balloon.id, 0.5)
+
+        window_with_balloon.turn_tail(-1.0)
+
+        assert state.selected_balloon.tail.root_y is None
 
     def test_元に戻せる(self, window_with_balloon):
-        window_with_balloon.set_tail_root(-1.0)
-        window_with_balloon.state.undo()
-        assert window_with_balloon.state.selected_balloon.tail.root_y is None
+        state = window_with_balloon.state
+        before = state.selected_balloon.tail.tip
+
+        window_with_balloon.turn_tail(-1.0)
+        state.undo()
+
+        assert state.selected_balloon.tail.tip == before
+
+    def test_しっぽが無ければ知らせる(self, window_with_balloon, messages):
+        state = window_with_balloon.state
+        state.set_tail_enabled(state.selected_balloon.id, False)
+        tip = state.selected_balloon.tail.tip
+
+        window_with_balloon.turn_tail(-1.0)
+
+        assert state.selected_balloon.tail.tip == tip
+        assert messages[-1] == "しっぽが出ていません"
 
     def test_保存して開き直しても残る(self, window_with_balloon, tmp_path):
         from manga_layout import load_project
 
-        window_with_balloon.set_tail_root(-0.5)
-        window_with_balloon.state.save(tmp_path)
+        state = window_with_balloon.state
+        state.set_tail_root(state.selected_balloon.id, -0.5)
+        state.save(tmp_path)
 
         restored = load_project(tmp_path)
         assert restored.pages[0].floating[0].tail.root_y == pytest.approx(-0.5)

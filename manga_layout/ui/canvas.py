@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import math
 import pathlib
 
 from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
@@ -55,6 +56,7 @@ from ..layout import (
     snap_point,
     split_panel,
     sticker_at,
+    tail_base_angle,
     tail_root_point,
     text_at,
 )
@@ -118,6 +120,13 @@ HANDLE_PX = 9.0
 # 印を大きく描くとコマの上に居座って絵の邪魔になるので、
 # 「小さく描いて広く拾う」形にしてある
 SLANT_HANDLE_PX = 50.0
+# しっぽの付け根（ひし形）を掴める範囲（ピクセル）。ここも印は `HANDLE_PX` のまま。
+#
+# ひし形は同じ大きさの四角より**面積が半分**しかなく、狙って押しても
+# 外れることが多かった（本人談 2026-08-05）。判定だけ 5px ぶん広げてある。
+# 大きくしすぎると、小さいフキダシで角のつまみを覆う（付け根のほうが
+# 先に判定されるため → `mousePressEvent`）ので、この程度で止める
+TAIL_ROOT_HANDLE_PX = 14.0
 # これ以下の大きさで離した場合、ドラッグではなくクリックとみなして
 # 既定の大きさのコマを置く
 MIN_CREATE_PX = 6.0
@@ -971,14 +980,17 @@ class PageView(QGraphicsView):
         return abs(x - point[0]) <= half and abs(y - point[1]) <= half
 
     def _tail_root_at(self, x: float, y: float) -> bool:
-        """選択中の吹き出しの、しっぽの付け根を掴んでいるか。"""
+        """選択中の吹き出しの、しっぽの付け根を掴んでいるか。
+
+        描いてあるひし形より**少し広く**取る（→ `TAIL_ROOT_HANDLE_PX`）。
+        """
         balloon = self.state.selected_balloon
         if balloon is None or not balloon.tail.enabled:
             return False
         root = tail_root_point(balloon, self.state.balloon_settings)
         if root is None:
             return False
-        half = HANDLE_PX / self.view_scale / 2.0
+        half = TAIL_ROOT_HANDLE_PX / self.view_scale / 2.0
         return abs(x - root[0]) <= half and abs(y - root[1]) <= half
 
     def mouseDoubleClickEvent(self, event) -> None:
@@ -1379,7 +1391,21 @@ class PageView(QGraphicsView):
         if not isinstance(balloon, BalloonObject) or balloon.tail.root_y == root_y:
             return
         self.state.set_tail_root(balloon_id, root_y)
-        self.state.message.emit(f"しっぽの付け根: {self._root_label(root_y)}")
+        # 先端から離れすぎた指定はそこで止まる（→ `TAIL_ROOT_MAX_GAP`）。
+        # 言われた値をそのまま出すと、印が動いていないのに「上端」と
+        # 名乗ることになる。**実際に付いた高さ**を出す
+        where = self._root_label(self._root_ratio(balloon_id, root_y))
+        self.state.message.emit(f"しっぽの付け根: {where}")
+
+    def _root_ratio(self, balloon_id: str, fallback: float) -> float:
+        """いま付け根が付いている高さ（上端 -1、下端 +1）。"""
+        balloon = self.state.page.find(balloon_id)
+        if not isinstance(balloon, BalloonObject):
+            return fallback
+        angle = tail_base_angle(balloon)
+        # 付け根の高さは中心から見た媒介変数の sin。上限で止められた
+        # 場合もこの式で正しい高さが出る
+        return fallback if angle is None else math.sin(angle)
 
     def _apply_slant(self, panel_id: str, ratio: float) -> None:
         pair = self.state.page.slant_pair_of(panel_id)

@@ -84,6 +84,15 @@ def align_label(align: str, direction: str) -> str:
     return labels.get(align, align)
 
 
+# しっぽの向きを変える項目と、付け根の高さ（-1 が上端、+1 が下端）。
+# 「横」は先端のある側の真横。左右どちらかは先端に従うので、名前には出さない。
+#
+# **メニューの文言と操作後の案内が同じ表を見る。** 書き分けると、
+# 改名したときに片方だけ古いまま残る（→ `BALLOON_STYLE_LABELS` と同じ線引き）
+TAIL_TURN_ITEMS = (("上", -1.0), ("横", 0.0), ("下", 1.0))
+TAIL_TURN_LABELS = {ratio: where for where, ratio in TAIL_TURN_ITEMS}
+
+
 # 右クリックの「ここに ●● を追加」「ここで ●●」の前置きと後置き。
 # 分けて持つのは、2つめから落とすため（→ `here_label`）
 PLACE_HERE_PREFIX = "ここに"
@@ -452,22 +461,19 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.tail_action)
         self.balloon_actions.append(self.tail_action)
 
-        # 付け根を細かく選ぶ3つ（上端・中央・下端）は右クリックには出さない。
-        # 選択中の吹き出しだけでも右クリックのメニューは項目数が多く
-        # （実測13、3つ外しても10）、これ以上増やすと選びにくくなる
-        # （相談 2026-08-05）。「自動に戻す」は数え直しの起点として残す。
-        tail_root_position_actions: list[QAction] = []
-        for label, ratio in (
-            ("付け根を上端へ", -1.0),
-            ("付け根を中央へ", 0.0),
-            ("付け根を下端へ", 1.0),
-            ("付け根を自動に戻す", None),
-        ):
-            action = self._act(label, lambda _=False, r=ratio: self.set_tail_root(r))
+        # しっぽの向きを変える3つは右クリックには出さない。選択中の
+        # フキダシだけでも右クリックのメニューは項目数が多く（実測13、
+        # 3つ外して10）、これ以上増やすと選びにくくなる（相談 2026-08-05）
+        tail_turn_actions: list[QAction] = []
+        for where, ratio in TAIL_TURN_ITEMS:
+            action = self._act(
+                f"しっぽを{where}へ",
+                lambda _=False, r=ratio: self.turn_tail(r),
+                tip=f"しっぽの向きを{where}に変えます。先端も一緒に回ります",
+            )
             balloon_menu.addAction(action)
             self.balloon_actions.append(action)
-            if ratio is not None:
-                tail_root_position_actions.append(action)
+            tail_turn_actions.append(action)
 
         self.attach_action = self._act("コマへの紐づけを解除", self.toggle_attachment)
         balloon_menu.addAction(self.attach_action)
@@ -475,7 +481,7 @@ class MainWindow(QMainWindow):
 
         # 右クリックのメニューが写して使う（→ `_items_to_copy`）
         self.balloon_copy_items = self._items_to_copy(
-            balloon_menu, extra_exclude=tuple(tail_root_position_actions)
+            balloon_menu, extra_exclude=tuple(tail_turn_actions)
         )
 
         self._build_sticker_menu()
@@ -1184,17 +1190,20 @@ class MainWindow(QMainWindow):
         self.state.set_tail_enabled(balloon.id, enabled)
         self.state.message.emit("しっぽを出しました" if enabled else "しっぽを消しました")
 
-    def set_tail_root(self, root_y: float | None) -> None:
-        """しっぽの付け根の縦位置。None は先端の向きに合わせる（自動）。"""
+    def turn_tail(self, root_y: float) -> None:
+        """しっぽの向きを変える。**先端も一緒に回る**（→ 6.4）。
+
+        付け根だけを動かすと、先端と反対側では本体に隠れて針に痩せる。
+        付け根の左右への微調整はひし形の印のドラッグが受け持つ。
+        """
         balloon = self.state.selected_balloon
-        if balloon is None or balloon.tail.root_y == root_y:
+        if balloon is None:
             return
         if not balloon.tail.enabled:
             self.state.message.emit("しっぽが出ていません")
             return
-        self.state.set_tail_root(balloon.id, root_y)
-        where = "自動" if root_y is None else PageView._root_label(root_y)
-        self.state.message.emit(f"しっぽの付け根: {where}")
+        self.state.turn_tail(balloon.id, root_y)
+        self.state.message.emit(f"しっぽを{TAIL_TURN_LABELS[root_y]}へ向けました")
 
     def toggle_attachment(self) -> None:
         """コマへの紐づけを付けたり外したり（要件定義 6.4「手動で解除可」）。

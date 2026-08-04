@@ -23,6 +23,7 @@ from manga_layout.layout import (
     default_balloon_rect,
     TAIL_LENGTH_MIN_PX,
     TAIL_LENGTH_RATIO,
+    TAIL_ROOT_MAX_GAP,
     default_tail_tip,
     ellipse_points,
     jagged_points,
@@ -272,20 +273,44 @@ class TestTailRoot:
         mid_y = (base1[1] + base2[1]) / 2.0
         assert mid_y == pytest.approx(RECT.center[1], abs=0.5)
 
-    @pytest.mark.parametrize(
-        "root_y,expected_y",
-        [(-1.0, RECT.y), (0.0, RECT.center[1]), (1.0, RECT.bottom)],
-        ids=["上端", "中央", "下端"],
-    )
-    def test_指定した高さに付く(self, balloon, root_y, expected_y):
-        balloon.tail.tip = (200.0, 200.0)
+    @pytest.mark.parametrize("root_y", [-0.5, 0.0, 0.5], ids=["上寄り", "中央", "下寄り"])
+    def test_指定した高さに付く(self, balloon, root_y):
+        # 先端は真横。ここを起点にすると、上下どちらへも上限まで余裕がある
+        balloon.tail.tip = (200.0, RECT.center[1])
         balloon.tail.root_y = root_y
         root = tail_root_point(balloon, SETTINGS)
         # 付け根は輪郭より少し内側に置くので、その分だけ縮む
         ratio = distance_ratio(RECT, root)
         assert ratio <= 1.0
-        want = RECT.center[1] + (expected_y - RECT.center[1]) * 0.95
+        want = RECT.center[1] + RECT.h / 2.0 * 0.95 * root_y
         assert root[1] == pytest.approx(want, abs=0.01)
+
+    def test_先端から離れすぎた付け根はそこで止まる(self, balloon):
+        """離れるほどしっぽが針に痩せる（→ `TAIL_ROOT_MAX_GAP`）。
+
+        止めずに通すと、付け根を動かしたつもりでもしっぽは同じ場所から
+        出たままに見える。
+        """
+        balloon.tail.tip = (200.0, RECT.center[1])  # 真横＝自動は 0 度
+        angles = []
+        for root_y in (0.5, 0.9, 1.0):
+            balloon.tail.root_y = root_y
+            angles.append(tail_base_angle(balloon))
+
+        assert angles[0] == pytest.approx(math.asin(0.5))  # 30度。上限の内側
+        assert angles[1] == pytest.approx(TAIL_ROOT_MAX_GAP)  # 64度→40度で頭打ち
+        assert angles[2] == pytest.approx(TAIL_ROOT_MAX_GAP)
+
+    def test_上限は保存済みの値にも効く(self, balloon):
+        """`root_y` が飛んだまま保存された作品も、開いた時点で正しい形になる。
+
+        読み込みで弾けない値。どこを向くべきかは先端との関係で決まるので、
+        保存された時点では判定できない。
+        """
+        balloon.tail.tip = (RECT.center[0], 200.0)  # 真下
+        balloon.tail.root_y = -1.0  # 真上＝先端の正反対
+        root = tail_root_point(balloon, SETTINGS)
+        assert root[1] > RECT.center[1]  # 上へは飛ばず、先端側に留まる
 
     def test_上端と下端を越えない(self, balloon):
         """要望どおり上端〜下端の範囲。外に飛び出すと形が壊れる。"""
@@ -306,8 +331,12 @@ class TestTailRoot:
         assert tail_root_point(balloon, SETTINGS)[0] < RECT.center[0]
 
     def test_上端下端では左右が一致する(self, balloon):
-        """極では左右の解が同じ点になる。ここで飛ぶと操作中に形が跳ねる。"""
-        for tip in ((200.0, 200.0), (-200.0, 200.0)):
+        """極では左右の解が同じ点になる。ここで飛ぶと操作中に形が跳ねる。
+
+        先端は真下の近くに置く。真横に近い先端だと上限（→
+        `TAIL_ROOT_MAX_GAP`）に掛かってしまい、極まで届かない。
+        """
+        for tip in ((70.0, 200.0), (10.0, 200.0)):
             balloon.tail.tip = tip
             balloon.tail.root_y = 1.0
             root = tail_root_point(balloon, SETTINGS)

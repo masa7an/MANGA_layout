@@ -27,6 +27,7 @@ from ..layout import (
     default_sticker_rect,
     default_tail_tip,
     outside_page,
+    tail_tip_turned_to,
 )
 from ..slant import flip_slant_pair, slide_slant_pair
 from ..model import (
@@ -644,11 +645,33 @@ class EditorState(QObject):
             balloon.tail = dataclasses.replace(balloon.tail, tip=tip, enabled=True)
 
     def set_tail_root(self, balloon_id: str, root_y: float | None) -> None:
-        """しっぽの付け根の縦位置。None で先端の向きに合わせる（自動）。"""
+        """しっぽの付け根の縦位置。None で先端の向きに合わせる（自動）。
+
+        **先端は動かさない。** ここは付け根を左右へ寄せる微調整で、
+        しゃべっている相手を指したまま生え際だけを変えるためのもの。
+        大きく向きを変えるのは `turn_tail`（→ 6.4）。
+        """
         if root_y is not None:
             root_y = min(max(root_y, -1.0), 1.0)
         with self._edit_balloon(balloon_id, "しっぽの付け根") as balloon:
             balloon.tail = dataclasses.replace(balloon.tail, root_y=root_y)
+
+    def turn_tail(self, balloon_id: str, root_y: float) -> None:
+        """しっぽを、指定した高さから生える向きへ**先端ごと**回す。
+
+        付け根だけを動かすと、先端と反対側では本体に隠れて針になる。
+        メニューから「上へ」を選ぶのは向きを変えたいときなので、
+        先端も連れて回すほうが指示どおりの絵になる（→ 6.4）。
+
+        回した先では付け根の高さと先端の向きが一致するので、`root_y` は
+        自動（None）へ戻す。ここに値を残すと、あとで先端だけ動かした
+        ときに古い指定が効いて、また針に痩せる。
+        """
+        with self._edit_balloon(balloon_id, "しっぽの向き") as balloon:
+            tip = tail_tip_turned_to(balloon, root_y)
+            if tip is None:
+                return  # 先端が中心に重なっている。向きが決まらない
+            balloon.tail = dataclasses.replace(balloon.tail, tip=tip, root_y=None)
 
     def set_tail_enabled(self, balloon_id: str, enabled: bool) -> None:
         label = "しっぽを出す" if enabled else "しっぽを消す"

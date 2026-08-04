@@ -97,6 +97,22 @@ TAIL_LENGTH_RATIO = 0.375
 # 吹き出しがごく小さいときでも、しっぽが潰れない最小の長さ（px）
 TAIL_LENGTH_MIN_PX = 4.0
 
+# 付け根を、先端の向きからどこまで離してよいか（ラジアン）。
+#
+# しっぽは付け根から先端へ引いた三角形で、**見えるのは本体からはみ出した
+# 部分だけ**（→ `PageRenderer._balloon_path` の合成）。付け根を先端の反対側へ
+# 回すと三角形のほとんどが本体に隠れ、外に出るところが針のように細くなる。
+# 付け根だけ動かしたつもりでも、しっぽは同じ場所から出たままに見える。
+#
+# 実測（333×496 のフキダシ、既定の長さのしっぽ、先端は真下）では、見えている
+# しっぽの面積が、ずれ 26 度で 85%、37 度で 69%、46 度で 52% まで落ちた。
+# 40 度なら下端から右へ約 100px（フキダシ幅の3割）滑らせても形が保つ
+# （2026-08-05）。
+#
+# **大きく向きを変えたいときは、付け根ではなく先端ごと回す**
+# （→ `tail_tip_turned_to`）。この上限はあくまで微調整の範囲を決めるもの。
+TAIL_ROOT_MAX_GAP = math.radians(40.0)
+
 
 # --------------------------------------------------------------------------
 # 当たり判定
@@ -544,32 +560,82 @@ def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float
     return 0.95
 
 
-def tail_base_angle(balloon: BalloonObject) -> float | None:
-    """付け根を置く媒介変数（ラジアン）。決められなければ None。
+def _tail_auto_angle(balloon: BalloonObject) -> float | None:
+    """先端を向く媒介変数（ラジアン）。決められなければ None。
 
-    `root_y` が指定されていれば**その高さ**に置く。先端から見て
-    手前側（左右どちらか）の輪郭に付ける。指定が無ければ先端の向きに
-    合わせる（それまでの挙動）。
+    楕円の潰れ具合を打ち消してから角度を取る。
     """
     rect = balloon.rect
     if rect.w <= 0.0 or rect.h <= 0.0:
         return None
 
     cx, cy = rect.center
-    tip = balloon.tail.tip
-    dx, dy = tip[0] - cx, tip[1] - cy
+    dx, dy = balloon.tail.tip[0] - cx, balloon.tail.tip[1] - cy
     if abs(dx) < 1e-9 and abs(dy) < 1e-9:
         return None  # 先端が中心に重なっている。向きが決まらない
+    return math.atan2(dy / (rect.h / 2.0), dx / (rect.w / 2.0))
 
-    root_y = balloon.tail.root_y
-    if root_y is None:
-        # 先端を向く媒介変数。楕円の潰れ具合を打ち消してから角度を取る
-        return math.atan2(dy / (rect.h / 2.0), dx / (rect.w / 2.0))
 
-    # 高さから媒介変数を逆算する。同じ高さに左右2点あるので、
-    # 先端のある側を選ぶ。上端・下端（±1）では左右が一致する
+def _tail_root_angle(balloon: BalloonObject, root_y: float) -> float | None:
+    """`root_y` の高さに付け根を置く媒介変数。**上限をかける前の値。**
+
+    同じ高さに左右2点あるので、先端のある側を選ぶ。反対側から生えると
+    しっぽがフキダシを横切る。上端・下端（±1）では左右が一致する。
+    """
+    if _tail_auto_angle(balloon) is None:
+        return None
     angle = math.asin(min(max(root_y, -1.0), 1.0))
-    return angle if dx >= 0.0 else math.pi - angle
+    if balloon.tail.tip[0] - balloon.rect.center[0] >= 0.0:
+        return angle
+    return math.pi - angle
+
+
+def tail_base_angle(balloon: BalloonObject) -> float | None:
+    """付け根を置く媒介変数（ラジアン）。決められなければ None。
+
+    `root_y` が指定されていれば**その高さ**に置く。ただし先端の向きから
+    `TAIL_ROOT_MAX_GAP` より離れた指定は、そこで止める。離れるほど
+    しっぽが針に痩せて、どのみち指定した場所からは生えないため。
+
+    **上限はここ1箇所でかける。** 画面・サムネイル・PNG 書き出しの3つが
+    この関数を通るうえ、`root_y` が飛んだまま保存された作品も、開いた
+    時点で正しい形になる。
+    """
+    auto = _tail_auto_angle(balloon)
+    if auto is None or balloon.tail.root_y is None:
+        return auto
+
+    wanted = _tail_root_angle(balloon, balloon.tail.root_y)
+    # 差を -π〜+π に畳んでから抑える。畳まないと、真上と真下のように
+    # 一周を跨ぐ組み合わせで「遠回りの側」を向いてしまう
+    gap = (wanted - auto + math.pi) % (2.0 * math.pi) - math.pi
+    return auto + min(max(gap, -TAIL_ROOT_MAX_GAP), TAIL_ROOT_MAX_GAP)
+
+
+def tail_tip_turned_to(
+    balloon: BalloonObject, root_y: float
+) -> tuple[float, float] | None:
+    """付け根を `root_y` の高さへ動かすとき、**先端を回した先**。
+
+    付け根だけを反対側へ置いても、しっぽは本体に隠れて針になるだけで
+    狙った場所からは生えない（→ `TAIL_ROOT_MAX_GAP`）。向きを大きく
+    変えるときは先端ごと回す。
+
+    楕円の潰れを打ち消した空間で回すので、**しっぽの長さと左右の傾きは
+    そのまま残る**。回した先では `root_y` と自動（先端の向き）が一致するので、
+    呼ぶ側は `root_y` を自動へ戻してよい。
+    """
+    auto = _tail_auto_angle(balloon)
+    wanted = _tail_root_angle(balloon, root_y)
+    if auto is None or wanted is None:
+        return None
+
+    rect = balloon.rect
+    cx, cy = rect.center
+    a, b = rect.w / 2.0, rect.h / 2.0
+    nx, ny = (balloon.tail.tip[0] - cx) / a, (balloon.tail.tip[1] - cy) / b
+    cos, sin = math.cos(wanted - auto), math.sin(wanted - auto)
+    return (cx + (nx * cos - ny * sin) * a, cy + (nx * sin + ny * cos) * b)
 
 
 def tail_root_point(
