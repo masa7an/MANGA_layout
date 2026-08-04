@@ -242,8 +242,6 @@ class MainWindow(QMainWindow):
         どこから作るのか分からなくなる（吹き出しで一度やった失敗）。
         """
         menu = self.menuBar().addMenu("セリフ(&X)")
-        # 右クリックのメニューが項目を写して使う（→ `_copy_actions`）
-        self.text_menu = menu
         menu.addAction(self._tool_actions[TOOL_TEXT])
         menu.addSeparator()
 
@@ -272,6 +270,9 @@ class MainWindow(QMainWindow):
         self.bold_action.setCheckable(True)
         menu.addSeparator()
         add("フォントを選ぶ...", self.choose_font)
+
+        # 右クリックのメニューが写して使う（→ `_items_to_copy`）
+        self.text_copy_items = self._items_to_copy(menu)
 
     def _build_menus(self) -> None:
         self._build_tool_actions()
@@ -348,8 +349,6 @@ class MainWindow(QMainWindow):
         image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
 
         balloon_menu = self.menuBar().addMenu("フキダシ(&B)")
-        # 右クリックのメニューが項目を写して使う（→ `_copy_actions`）
-        self.balloon_menu = balloon_menu
         # まず「作る」を置く。これが無いと、吹き出しを1つも選んでいない間は
         # メニュー全体がグレーになり、どこから作るのか分からなくなる
         balloon_menu.addAction(self._tool_actions[TOOL_BALLOON])
@@ -386,6 +385,9 @@ class MainWindow(QMainWindow):
         self.attach_action = self._act("コマへの紐づけを解除", self.toggle_attachment)
         balloon_menu.addAction(self.attach_action)
         self.balloon_actions.append(self.attach_action)
+
+        # 右クリックのメニューが写して使う（→ `_items_to_copy`）
+        self.balloon_copy_items = self._items_to_copy(balloon_menu)
 
         self._build_text_menu()
 
@@ -497,10 +499,10 @@ class MainWindow(QMainWindow):
         state = self.state
 
         if state.selected_text is not None:
-            self._copy_actions(menu, self.text_menu)
+            self._copy_actions(menu, self.text_copy_items)
 
         elif state.selected_balloon is not None:
-            self._copy_actions(menu, self.balloon_menu)
+            self._copy_actions(menu, self.balloon_copy_items)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("text",))
 
@@ -531,25 +533,55 @@ class MainWindow(QMainWindow):
         menu.addAction(self.delete_action)
         return menu
 
-    def _copy_actions(self, menu: QMenu, source: QMenu) -> None:
-        """メニューバーのメニューから項目を写して並べる。
+    def _items_to_copy(self, source: QMenu) -> list[QAction | None]:
+        """メニューバーのメニューから、右クリック側へ写す項目を控えておく。
 
-        QAction は写しても実体は1つなので、有効・無効も文言も
-        メニューバー側と自動で揃う。
+        **QMenu も、そのメニューが持つ区切り線も持ち帰らない。**
+        持てるのは `_act` で作った QAction（親がこのウィンドウ）だけで、
+        区切り線は `None` に置き換える。
 
-        **道具の切り替え（「楕円を追加」など）は外す。** 右クリック側は
+        PySide6 では `QAction.menu()` を呼ぶと、その QMenu が呼び出し側の
+        QAction に引き取られる。QAction を使い捨てにする書き方
+        （`menuBar().actions()[0].menu()` のような1行）だと、それが
+        片付いた時点で QMenu の Python 側の参照が無効になり、以後
+        `RuntimeError: Internal C++ object already deleted` になる。
+        C++ の実体はメニューバーの下で生きたままなので、画面のメニューは
+        普通に開ける。**壊れるのは Python 側の参照だけ**で、区切り線の
+        QAction（このメニューが親）も道連れになる。
+
+        2026-08-04、テストがメニューバーを辿った直後に右クリックの
+        メニューが RuntimeError で組めなくなることを実機で確認した。
+        アプリ側は `QAction.menu()` を呼んでいないため表には出ていない。
+        呼ばないという申し合わせで守るのは無理があるので、
+        壊れようのないものだけを持つ形にした。
+
+        **道具の切り替え（「フキダシを追加」など）は外す。** 右クリック側は
         押した場所が分かっているので「ここに〜」を別に出しており、道具に
         持ち替える項目まで並べると、同じことが2通り並ぶ。
         """
         tools = set(self._tool_actions.values())
+        items: list[QAction | None] = []
         for action in source.actions():
             if action in tools:
                 continue
-            # 道具を外した跡に区切り線だけが残る。先頭と連続は出さない
+            items.append(None if action.isSeparator() else action)
+        return items
+
+    def _copy_actions(self, menu: QMenu, items: list[QAction | None]) -> None:
+        """控えておいた項目を右クリックのメニューへ並べる。
+
+        QAction は写しても実体は1つなので、有効・無効も文言も
+        メニューバー側と自動で揃う。`None` は区切り線の印
+        （→ `_items_to_copy`）。
+        """
+        for item in items:
             last = menu.actions()[-1] if menu.actions() else None
-            if action.isSeparator() and (last is None or last.isSeparator()):
+            if item is None:
+                # 道具を外した跡に区切り線だけが残る。先頭と連続は出さない
+                if last is not None and not last.isSeparator():
+                    menu.addSeparator()
                 continue
-            menu.addAction(action)
+            menu.addAction(item)
 
     def _add_place_here(
         self, menu: QMenu, x: float, y: float, kinds: tuple[str, ...]
