@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import MangaLayoutError
-from ..geometry import Rect
+from ..geometry import Polygon, Rect
 from ..layout import (
     aspect_of,
     balloon_at,
@@ -58,6 +58,7 @@ from ..layout import (
     sticker_at,
     tail_base_angle,
     tail_root_point,
+    tail_triangle,
     text_at,
 )
 from ..slant import (
@@ -120,6 +121,11 @@ HANDLE_PX = 9.0
 # 印を大きく描くとコマの上に居座って絵の邪魔になるので、
 # 「小さく描いて広く拾う」形にしてある
 SLANT_HANDLE_PX = 50.0
+# しっぽの先端（丸）を掴める範囲（ピクセル）。印は `HANDLE_PX` のまま。
+#
+# 丸は半径ぶんしか無く、狙って押しても外れやすい
+# （本人談 2026-08-05・表示と操作のズレで戸惑うとの指摘）。
+TAIL_TIP_HANDLE_PX = 16.0
 # しっぽの付け根（ひし形）を掴める範囲（ピクセル）。ここも印は `HANDLE_PX` のまま。
 #
 # ひし形は同じ大きさの四角より**面積が半分**しかなく、狙って押しても
@@ -784,11 +790,7 @@ class PageView(QGraphicsView):
         # しっぽの先端と付け根。つまみより先に見る。小さな吹き出しでは
         # これらと角のつまみが近づくため、狙って掴んだほうを優先する
         if self._tail_tip_at(x, y):
-            self._mode = "tail"
-            self._scene.tail_preview = (
-                self.state.selected_balloon.id,
-                self.state.selected_balloon.tail.tip,
-            )
+            self._begin_tail_drag(x, y)
             event.accept()
             return
 
@@ -800,6 +802,15 @@ class PageView(QGraphicsView):
                 root_y_at(selected.rect, y),
             )
             self.state.message.emit("上下にドラッグすると、しっぽの付け根が動きます")
+            event.accept()
+            return
+
+        # しっぽの三角形の内側。先端・付け根のつまみより後に見る
+        # （ひし形は三角形の付け根と重なるため、先に見ると付け根を
+        # 動かせなくなる）
+        if self._tail_body_at(x, y):
+            self._begin_tail_drag(x, y)
+            self.state.message.emit("ドラッグすると、しっぽの向きが変わります")
             event.accept()
             return
 
@@ -955,13 +966,46 @@ class PageView(QGraphicsView):
         self.viewport().update()
 
     def _tail_tip_at(self, x: float, y: float) -> bool:
-        """選択中の吹き出しの、しっぽの先端を掴んでいるか。"""
+        """選択中の吹き出しの、しっぽの先端を掴んでいるか。
+
+        描いてある丸より広く取る（→ `TAIL_TIP_HANDLE_PX`）。
+        """
         balloon = self.state.selected_balloon
         if balloon is None or not balloon.tail.enabled:
             return False
         tx, ty = balloon.tail.tip
-        half = HANDLE_PX / self.view_scale / 2.0
+        half = TAIL_TIP_HANDLE_PX / self.view_scale / 2.0
         return abs(x - tx) <= half and abs(y - ty) <= half
+
+    def _tail_body_at(self, x: float, y: float) -> bool:
+        """選択中の吹き出しの、しっぽの三角形の内側を押しているか。
+
+        先端の丸・付け根のひし形は小さく、そこだけしか掴めないと
+        「しっぽの絵は見えているのに反応しない」というズレになる
+        （本人談 2026-08-05）。見えている三角形の内側ならどこでも
+        先端をつまんだのと同じ扱いにする。
+        """
+        balloon = self.state.selected_balloon
+        if balloon is None or not balloon.tail.enabled:
+            return False
+        triangle = tail_triangle(balloon, self.state.balloon_settings)
+        if triangle is None:
+            return False
+        return Polygon(triangle).contains(x, y)
+
+    def _begin_tail_drag(self, x: float, y: float) -> None:
+        """しっぽの先端ドラッグを始める。
+
+        押した点と先端がずれていても（=しっぽの本体を掴んだ場合)、
+        差分を覚えておいて先端がその分だけ付いてくるようにする。
+        差分を覚えずに先端をマウス位置へ直接合わせると、本体の
+        途中を押しただけで先端が瞬間移動して見える。
+        """
+        balloon = self.state.selected_balloon
+        tip = balloon.tail.tip
+        self._mode = "tail"
+        self._grab = (x - tip[0], y - tip[1])
+        self._scene.tail_preview = (balloon.id, tip)
 
     def _slant_handle_at(self, x: float, y: float) -> bool:
         """斜めの境界のつまみを掴んでいるか。
@@ -1055,8 +1099,12 @@ class PageView(QGraphicsView):
         if self._mode == "tail":
             # 先端は吸着させない。人物の口元を指すもので、
             # コマの辺に吸い付いても意味がない
+            #
+            # `_grab` は掴んだ点と先端のずれ（本体を掴んだ場合に発生）。
+            # 引いたぶんだけ動かし、ずれ自体は保ったままにする
             if self._scene.tail_preview is not None:
-                self._scene.tail_preview = (self._scene.tail_preview[0], (x, y))
+                tip = (x - self._grab[0], y - self._grab[1])
+                self._scene.tail_preview = (self._scene.tail_preview[0], tip)
 
         elif self._mode == "tail_root":
             # **縦だけ見る。** 付け根は輪郭の上を滑るので、横位置は
@@ -1230,6 +1278,8 @@ class PageView(QGraphicsView):
         elif self._tail_root_at(x, y):
             # 上下にしか動かないことを形で示す
             self.viewport().setCursor(Qt.CursorShape.SizeVerCursor)
+        elif self._tail_body_at(x, y):
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         elif handle is not None:
             self.viewport().setCursor(_HANDLE_CURSORS[handle])
         elif self._slant_handle_at(x, y):
