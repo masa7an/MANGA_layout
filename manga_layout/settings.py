@@ -39,6 +39,20 @@ SETTINGS_FILENAME = "settings.json"
 # 形式を変えたときに、古い設定を読んでいると気づけるようにする
 SETTINGS_VERSION = 1
 
+# 自動バックアップの間隔（秒 → 要件定義 6.6）。
+#
+# **設定に出しているのは、動きを確かめる手段でもあるため。** 既定の5分は
+# 待って確かめるには長く、かといってコードを 30 秒に書き換えて確かめると
+# 戻し忘れがそのまま出荷される。ここに出しておけば、確かめたい間だけ
+# 短くして、あとで消せる。
+AUTOSAVE_INTERVAL_DEFAULT_SEC = 300
+
+# 受け付ける範囲。下限は「確かめるための最短」、上限は「これ以上空けるなら
+# 切ったのと変わらない」という目安。外れた値は既定値に落とす（設定は
+# 手で書き換える前提なので、打ち間違いで起動を止めない）
+AUTOSAVE_INTERVAL_MIN_SEC = 5
+AUTOSAVE_INTERVAL_MAX_SEC = 3600
+
 
 def settings_dir() -> pathlib.Path:
     """設定を置くフォルダ。**このリポジトリの `data/`。**
@@ -55,6 +69,20 @@ def settings_path() -> pathlib.Path:
     return settings_dir() / SETTINGS_FILENAME
 
 
+def _autosave_interval(value: object) -> int:
+    """設定から読んだ間隔を秒で返す。**受け付けられない値は既定に落とす。**
+
+    真偽値を弾いているのは、Python では `True` が `1` として通ってしまい、
+    `"autosave_interval_sec": true` と書かれたときに 1 秒間隔になるため。
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return AUTOSAVE_INTERVAL_DEFAULT_SEC
+    seconds = int(value)
+    if not AUTOSAVE_INTERVAL_MIN_SEC <= seconds <= AUTOSAVE_INTERVAL_MAX_SEC:
+        return AUTOSAVE_INTERVAL_DEFAULT_SEC
+    return seconds
+
+
 @dataclass
 class AppSettings:
     """`settings.json` の中身。
@@ -66,14 +94,19 @@ class AppSettings:
     「名前を付けて保存」「作品を開く」「画像を選ぶ」で**共通**に使う。
     窓ごとに分けると、同じ作業の途中なのに始まる場所が変わり、
     そのたびに辿り直すことになる。
+
+    `autosave_interval_sec` は**自動バックアップの間隔**（→ 6.6）。
+    短くすれば動きを確かめられる。範囲外・数でない値は既定の5分に落とす。
     """
 
     default_parent_dir: str | None = None
+    autosave_interval_sec: int = AUTOSAVE_INTERVAL_DEFAULT_SEC
 
     def to_dict(self) -> dict:
         return {
             "format_version": SETTINGS_VERSION,
             "default_parent_dir": self.default_parent_dir,
+            "autosave_interval_sec": self.autosave_interval_sec,
         }
 
     @classmethod
@@ -84,7 +117,10 @@ class AppSettings:
         混ざる。1個の綴り間違いで起動しなくなるほうが困る。
         """
         value = data.get("default_parent_dir")
-        return cls(default_parent_dir=value if isinstance(value, str) and value else None)
+        return cls(
+            default_parent_dir=value if isinstance(value, str) and value else None,
+            autosave_interval_sec=_autosave_interval(data.get("autosave_interval_sec")),
+        )
 
 
 def load_settings(path: pathlib.Path | None = None) -> AppSettings:

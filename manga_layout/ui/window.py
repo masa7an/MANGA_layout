@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
+from ..autosave_log import AutosaveLog
 from ..errors import MangaLayoutError
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect, image_at
@@ -173,13 +174,15 @@ FRAME_ALLOWANCE_PX = 48
 # 30 ページの作品でも確認欄が画面を埋めないようにする
 OVERWRITE_LIST_LIMIT = 5
 
-# 自動バックアップの間隔（ミリ秒）。
+# 自動バックアップで状態表示に出す文言と、記録に残す文言。
 #
-# 書くのは数十 KB の JSON 1個だけなので、間隔を詰めても負担にはならない。
-# 5分にしてあるのは、失っても描き直せる量の目安のほう。**変化が無ければ
-# 書かない**ので（→ `EditorState.autosave`）、置いたままにしていても
-# ディスクは減らない
-AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000
+# **同じ表を見る。** 画面で見たものと `data/autosave.log` に残ったものが
+# 食い違うと、報告を突き合わせられなくなる（→ `BALLOON_STYLE_LABELS` と
+# 同じ線引き）
+AUTOSAVE_SAVED = "自動バックアップしました"
+AUTOSAVE_NO_DIR = "保存先が未定のため自動バックアップしません"
+AUTOSAVE_NO_CHANGE = "変更が無いため自動バックアップしません"
+AUTOSAVE_FAILED = "自動バックアップできません"
 
 
 class MainWindow(QMainWindow):
@@ -217,11 +220,20 @@ class MainWindow(QMainWindow):
         self.view.context_menu_requested.connect(self._show_context_menu)
 
         # 一定間隔で作業中の内容を backup/ へ退避する（要件定義 6.6）。
-        # 本体（project.json）は触らないので、保存の確認とは食い違わない
+        # 本体（project.json）は触らないので、保存の確認とは食い違わない。
+        #
+        # **間隔は設定から取る。** 5分は待って確かめるには長いので、
+        # 短くして動きを見られるようにしてある（→ `AppSettings`）
+        self.autosave_log = AutosaveLog()
+        interval_sec = self.settings.autosave_interval_sec
         self._autosave_timer = QTimer(self)
-        self._autosave_timer.setInterval(AUTOSAVE_INTERVAL_MS)
+        self._autosave_timer.setInterval(interval_sec * 1000)
         self._autosave_timer.timeout.connect(self._autosave)
         self._autosave_timer.start()
+        # 起動を1行残す。**記録が空なら、タイマーを積んだアプリが
+        # そもそも動いていない**と分かる。回っているのに何もしない場合と
+        # 区別が付かないのが、2026-08-05 の切り分けで困った点
+        self.autosave_log.record(f"起動（{interval_sec}秒ごと）", repeat=True)
 
         self._refresh()
 
@@ -1623,14 +1635,28 @@ class MainWindow(QMainWindow):
         失敗しても印を進めないので、次の回にまた試す。保存先が外付け
         ドライブで抜かれている間は毎回知らせることになるが、**退避されて
         いない事実は伝わったほうがよい。**
+
+        **何もしなかった回も記録には残す**（`data/autosave.log`）。
+        状態表示には出さない——5分ごとに「何もしませんでした」と出ても
+        邪魔なだけで、しかも見ていないうちに消える。記録は同じ内容が
+        続く間 1 行にまとめるので、増え続けることはない。
         """
         try:
             path = self.state.autosave()
         except (MangaLayoutError, OSError) as e:
-            self.state.message.emit(f"自動バックアップできません: {e}")
+            self.state.message.emit(f"{AUTOSAVE_FAILED}: {e}")
+            self.autosave_log.record(f"{AUTOSAVE_FAILED}: {e}")
             return
+
         if path is not None:
-            self.state.message.emit(f"自動バックアップしました: {path.name}")
+            self.state.message.emit(f"{AUTOSAVE_SAVED}: {path.name}")
+            # 退避できた回は毎回残す。いつの時点の内容が backup/ に
+            # 入っているかは、記録の目的そのもの
+            self.autosave_log.record(f"{AUTOSAVE_SAVED}: {path}", repeat=True)
+            return
+
+        why = AUTOSAVE_NO_DIR if self.state.project_dir is None else AUTOSAVE_NO_CHANGE
+        self.autosave_log.record(why)
 
     # -- 書き出し ----------------------------------------------------------
 

@@ -870,6 +870,70 @@ class TestAutosave:
         assert window.state.is_dirty
         assert "*" in window._title()
 
+    def test_タイマーが実際に回って退避する(self, window, tmp_path):
+        """**ここが 2026-08-05 に抜けていた穴。**
+
+        それまでのテストは `autosave()` を直接呼んでいたため、
+        「タイマーの合図が `_autosave` につながっているか」を1つも
+        確かめていなかった。結線が切れていても全部通ってしまう。
+        """
+        from PySide6.QtTest import QTest
+
+        window.state.save(tmp_path)
+        window.add_full_page_panel()
+
+        window._autosave_timer.setInterval(30)
+        window._autosave_timer.start()
+        QTest.qWait(300)
+
+        assert (tmp_path / "backup" / "autosave.1.json").is_file()
+
+    def test_間隔を設定から取る(self, qapp, tmp_path, monkeypatch):
+        from manga_layout.settings import AppSettings
+
+        monkeypatch.setattr(
+            "manga_layout.ui.window.load_settings",
+            lambda path: AppSettings(autosave_interval_sec=30),
+        )
+        win = MainWindow(EditorState())
+        try:
+            assert win._autosave_timer.interval() == 30_000
+            assert win._autosave_timer.isActive()
+        finally:
+            win.state.history.mark_saved()
+            win.close()
+
+    def test_起動を記録に残す(self, window):
+        """記録が空なら、タイマーを積んだアプリがそもそも動いていないと分かる。"""
+        text = window.autosave_log.path.read_text(encoding="utf-8")
+        assert "起動" in text
+
+    def test_何もしなかった理由を記録に残す(self, window, tmp_path):
+        window._autosave()  # 保存先が決まっていない
+        window.state.save(tmp_path)
+        window._autosave()  # 変化が無い
+
+        lines = window.autosave_log.path.read_text(encoding="utf-8").splitlines()
+        assert any("保存先が未定" in line for line in lines)
+        assert any("変更が無いため" in line for line in lines)
+
+    def test_同じ理由が続く間は記録を増やさない(self, window):
+        for _ in range(5):
+            window._autosave()
+
+        lines = window.autosave_log.path.read_text(encoding="utf-8").splitlines()
+        assert sum("保存先が未定" in line for line in lines) == 1
+
+    def test_退避できた回は毎回記録する(self, window, tmp_path):
+        # いつの時点の内容が backup/ に入っているかは記録の目的そのもの
+        window.state.save(tmp_path)
+        for _ in range(3):
+            window.add_page()  # 毎回ちがう内容にする
+            window._autosave()
+
+        lines = window.autosave_log.path.read_text(encoding="utf-8").splitlines()
+        assert sum("自動バックアップしました" in line for line in lines) == 3
+
     def test_失敗しても作業を止めない(self, window, tmp_path, monkeypatch):
         # 保存先が外付けドライブで抜かれている場合など
         window.state.save(tmp_path)

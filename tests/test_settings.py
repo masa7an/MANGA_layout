@@ -87,6 +87,43 @@ class Test壊れた設定:
         assert load_settings(path).default_parent_dir == r"F:\作品"
 
 
+class Test自動バックアップの間隔:
+    """短くして動きを確かめられること。**打ち間違いで壊れないこと。**"""
+
+    def _書く(self, path, value: str):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'{{"autosave_interval_sec": {value}}}', encoding="utf-8")
+
+    def test_既定は5分(self, path):
+        assert load_settings(path).autosave_interval_sec == 300
+
+    def test_短くできる(self, path):
+        # 5分待たずに動きを確かめるための逃げ道
+        self._書く(path, "30")
+        assert load_settings(path).autosave_interval_sec == 30
+
+    def test_短すぎる値は既定に落とす(self, path):
+        self._書く(path, "0")
+        assert load_settings(path).autosave_interval_sec == 300
+
+    def test_長すぎる値は既定に落とす(self, path):
+        self._書く(path, "99999")
+        assert load_settings(path).autosave_interval_sec == 300
+
+    def test_数でない値は既定に落とす(self, path):
+        self._書く(path, '"30秒"')
+        assert load_settings(path).autosave_interval_sec == 300
+
+    def test_真偽値は数として通さない(self, path):
+        # Python では True が 1 として通り、1秒間隔になってしまう
+        self._書く(path, "true")
+        assert load_settings(path).autosave_interval_sec == 300
+
+    def test_書いたものが読み戻せる(self, path):
+        save_settings(AppSettings(autosave_interval_sec=60), path)
+        assert load_settings(path).autosave_interval_sec == 60
+
+
 class Test雛形の用意:
     def test_無ければ作る(self, path):
         ensure_settings_file(path)

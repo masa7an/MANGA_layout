@@ -36,6 +36,25 @@ def fixture_dir() -> pathlib.Path:
     return FIXTURE_DIR
 
 
+@pytest.fixture(autouse=True)
+def 自動バックアップの記録を逃がす(tmp_path_factory, monkeypatch):
+    """本物の `data/autosave.log` に書かせない。
+
+    記録は「タイマーが動いていないのか、動いていて何もしないのか」を
+    切り分けるためのもの（→ `manga_layout.autosave_log`）。テストで
+    `MainWindow` を作るたびに起動の行が混ざると、利用者が読むときに
+    本物の起動が埋もれて用をなさなくなる。
+
+    **`tmp_path` の中には置かない。** あそこは「保存すると何ができるか」を
+    数えているテストが見ている場所なので、関係の無いファイルを混ぜると
+    そちらが落ちる（実際に落ちた）。
+    """
+    directory = tmp_path_factory.mktemp("autosave_log")
+    monkeypatch.setattr(
+        "manga_layout.autosave_log.log_path", lambda: directory / "autosave.log"
+    )
+
+
 @pytest.fixture
 def png_bytes() -> bytes:
     """透明度ありの基準画像。"""
