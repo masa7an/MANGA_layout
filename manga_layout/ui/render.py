@@ -27,7 +27,8 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, Q
 
 from .. import vertical
 from ..geometry import Rect
-from ..layout import balloon_outline, slant_polygons, tail_triangle
+from ..layout import balloon_outline, tail_triangle
+from ..slant import slant_polygons
 from ..model import (
     BalloonObject,
     Font,

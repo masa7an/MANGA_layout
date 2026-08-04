@@ -26,10 +26,9 @@ from ..layout import (
     contain_rect_in,
     default_sticker_rect,
     default_tail_tip,
-    flip_slant_pair,
     outside_page,
-    slide_slant_pair,
 )
+from ..slant import flip_slant_pair, slide_slant_pair
 from ..model import (
     BalloonObject,
     ImageObject,

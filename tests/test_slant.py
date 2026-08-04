@@ -14,12 +14,15 @@ from manga_layout import Polygon, Rect, new_project
 from manga_layout.model import SLANT_LEFT, SLANT_RIGHT, Project, SlantPair
 from manga_layout.layout import (
     LayoutSettings,
-    check_slant,
-    clamp_slant_rect,
-    flip_slant_pair,
     image_at,
     panel_at,
     set_panel_rect,
+    split_panel,
+)
+from manga_layout.slant import (
+    check_slant,
+    clamp_slant_rect,
+    flip_slant_pair,
     set_slant_pair_rect,
     slant_gap,
     slant_max_height,
@@ -30,7 +33,6 @@ from manga_layout.layout import (
     slant_ratio_at,
     slant_ratio_bounds,
     slide_slant_pair,
-    split_panel,
     split_panel_slant,
 )
 
