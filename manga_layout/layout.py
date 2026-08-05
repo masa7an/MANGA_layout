@@ -74,7 +74,7 @@ class BalloonSettings:
     # ギザギザの山の数。増やすと細かく、減らすと荒くなる
     jagged_spikes: int = 14
     # ギザギザの谷の深さ。半径に対する割合（0.25 なら谷が 75% の位置）
-    jagged_depth: float = 0.22
+    jagged_depth: float = 0.33
     # 波形の波の数。ギザギザより多くして、細かく震えて見えるようにする
     wavy_waves: int = 16
     # 波形の谷の深さ。半径に対する割合。**ギザギザより浅くする。**
