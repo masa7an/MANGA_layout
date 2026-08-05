@@ -18,8 +18,9 @@ from ..autosave_log import AutosaveLog
 from ..errors import MangaLayoutError
 from ..recent_project import load_recent_project, save_recent_project
 from ..settings import load_settings
-from ..storage import PROJECT_FILENAME, is_project_dir, project_dir_of
+from ..storage import BACKUP_DIRNAME, PROJECT_FILENAME, is_project_dir, project_dir_of
 from . import saving
+from .restore import RestoreDialog
 from .export import (
     DEFAULT_FORMAT,
     DEFAULT_SCALE,
@@ -193,6 +194,53 @@ class ProjectIO:
         """『前回のファイルを開く』の行き先を更新する。"""
         save_recent_project(path)
         self._window.file_menu.sync_recent_project(path)
+
+    def restore_backup(self) -> None:
+        """`backup/` の世代を1つ選んで画面へ戻す（要件定義 6.6）。
+
+        **未保存の確認（`confirm_discard`）は出さない。** 戻しても
+        `project.json` は書き換わらず、今の作業は「元に戻す」1回で
+        戻ってくる。開く・新規のように失うものが無いので、聞く理由がない。
+
+        断るときは窓ではなく状態表示に出す。押せる項目のまま理由を伝える
+        （メニューを灰色にすると、なぜ使えないのかを伝える先が無くなる
+        → `duplicate_selected` と同じ線引き）。
+        """
+        if self._state.project_dir is None:
+            self._state.message.emit(
+                "一度も保存していない作品には、戻せる世代がありません"
+            )
+            return
+
+        entries = self._state.backups()
+        if not entries:
+            self._state.message.emit(f"{BACKUP_DIRNAME}/ に戻せる世代がまだありません")
+            return
+
+        dialog = RestoreDialog(entries, self._window)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.chosen()
+        if chosen is None:
+            return
+
+        try:
+            warnings = self._state.restore_backup(chosen.path)
+        except (MangaLayoutError, OSError) as e:
+            QMessageBox.critical(self._window, "戻せません", str(e))
+            return
+
+        self._window.view.fit_page()
+        if warnings:
+            QMessageBox.information(
+                self._window,
+                "読み込み時に直した箇所があります",
+                "\n".join(f"・{w}" for w in warnings),
+            )
+        self._state.message.emit(
+            f"{chosen.label} に戻しました"
+            "（保存はまだです。「元に戻す」で取り消せます）"
+        )
 
     def save_project(self) -> bool:
         if self._state.project_dir is None:

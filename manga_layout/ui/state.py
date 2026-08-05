@@ -65,7 +65,14 @@ from ..model import (
 from ..settings import ROUGH_OPACITY_DEFAULT
 from ..slant import flip_slant_pair, slide_slant_pair
 from ..stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION, read_sticker
-from ..storage import load_project, save_project, write_autosave
+from ..storage import (
+    BackupEntry,
+    list_backups,
+    load_backup,
+    load_project,
+    save_project,
+    write_autosave,
+)
 
 # 道具（ツール）
 TOOL_SELECT = "select"
@@ -1298,6 +1305,64 @@ class EditorState(QObject):
         path = write_autosave(self.project, self.project_dir)
         self.history.mark_autosaved()
         return path
+
+    # -- バックアップからの復元（要件定義 6.6） ------------------------------
+
+    def backups(self) -> list[BackupEntry]:
+        """戻せる世代の一覧。保存先が決まっていなければ空。"""
+        if self.project_dir is None:
+            return []
+        return list_backups(self.project_dir)
+
+    def restore_backup(self, path: pathlib.Path) -> list[str]:
+        """`backup/` の世代1つを画面へ戻す。直した箇所があれば返す。
+
+        **`project.json` は書き換えない。** 戻した結果は履歴の上に1手として
+        乗るだけなので、Undo 1回で復元前の作業に戻れる。ディスクへ確定する
+        のは利用者が保存を押したときで、そのとき今の `project.json` は
+        自動で `backup/project.1.json` へ退避される（→ `_rotate_backups`）。
+
+        **順序が要**。選んだ世代を**先に読み切ってから**、今の内容を退避する。
+        逆にすると `write_autosave` が世代を1つずつ繰り下げるので、
+        `autosave.2.json` を選んだつもりが別の中身になり、`autosave.3.json`
+        に至っては最古として消えたあとを読むことになる。
+
+        **`reset()` は通さない。** あちらは `History` を作り直すので、
+        通した瞬間に「元に戻す」で戻れなくなる。
+        """
+        project = load_backup(path)
+        warnings = list(project.load_warnings)
+
+        # 今の内容を1つ退避しておく。戻す操作自体で今の作業を失わせない
+        # （要件定義 10.1）。**読み終えた後**に行う（上の「順序が要」）
+        with contextlib.suppress(OSError):
+            self.autosave()
+
+        if not self.history.replace(project, "バックアップから復元"):
+            return warnings
+
+        self._after_restore()
+        return warnings
+
+    def _after_restore(self) -> None:
+        """復元で入れ替わった後の後始末。
+
+        選択は**必ず解除する**。戻した作品の ID は今選んでいるものと
+        別系列なので、残すと「選んでいるはずのものが見当たらない」状態に
+        なる。ページ番号を丸めるのは Undo と同じ理由（→ `_after_history_move`）。
+
+        **画像の覚え書き（`image_cache`）は捨てない。** `reset()` は捨てるが、
+        あちらは別の作品へ移る操作。ここでは同じ作品フォルダの中に留まり、
+        参照は中身から作った名前（SHA1）なので、同じ参照なら中身も必ず同じ。
+        捨てると復元のたびに全部の画像を展開し直すことになる（Undo が
+        捨てていないのと同じ理由）。
+        """
+        self._selected_id = None
+        self._page_index = max(0, min(self._page_index, self.page_count - 1))
+        self._leave_rough_tool_if_gone()
+        self.changed.emit()
+        self.selection_changed.emit()
+        self.page_changed.emit()
 
     @property
     def is_dirty(self) -> bool:

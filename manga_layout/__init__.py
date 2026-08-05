@@ -40,8 +40,11 @@ from .model import (
     new_project,
 )
 from .storage import (
+    BackupEntry,
     find_missing_assets,
     is_project_dir,
+    list_backups,
+    load_backup,
     load_project,
     prune_unused_assets,
     save_project,
@@ -53,6 +56,7 @@ __all__ = [
     "PAGE_SIZES",
     "AssetError",
     "AssetStore",
+    "BackupEntry",
     "BalloonObject",
     "Border",
     "BrokenImageError",
@@ -81,6 +85,8 @@ __all__ = [
     "fit_rect",
     "fit_size",
     "is_project_dir",
+    "list_backups",
+    "load_backup",
     "load_project",
     "new_project",
     "prune_unused_assets",

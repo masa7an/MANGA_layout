@@ -148,6 +148,15 @@ class FileMenu:
             "前回開いた・保存した作品を、選ぶ手間なしで開く",
         )
         menu.addAction(self.recent_project_action)
+        menu.addAction(
+            window._act(
+                "バックアップから復元...",
+                window.files.restore_backup,
+                None,
+                "backup/ に貯まった世代から1つ選んで戻す"
+                "（project.json は書き換わらず、元に戻すで取り消せる）",
+            )
+        )
         menu.addSeparator()
         menu.addAction(window._act("保存", window.files.save_project, "Ctrl+S"))
         menu.addAction(

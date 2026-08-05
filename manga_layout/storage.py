@@ -18,11 +18,13 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import pathlib
 import re
 import shutil
+from dataclasses import dataclass
 
 from .assets import ASSETS_DIRNAME, AssetStore
 from .errors import ProjectFormatError, ProjectNotFoundError
@@ -173,14 +175,14 @@ def save_project(
     return path
 
 
-def load_project(project_dir: pathlib.Path | str) -> Project:
-    """プロジェクトを読み込む。
+def read_project_file(path: pathlib.Path | str) -> Project:
+    """1つの JSON ファイルをプロジェクトとして読む。
 
-    形式が壊れていれば例外を投げる。ただし「存在しないコマへの紐づけ」など
-    直せる範囲の乱れは直したうえで開き、内容を `project.load_warnings` に残す。
+    `project.json` そのものと `backup/` の中の世代（→ `load_backup`）の
+    **両方がここを通る**。読めない・解釈できない場合の断り方を1箇所に
+    まとめておかないと、同じ壊れ方でも入り口によって別の文面が出る。
     """
-    project_dir = pathlib.Path(project_dir)
-    path = project_dir / PROJECT_FILENAME
+    path = pathlib.Path(path)
     if not path.is_file():
         raise ProjectNotFoundError(f"プロジェクトが見つかりません: {path}")
 
@@ -193,11 +195,121 @@ def load_project(project_dir: pathlib.Path | str) -> Project:
         data = json.loads(text)
     except json.JSONDecodeError as e:
         raise ProjectFormatError(
-            f"{PROJECT_FILENAME} を解釈できません（{e.lineno} 行目 {e.colno} 文字目: {e.msg}）。"
+            f"{path.name} を解釈できません（{e.lineno} 行目 {e.colno} 文字目: {e.msg}）。"
             f"{BACKUP_DIRNAME}/ に直前の保存内容が残っている可能性があります。"
         ) from e
 
     return Project.from_dict(data)
+
+
+def load_project(project_dir: pathlib.Path | str) -> Project:
+    """プロジェクトを読み込む。
+
+    形式が壊れていれば例外を投げる。ただし「存在しないコマへの紐づけ」など
+    直せる範囲の乱れは直したうえで開き、内容を `project.load_warnings` に残す。
+    """
+    return read_project_file(pathlib.Path(project_dir) / PROJECT_FILENAME)
+
+
+# -- バックアップからの復元（要件定義 6.6） ---------------------------------
+
+
+# 一覧に出す種別の名前。**画面と同じ言葉を `storage` 側で持つ。**
+# 2系列の区別（保存済み／作業中）は形式そのものの話（→ `AUTOSAVE_PREFIX` の
+# 注記）で、画面の都合ではない
+BACKUP_KIND_SAVED = "保存済み"
+BACKUP_KIND_AUTOSAVE = "作業中"
+
+_BACKUP_SERIES = (
+    ("project", BACKUP_KIND_SAVED, BACKUP_GENERATIONS),
+    (AUTOSAVE_PREFIX, BACKUP_KIND_AUTOSAVE, AUTOSAVE_GENERATIONS),
+)
+
+
+@dataclass(frozen=True)
+class BackupEntry:
+    """`backup/` に残っている世代1つ。復元の一覧に並べる。
+
+    **中身の手がかり（ページ数・コマ数）まで持つ。** 日時と番号だけでは
+    「どの作業をしていた頃か」を思い出せず、選べない（要件定義 10.1）。
+
+    読めなかった世代も `pages` を None にして残す。一覧から黙って消すと、
+    5世代あるはずのものが4つしか出ない理由が分からなくなる。
+    """
+
+    path: pathlib.Path
+    kind: str
+    generation: int
+    saved_at: datetime.datetime
+    pages: int | None = None
+    panels: int | None = None
+
+    @property
+    def label(self) -> str:
+        """一覧に出す1行。"""
+        when = self.saved_at.strftime("%Y-%m-%d %H:%M")
+        what = f"{self.kind}（{self.generation}つ前）"
+        if self.pages is None:
+            return f"{when}  {what}  読めません"
+        return f"{when}  {what}  {self.pages}ページ・{self.panels}コマ"
+
+
+def _backup_summary(path: pathlib.Path) -> tuple[int, int] | None:
+    """世代1つのページ数とコマ数。読めなければ None。
+
+    `Project` まで組み立てず辞書のまま数える。一覧を出すだけのために
+    8件ぶんの検証を通すのは重く、しかも**直せる乱れのある世代が
+    一覧から消えてしまう**（`from_dict` は直して読むが、ここで例外に
+    なるものは弾かれる）。
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        pages = data["pages"]
+        return len(pages), sum(len(p.get("panels", [])) for p in pages)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def list_backups(project_dir: pathlib.Path | str) -> list[BackupEntry]:
+    """`backup/` に残っている世代を、**新しい順**に並べて返す。
+
+    2系列を番号順に分けず、日時で混ぜて並べる。分けて並べると、
+    保存済みと作業中のどちらが新しいのかが読み取れない。
+    """
+    backup_dir = pathlib.Path(project_dir) / BACKUP_DIRNAME
+    if not backup_dir.is_dir():
+        return []
+
+    found: list[BackupEntry] = []
+    for prefix, kind, generations in _BACKUP_SERIES:
+        for n in range(1, generations + 1):
+            path = backup_dir / f"{prefix}.{n}.json"
+            if not path.is_file():
+                continue
+            summary = _backup_summary(path)
+            found.append(
+                BackupEntry(
+                    path=path,
+                    kind=kind,
+                    generation=n,
+                    saved_at=datetime.datetime.fromtimestamp(path.stat().st_mtime),
+                    pages=None if summary is None else summary[0],
+                    panels=None if summary is None else summary[1],
+                )
+            )
+    found.sort(key=lambda e: e.saved_at, reverse=True)
+    return found
+
+
+def load_backup(path: pathlib.Path | str) -> Project:
+    """`backup/` の中の世代を1つ読む。
+
+    **読むだけで、`project.json` には触らない。** 戻したものを Undo で
+    取り消せるようにするため、差し替えは履歴の上で行う
+    （→ `History.replace`）。ディスクへ確定するのは利用者が保存を
+    押したときだけ（要件定義 6.6 の「押していない保存を起こさない」）。
+    """
+    return read_project_file(path)
 
 
 def find_missing_assets(project: Project, project_dir: pathlib.Path | str) -> list[str]:

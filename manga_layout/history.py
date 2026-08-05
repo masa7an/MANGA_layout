@@ -212,6 +212,27 @@ class History:
         """確定していない変更を捨てて、直前の確定状態へ戻す。履歴には積まない。"""
         self._project = _decode(self._baseline)
 
+    def replace(self, project: Project, label: str) -> bool:
+        """作品まるごとを別のものへ差し替え、**1手として積む**。
+
+        バックアップからの復元（要件定義 6.6）で使う。**スナップショット
+        方式なので、まるごとの差し替えも普通の1手と何も変わらない。**
+        履歴を作り直す必要はなく、復元後の姿が今の履歴の上に乗るだけなので、
+        Undo 1回で復元前の作業に戻れる。
+
+        **作品を開くとき（`EditorState.reset`）とは別物。** あちらは
+        `History` ごと作り直すので、通すと履歴が消えて戻れなくなる。
+
+        中身が今と同じなら何もせず False を返す（`commit` と同じ約束）。
+        同じ内容の世代を選んだだけで履歴が1手埋まることがない。
+        """
+        previous = self._project
+        self._project = project
+        if self.commit(label):
+            return True
+        self._project = previous
+        return False
+
     # -- 元に戻す / やり直す ------------------------------------------------
 
     def undo(self) -> str | None:
