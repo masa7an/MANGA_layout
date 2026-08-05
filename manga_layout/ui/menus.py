@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
-from .state import STICKER_TOOLS
+from .state import STICKER_TOOLS, TOOL_TEXT
 
 if TYPE_CHECKING:
     from .window import MainWindow
@@ -135,6 +135,59 @@ class FocusMenu:
             action.setEnabled(focus is not None)
         if focus is not None:
             self.color_action.setText("黒に戻す" if focus.white else "白にする")
+
+
+class TextMenu:
+    """セリフのメニュー。
+
+    先頭に「作る」を置く。ここが選択中のセリフへの操作だけだと、
+    1つも選んでいない間はメニュー全体がグレーになり、
+    どこから作るのか分からなくなる（吹き出しで一度やった失敗）。
+    """
+
+    def __init__(self, window: MainWindow) -> None:
+        self._state = window.state
+        menu = window.menuBar().addMenu("セリフ(&X)")
+        menu.addAction(window._tool_actions[TOOL_TEXT])
+        menu.addSeparator()
+
+        self.actions: list[QAction] = []
+
+        def add(label: str, slot, shortcut: str | None = None) -> QAction:
+            action = window._act(label, slot, shortcut)
+            menu.addAction(action)
+            self.actions.append(action)
+            return action
+
+        add("文字を入力...", window.edit_text, "F2")
+        menu.addSeparator()
+
+        self.vertical_action = add("縦書き", window.toggle_vertical, "F7")
+        self.vertical_action.setCheckable(True)
+        menu.addSeparator()
+
+        for label, align in (("左寄せ", "left"), ("中央寄せ", "center"), ("右寄せ", "right")):
+            add(label, lambda _=False, a=align: window.set_text_align(a))
+        menu.addSeparator()
+
+        add("大きく", lambda: window.step_text_size(1), "Ctrl+]")
+        add("小さく", lambda: window.step_text_size(-1), "Ctrl+[")
+        self.bold_action = add("太字", window.toggle_bold, "Ctrl+B")
+        self.bold_action.setCheckable(True)
+        menu.addSeparator()
+        add("フォントを選ぶ...", window.choose_font)
+
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）
+        self.copy_items = items_to_copy(menu, window._tool_actions.values())
+
+    def refresh(self) -> None:
+        text = self._state.selected_text
+        for action in self.actions:
+            action.setEnabled(text is not None)
+        self.bold_action.setChecked(text is not None and text.font.bold)
+        self.vertical_action.setChecked(
+            text is not None and text.direction == "vertical"
+        )
 
 
 class StickerMenu:

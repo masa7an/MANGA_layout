@@ -33,7 +33,7 @@ from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import PROJECT_FILENAME, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .export import EXPORT_DIRNAME
-from .menus import FocusMenu, StickerMenu, items_to_copy
+from .menus import FocusMenu, StickerMenu, TextMenu, items_to_copy
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .project_io import ProjectIO
 from .state import (
@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
         # `refresh()` を配って回る部品の一覧（→ `_refresh`）。
         # 部品を足したらここにも足す。足し忘れると、その部品のメニューが
         # 選択に追従しなくなる
-        self._menus = [self.focus_menu, self.sticker_menu]
+        self._menus = [self.focus_menu, self.sticker_menu, self.text_menu]
         self._build_toolbar()
         self._build_status_bar()
 
@@ -350,46 +350,6 @@ class MainWindow(QMainWindow):
         # 右クリックのメニューが写して使う（→ `items_to_copy`）
         self.balloon_style_copy_items = items_to_copy(menu, self._tool_actions.values())
         return menu
-
-    def _build_text_menu(self) -> None:
-        """セリフのメニュー。
-
-        先頭に「作る」を置く。ここが選択中のセリフへの操作だけだと、
-        1つも選んでいない間はメニュー全体がグレーになり、
-        どこから作るのか分からなくなる（吹き出しで一度やった失敗）。
-        """
-        menu = self.menuBar().addMenu("セリフ(&X)")
-        menu.addAction(self._tool_actions[TOOL_TEXT])
-        menu.addSeparator()
-
-        self.text_actions: list[QAction] = []
-
-        def add(label: str, slot, shortcut: str | None = None) -> QAction:
-            action = self._act(label, slot, shortcut)
-            menu.addAction(action)
-            self.text_actions.append(action)
-            return action
-
-        add("文字を入力...", self.edit_text, "F2")
-        menu.addSeparator()
-
-        self.vertical_action = add("縦書き", self.toggle_vertical, "F7")
-        self.vertical_action.setCheckable(True)
-        menu.addSeparator()
-
-        for label, align in (("左寄せ", "left"), ("中央寄せ", "center"), ("右寄せ", "right")):
-            add(label, lambda _=False, a=align: self.set_text_align(a))
-        menu.addSeparator()
-
-        add("大きく", lambda: self.step_text_size(1), "Ctrl+]")
-        add("小さく", lambda: self.step_text_size(-1), "Ctrl+[")
-        self.bold_action = add("太字", self.toggle_bold, "Ctrl+B")
-        self.bold_action.setCheckable(True)
-        menu.addSeparator()
-        add("フォントを選ぶ...", self.choose_font)
-
-        # 右クリックのメニューが写して使う（→ `items_to_copy`）
-        self.text_copy_items = items_to_copy(menu, self._tool_actions.values())
 
     def _build_menus(self) -> None:
         self._build_tool_actions()
@@ -579,7 +539,7 @@ class MainWindow(QMainWindow):
         )
 
         self.sticker_menu = StickerMenu(self)
-        self._build_text_menu()
+        self.text_menu = TextMenu(self)
 
         tool_menu = self.menuBar().addMenu("道具(&T)")
         for action in self._tool_actions.values():
@@ -695,7 +655,7 @@ class MainWindow(QMainWindow):
         state = self.state
 
         if state.selected_text is not None:
-            self._copy_actions(menu, self.text_copy_items)
+            self._copy_actions(menu, self.text_menu.copy_items)
 
         elif state.selected_sticker is not None:
             self._copy_actions(menu, self.sticker_menu.copy_items)
@@ -997,14 +957,6 @@ class MainWindow(QMainWindow):
             bool(page_panels) and not all(p.locked for p in page_panels)
         )
         self.unlock_all_action.setEnabled(any(p.locked for p in page_panels))
-
-        text = self.state.selected_text
-        for action in self.text_actions:
-            action.setEnabled(text is not None)
-        self.bold_action.setChecked(text is not None and text.font.bold)
-        self.vertical_action.setChecked(
-            text is not None and text.direction == "vertical"
-        )
 
         balloon = self.state.selected_balloon
         for action in self.balloon_actions:

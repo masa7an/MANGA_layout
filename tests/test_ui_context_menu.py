@@ -394,7 +394,7 @@ class TestSharedActions:
 
         menu = right_click(window_with_panel, *ON_TEXT)
 
-        assert window_with_panel.bold_action in menu.actions()
+        assert window_with_panel.text_menu.bold_action in menu.actions()
         assert window_with_panel.delete_action in menu.actions()
 
     def test_文言の書き換えが右クリック側にも出る(self, window_with_panel):

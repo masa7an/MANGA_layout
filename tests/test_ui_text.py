@@ -568,9 +568,9 @@ class TestDirection:
 
     def test_縦書きの印が状態に追随する(self, window_with_text):
         # 既定が縦書きなので、置いた直後から印が付いている
-        assert window_with_text.vertical_action.isChecked()
+        assert window_with_text.text_menu.vertical_action.isChecked()
         window_with_text.toggle_vertical()
-        assert not window_with_text.vertical_action.isChecked()
+        assert not window_with_text.text_menu.vertical_action.isChecked()
 
     def test_状態表示に向きが出る(self, window_with_text):
         assert "縦書き" in window_with_text._hint()
@@ -653,9 +653,9 @@ class TestTextMenu:
         assert all(a.isEnabled() for a in self.items(window_with_text))
 
     def test_太字の印が状態に追随する(self, window_with_text):
-        assert not window_with_text.bold_action.isChecked()
+        assert not window_with_text.text_menu.bold_action.isChecked()
         window_with_text.toggle_bold()
-        assert window_with_text.bold_action.isChecked()
+        assert window_with_text.text_menu.bold_action.isChecked()
 
 
 class TestDelete:
