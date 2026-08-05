@@ -282,6 +282,96 @@ class TestImagePlacement:
         window.paste_image()  # クリップボードは空、コマも無い
         assert window.state.page.panels == []
 
+    def test_同じコマに何枚でも重ねられる(self, window, png, fixture_dir):
+        """背景の絵の上にキャラの絵を置く使い方（→ `open_image_file`）。"""
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+
+        window.state.place_image(panel_id, png)
+        window.state.place_image(panel_id, (fixture_dir / "gray8.png").read_bytes())
+
+        children = window.state.page.panels[0].children
+        assert len(children) == 2
+        # あとから置いたほうが手前
+        assert children[1].z > children[0].z
+
+
+class TestImageReplace:
+    """画像1枚を別のファイルの絵に入れ替える（→ `EditorState.replace_image`）。"""
+
+    @pytest.fixture
+    def gray(self, fixture_dir) -> bytes:
+        """差し替え先。`png`（64×48）と縦横の違うもの。"""
+        return (fixture_dir / "gray8.png").read_bytes()
+
+    def test_前の絵が消えて1枚になる(self, window_with_image, gray):
+        state = window_with_image.state
+        before = state.selected_image
+
+        after = state.replace_image(before.id, gray)
+
+        children = state.page.panels[0].children
+        assert children == [after]
+        assert after.id != before.id
+        assert after.asset != before.asset
+        assert state.selected_id == after.id
+
+    def test_重なり順を引き継ぐ(self, window, png, gray):
+        """背景を差し替えても、手前のキャラの前に出てこないこと。
+
+        置き直す形（末尾に足す）にすると、ここが逆になる。
+        """
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        back = window.state.place_image(panel_id, png)
+        front = window.state.place_image(panel_id, gray)
+
+        replaced = window.state.replace_image(back.id, gray)
+
+        assert replaced.z < front.z
+        # 手前の1枚はそのまま残る
+        ids = {c.id for c in window.state.page.panels[0].children}
+        assert front.id in ids and len(ids) == 2
+
+    def test_差し替えた絵もコマに収まる(self, window_with_image, gray):
+        """置いたときと同じ「収める」から始める。埋めるのはフィットの役目。"""
+        state = window_with_image.state
+        image = state.replace_image(state.selected_image.id, gray)
+        panel = state.page.panels[0].shape.bounds()
+
+        assert image.rect.w <= panel.w + 1e-9
+        assert image.rect.h <= panel.h + 1e-9
+        assert image.rect.center == pytest.approx(panel.center)
+
+    def test_履歴は1手(self, window_with_image, gray):
+        state = window_with_image.state
+        before = state.selected_image
+
+        state.replace_image(before.id, gray)
+
+        assert state.history.undo_label == "画像の差し替え"
+        state.undo()
+        children = state.page.panels[0].children
+        assert len(children) == 1
+        assert children[0].asset == before.asset
+
+    def test_壊れた画像なら元の絵が残る(self, window_with_image, fixture_dir):
+        from manga_layout.errors import BrokenImageError
+
+        state = window_with_image.state
+        before = state.selected_image
+        broken = (fixture_dir / "broken.png").read_bytes()
+
+        with pytest.raises(BrokenImageError):
+            state.replace_image(before.id, broken)
+
+        assert state.page.panels[0].children == [before]
+
+    def test_無い画像を指しても何も起きない(self, window_with_image, gray):
+        state = window_with_image.state
+        assert state.replace_image("img-無い", gray) is None
+        assert len(state.page.panels[0].children) == 1
+
 
 class TestImageAssets:
     """未保存のうちに貼っても、保存すれば実体が残ること。"""

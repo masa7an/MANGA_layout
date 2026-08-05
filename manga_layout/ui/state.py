@@ -516,6 +516,36 @@ class EditorState(QObject):
         self.select(image.id)
         return image
 
+    def replace_image(self, image_id: str, data: bytes) -> ImageObject | None:
+        """コマの中の画像を、別のファイルの絵に入れ替える。無い画像なら None。
+
+        **重なり順（z）は元の画像から引き継ぐ。** 背景の上にキャラを重ねる
+        使い方があり、ただ置き直す形（末尾に足す）にすると、背景を差し替え
+        ただけで**キャラの手前へ出てしまう**。
+
+        大きさは置いたときと同じ「コマに収まる」から始める（→ `place_image`）。
+        元の矩形をそのまま使い回すと、縦横比の違う絵で歪む。
+
+        取り込みが先で削除が後。壊れたファイルを選んだときは `import_bytes`
+        が例外を出し、**元の画像が消えないまま**呼び出し側へ戻る。
+        """
+        panel = self.page.panel_of_image(image_id)
+        if panel is None:
+            return None
+        panel_id = panel.id
+        old_z = next(c for c in panel.children if c.id == image_id).z
+
+        ref, px = self.import_bytes(data)
+        rect = contain_rect_in(panel.shape.bounds(), px)
+
+        with self.edit("画像の差し替え") as project:
+            target = project.pages[self._page_index].panel(panel_id)
+            image = project.add_image(target, ref, rect, px)
+            image.z = old_z
+            target.children = [c for c in target.children if c.id != image_id]
+        self.select(image.id)
+        return image
+
     # -- 斜めのコマ --------------------------------------------------------
 
     def flip_slant(self) -> bool:

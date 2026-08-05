@@ -142,6 +142,13 @@ def split_here_label(name: str, *, first: bool) -> str:
     """
     return here_label(name, prefix=SPLIT_HERE_PREFIX, first=first)
 
+
+# 右クリックの「この画像を差し替え」。名前は隣に並ぶ「この画像を削除」に
+# 揃える（どちらもカーソルの下の1枚に効く）。何をするのかは名前を伸ばさず、
+# カーソルを乗せた間の説明に逃がす（→ `_menu_act` の `tip`）
+REPLACE_IMAGE_LABEL = "この画像を差し替え..."
+REPLACE_IMAGE_TIP = "ファイルを選び、この画像と入れ替える（前の絵は消える）"
+
 # 「開く」の窓に出す対象。作品フォルダそのものではなく、その中の
 # project.json を選ばせる（理由は `open_project`）
 PROJECT_FILE_FILTER = f"作品ファイル ({PROJECT_FILENAME});;すべてのファイル (*)"
@@ -751,6 +758,18 @@ class MainWindow(QMainWindow):
             # 並ぶと、メニューを読む手間だけが増える（→ 6.12）
             if state.selected_image.rotation != 0.0:
                 menu.addAction(self.reset_rotation_action)
+            menu.addSeparator()
+            # 踏み込んで画像を選んだ状態でも、差し替えと読み込みは要る。
+            # ここに無いと、いったん Esc でコマへ戻る手数が挟まる
+            self._menu_act(
+                menu,
+                REPLACE_IMAGE_LABEL,
+                lambda _checked=False, i=state.selected_image.id: (
+                    self.replace_image_file(i)
+                ),
+                tip=REPLACE_IMAGE_TIP,
+            )
+            menu.addAction(self.open_image_action)
 
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
@@ -766,7 +785,7 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             menu.addAction(self.paste_action)
             menu.addAction(self.open_image_action)
-            self._add_delete_image_here(menu, state.selected_panel, x, y)
+            self._add_image_here(menu, state.selected_panel, x, y)
 
         else:
             # 何も無いところ。選択に効く項目はどれも使えないので出さない。
@@ -902,20 +921,24 @@ class MainWindow(QMainWindow):
             )
             shown += 1
 
-    def _add_delete_image_here(
-        self, menu: QMenu, panel: Panel, x: float, y: float
-    ) -> None:
-        """カーソルの下に画像があれば、その画像を消す項目を出す。
+    def _add_image_here(self, menu: QMenu, panel: Panel, x: float, y: float) -> None:
+        """カーソルの下に画像があれば、その画像に効く項目を出す。
 
-        **コマを選んだままでも画像を消せるようにする。** 画像を選ぶには
-        ダブルクリックで一段踏み込む必要があり（要件定義 6.3）、右クリック
-        しただけではコマが選ばれる。この項目が無いと、メニューに並ぶのは
-        「コマを削除」だけになり、**画像を消すつもりでコマを消す**ことになる。
-        実際にその取り違えが起きたので足した。
+        **コマを選んだままでも画像を差し替え・削除できるようにする。**
+        画像を選ぶにはダブルクリックで一段踏み込む必要があり（要件定義 6.3）、
+        右クリックしただけではコマが選ばれる。削除の項目が無かった頃は、
+        メニューに並ぶのが「コマを削除」だけになり、**画像を消すつもりで
+        コマを消す**取り違えが実際に起きた。差し替えも同じ理由でここに出す。
         """
         image = image_at(panel, x, y)
         if image is None:
             return
+        self._menu_act(
+            menu,
+            REPLACE_IMAGE_LABEL,
+            lambda _checked=False, i=image.id: self.replace_image_file(i),
+            tip=REPLACE_IMAGE_TIP,
+        )
         self._menu_act(
             menu,
             "この画像を削除",
@@ -1328,12 +1351,19 @@ class MainWindow(QMainWindow):
         except MangaLayoutError as e:
             QMessageBox.warning(self, "画像を置けません", str(e))
             return False
+        self._image_message(image, source, "置きました")
+        return True
+
+    def _image_message(self, image: ImageObject, source: str, what: str) -> None:
+        """置いた・差し替えたときの状態表示。
+
+        埋めたければ Ctrl+Shift+F、という案内をどちらにも同じ形で出す
+        （置いた直後は「収める」大きさで始まる → 要件定義 6.3）。
+        """
         w, h = image.src_px
         self.state.message.emit(
-            f"画像を置きました（{source} / {w}×{h} px）。"
-            "コマを埋めるなら Ctrl+Shift+F"
+            f"画像を{what}（{source} / {w}×{h} px）。コマを埋めるなら Ctrl+Shift+F"
         )
-        return True
 
     def paste_image(self) -> None:
         panel = self._target_panel()
@@ -1350,29 +1380,70 @@ class MainWindow(QMainWindow):
             return
         self._place_image(panel.id, data, "貼り付け")
 
-    def open_image_file(self) -> None:
-        """コマに入れる画像を選ぶ。
+    def _choose_image_file(self) -> tuple[bytes, str] | None:
+        """画像ファイルを選ばせて、中身と名前を返す。やめた・読めなければ None。
 
         **始まる場所は保存・作品を開くと揃える。** 下書きは作品の隣に
         置かれることが多いので、そこから始めれば辿り直さずに済む。
         空文字を渡すと**アプリを起動したフォルダ**から始まり、
         毎回どこか分からない場所を辿ることになる。
         """
-        panel = self._target_panel()
-        if panel is None:
-            return
         path, _ = QFileDialog.getOpenFileName(
             self, "画像を選ぶ", self._dialog_start_dir(), IMAGE_FILE_FILTER
         )
         if not path:
-            return
+            return None
         file = pathlib.Path(path)
         try:
             data = file.read_bytes()
         except OSError as e:
             QMessageBox.critical(self, "画像を読めません", f"{file}\n{e}")
+            return None
+        return data, file.name
+
+    def open_image_file(self) -> None:
+        """コマに入れる画像を選ぶ。**既にある画像は消さず、上に重ねる。**
+
+        背景の絵の上にキャラの絵を置く使い方があるので、1コマに何枚でも
+        入れられる。入れ替えたいときは「この画像を差し替え」を使う
+        （→ `replace_image_file`）。
+        """
+        panel = self._target_panel()
+        if panel is None:
             return
-        self._place_image(panel.id, data, file.name)
+        chosen = self._choose_image_file()
+        if chosen is None:
+            return
+        data, name = chosen
+        self._place_image(panel.id, data, name)
+
+    def replace_image_file(self, image_id: str | None = None) -> None:
+        """画像を1枚、選んだファイルの絵に差し替える。
+
+        `image_id` を渡さなければ選択中の画像。右クリックのメニューからは
+        **カーソルの下の画像を名指しで渡す**（コマを選んだままでも差し替え
+        られるように → `_add_image_here`）。
+
+        重なり順は元の画像を引き継ぐので、背景だけ差し替えても手前の絵は
+        手前のまま（→ `EditorState.replace_image`）。
+        """
+        if image_id is None:
+            image = self.state.selected_image
+            if image is None:
+                return
+            image_id = image.id
+        chosen = self._choose_image_file()
+        if chosen is None:
+            return
+        data, name = chosen
+        try:
+            placed = self.state.replace_image(image_id, data)
+        except MangaLayoutError as e:
+            QMessageBox.warning(self, "画像を置けません", str(e))
+            return
+        if placed is None:
+            return
+        self._image_message(placed, name, "差し替えました")
 
     def fit_image(self) -> None:
         """選択中の画像でコマを埋める。はみ出た分はコマの形で切り抜かれる。"""

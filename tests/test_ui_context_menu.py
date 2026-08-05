@@ -23,6 +23,7 @@ from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
 from manga_layout.ui.window import (
     PLACE_HERE_PREFIX,
+    REPLACE_IMAGE_LABEL,
     SPLIT_HERE_PREFIX,
     place_here_label,
     split_here_label,
@@ -510,20 +511,22 @@ class TestDeleteTarget:
         assert len(state.page.panels) == 1
 
 
+@pytest.fixture
+def window_with_image(window_with_panel, png_bytes):
+    """コマに画像を1枚入れ、コマを選んだ状態に戻したところ。"""
+    panel = window_with_panel.state.page.panels[0]
+    window_with_panel.state.place_image(panel.id, png_bytes)
+    # 置いた直後は画像が選ばれている。コマを選んだ状態に戻す
+    window_with_panel.state.select(panel.id)
+    return window_with_panel
+
+
 class TestDeleteImageHere:
     """コマを選んだままでも、カーソルの下の画像を消せる。
 
     この項目が無いと、メニューに並ぶのは「コマを削除」だけになり、
-    画像を消すつもりでコマが消える（→ `_add_delete_image_here`）。
+    画像を消すつもりでコマが消える（→ `_add_image_here`）。
     """
-
-    @pytest.fixture
-    def window_with_image(self, window_with_panel, png_bytes):
-        panel = window_with_panel.state.page.panels[0]
-        window_with_panel.state.place_image(panel.id, png_bytes)
-        # 置いた直後は画像が選ばれている。コマを選んだ状態に戻す
-        window_with_panel.state.select(panel.id)
-        return window_with_panel
 
     def test_画像の上でだけ出る(self, window_with_image):
         panel = window_with_image.state.page.panels[0]
@@ -561,3 +564,51 @@ class TestDeleteImageHere:
 
         find(menu, "この画像を削除").trigger()
         assert state.page.panels[0].children == []
+
+
+class TestReplaceImageHere:
+    """画像の差し替えと、絵があるままの読み込み（→ `_add_image_here`）。
+
+    ファイル選択の窓は開けない（応答待ちで止まる）ので、ここで見るのは
+    「どの項目が並ぶか」まで。実際に入れ替わることは
+    `test_ui.py::TestImageReplace` が見ている。
+    """
+
+    def test_画像の上でだけ出る(self, window_with_image):
+        panel = window_with_image.state.page.panels[0]
+        image = panel.children[0]
+        cx, cy = image.rect.center
+
+        assert REPLACE_IMAGE_LABEL in labels(right_click(window_with_image, cx, cy))
+
+        corner = (PANEL.x + 5.0, PANEL.y + 5.0)
+        assert not image.rect.contains(*corner)
+        found = labels(right_click(window_with_image, *corner))
+        assert REPLACE_IMAGE_LABEL not in found
+        # 絵から外れていても、コマへ読み込む道は開いている
+        assert "ファイルから読み込み..." in found
+
+    def test_絵があっても読み込みは出る(self, window_with_image):
+        """背景の上にキャラを重ねる使い方があるので、塞がない。"""
+        image = window_with_image.state.page.panels[0].children[0]
+        cx, cy = image.rect.center
+
+        found = labels(right_click(window_with_image, cx, cy))
+
+        assert "ファイルから読み込み..." in found
+        assert REPLACE_IMAGE_LABEL in found
+
+    def test_画像を選んでいるときも両方出る(self, window_with_image):
+        """踏み込んで画像を選んだ状態。Esc でコマへ戻る手数を挟ませない。"""
+        state = window_with_image.state
+        image = state.page.panels[0].children[0]
+        state.select(image.id)
+        cx, cy = image.rect.center
+
+        found = labels(right_click(window_with_image, cx, cy))
+
+        assert state.selected_image is not None
+        assert REPLACE_IMAGE_LABEL in found
+        assert "ファイルから読み込み..." in found
+        # 消す側は「画像を削除」1つで足りる（選んでいるものに効く）
+        assert "画像を削除" in found
