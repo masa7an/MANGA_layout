@@ -20,11 +20,21 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QMenu
 
 from ..model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE
-from .state import BALLOON_STYLE_LABELS, BALLOON_TOOLS, STICKER_TOOLS, TOOL_TEXT
+from .state import (
+    BALLOON_STYLE_LABELS,
+    BALLOON_TOOLS,
+    STICKER_TOOLS,
+    TOOL_PANEL,
+    TOOL_SPLIT_H,
+    TOOL_SPLIT_SLANT,
+    TOOL_SPLIT_V,
+    TOOL_TEXT,
+    object_label,
+)
 
 if TYPE_CHECKING:
     from .window import MainWindow
@@ -89,6 +99,122 @@ def items_to_copy(
             continue
         items.append(None if action.isSeparator() else action)
     return items
+
+
+class EditMenu:
+    """編集のメニュー。元に戻す・やり直す・複製・削除・全面コマ。"""
+
+    def __init__(self, window: MainWindow) -> None:
+        self._window = window
+        self._state = window.state
+        menu = window.menuBar().addMenu("編集(&E)")
+        self.undo_action = window._act("元に戻す", window.state.undo, "Ctrl+Z")
+        self.redo_action = window._act("やり直す", window.state.redo, "Ctrl+Y")
+        # Ctrl+Shift+Z も「やり直す」に割り当てる。ソフトによって Ctrl+Y と
+        # Ctrl+Shift+Z のどちらが「やり直す」かが割れているため、両方通す
+        self.redo_action.setShortcuts(
+            [QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")]
+        )
+        menu.addAction(self.undo_action)
+        menu.addAction(self.redo_action)
+        menu.addSeparator()
+        # **キーは割り当てない**（→ 要件定義 7章）。`Ctrl+D` は他のソフトで
+        # 「選択を解除」に当たっていることがあり、意味が食い違う
+        self.duplicate_action = window._act(
+            "複製",
+            window.state.duplicate_selected,
+            None,
+            "選んでいるものを写して、右下へ少しずらして置く",
+        )
+        menu.addAction(self.duplicate_action)
+        self.delete_action = window._act("削除", window.delete_selected, "Delete")
+        menu.addAction(self.delete_action)
+        self.full_page_action = window._act(
+            "ページ全面にコマを作る", window.add_full_page_panel, "Ctrl+Shift+A"
+        )
+        menu.addAction(self.full_page_action)
+
+    def refresh(self) -> None:
+        history = self._state.history
+        self.undo_action.setEnabled(history.can_undo)
+        self.redo_action.setEnabled(history.can_redo)
+        self.undo_action.setText(
+            f"元に戻す: {history.undo_label}" if history.can_undo else "元に戻す"
+        )
+        self.redo_action.setText(
+            f"やり直す: {history.redo_label}" if history.can_redo else "やり直す"
+        )
+        # 「削除」ではなく「コマを削除」「画像を削除」と、対象を名前に出す。
+        # 押す前にカーソルの下で気づけるようにするため（→ `delete_target`）
+        target = self._window.delete_target()
+        self.delete_action.setEnabled(target is not None)
+        self.delete_action.setText("削除" if target is None else f"{target[0]}を削除")
+        # 複製も対象を名前に出す（→ 6.15）。**斜めに割ったコマでも押せるまま**に
+        # する。グレーにすると「写せない」ことは伝わっても理由が伝わらず、
+        # 出所が斜めであることに気づけない（断りは `duplicate_selected` が出す）
+        name = object_label(self._state.selected_object)
+        self.duplicate_action.setEnabled(bool(name))
+        self.duplicate_action.setText(f"{name}を複製" if name else "複製")
+
+
+class PanelMenu:
+    """コマのメニュー。割る道具・斜めの反転・ロック・集中線（畳み）。"""
+
+    def __init__(self, window: MainWindow) -> None:
+        self._state = window.state
+        menu = window.menuBar().addMenu("コマ(&M)")
+        # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
+        # 何も選んでいない間はメニュー全体がグレーになる（吹き出しでの失敗）
+        menu.addAction(window._tool_actions[TOOL_PANEL])
+        menu.addSeparator()
+        for tool in (TOOL_SPLIT_H, TOOL_SPLIT_V, TOOL_SPLIT_SLANT):
+            menu.addAction(window._tool_actions[tool])
+        menu.addSeparator()
+        self.slant_flip_action = window._act(
+            "斜めの向きを反転",
+            window.flip_slant,
+            None,
+            "斜めに割った2枚の傾きを / と \\ で入れ替える",
+        )
+        menu.addAction(self.slant_flip_action)
+        menu.addSeparator()
+        # 「ロック」と「ロックを解除」は1項目の文言を入れ替える
+        # （しっぽの「消す／出す」と同じ → `refresh`）
+        self.lock_toggle_action = window._act(
+            "ロック",
+            window.toggle_panel_lock,
+            None,
+            "選んだコマを動かせなくする。中の画像やフキダシは今まで通り触れる",
+        )
+        menu.addAction(self.lock_toggle_action)
+        self.lock_all_action = window._act(
+            "このページのコマをすべてロック", window.lock_all_panels
+        )
+        menu.addAction(self.lock_all_action)
+        self.unlock_all_action = window._act(
+            "このページのコマのロックをすべて解除", window.unlock_all_panels
+        )
+        menu.addAction(self.unlock_all_action)
+        menu.addSeparator()
+        self.focus = FocusMenu(window, menu)
+
+    def refresh(self) -> None:
+        self.slant_flip_action.setEnabled(self._state.selected_slant_pair is not None)
+
+        # ロック（→ 6.17）。「ロック／ロックを解除」は集中線の「入れる／消す」
+        # と同じく1項目の文言を入れ替える。一括の2項目は、押しても何も
+        # 変わらない側をグレーにする（→ `lock_all_panels` の無変化ガード）
+        self.lock_toggle_action.setEnabled(self._state.selected_panel is not None)
+        self.lock_toggle_action.setText(
+            "ロックを解除" if self._state.is_locked_selection else "ロック"
+        )
+        page_panels = self._state.page.panels
+        self.lock_all_action.setEnabled(
+            bool(page_panels) and not all(p.locked for p in page_panels)
+        )
+        self.unlock_all_action.setEnabled(any(p.locked for p in page_panels))
+
+        self.focus.refresh()
 
 
 class FocusMenu:

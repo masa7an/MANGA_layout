@@ -1118,11 +1118,11 @@ class TestSlantSplitUI:
         window.flip_slant()
 
         assert window.state.page.slant_pairs[0].direction != before
-        assert window.slant_flip_action.isEnabled()
+        assert window.panel_menu.slant_flip_action.isEnabled()
 
     def test_斜めでないコマでは反転が選べない(self, window):
         window.add_full_page_panel()
-        assert not window.slant_flip_action.isEnabled()
+        assert not window.panel_menu.slant_flip_action.isEnabled()
 
     def test_下見の分割線が斜めになる(self, window):
         window.add_full_page_panel()

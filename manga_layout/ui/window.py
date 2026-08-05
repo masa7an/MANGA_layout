@@ -37,7 +37,8 @@ from .menus import (
     BALLOON_STYLE_MENU_LABEL,
     TAIL_TURN_LABELS,
     BalloonMenu,
-    FocusMenu,
+    EditMenu,
+    PanelMenu,
     StickerMenu,
     TextMenu,
 )
@@ -196,7 +197,8 @@ class MainWindow(QMainWindow):
         # 部品を足したらここにも足す。足し忘れると、その部品のメニューが
         # 選択に追従しなくなる
         self._menus = [
-            self.focus_menu,
+            self.edit_menu,
+            self.panel_menu,  # 集中線（focus_menu）のぶんも面倒を見る
             self.balloon_menu,
             self.sticker_menu,
             self.text_menu,
@@ -351,68 +353,10 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self._act("終了", self.close, "Ctrl+Q"))
 
-        edit_menu = self.menuBar().addMenu("編集(&E)")
-        self.undo_action = self._act("元に戻す", self.state.undo, "Ctrl+Z")
-        self.redo_action = self._act("やり直す", self.state.redo, "Ctrl+Y")
-        # Ctrl+Shift+Z も「やり直す」に割り当てる。ソフトによって Ctrl+Y と
-        # Ctrl+Shift+Z のどちらが「やり直す」かが割れているため、両方通す
-        self.redo_action.setShortcuts(
-            [QKeySequence("Ctrl+Y"), QKeySequence("Ctrl+Shift+Z")]
-        )
-        edit_menu.addAction(self.undo_action)
-        edit_menu.addAction(self.redo_action)
-        edit_menu.addSeparator()
-        # **キーは割り当てない**（→ 要件定義 7章）。`Ctrl+D` は他のソフトで
-        # 「選択を解除」に当たっていることがあり、意味が食い違う
-        self.duplicate_action = self._act(
-            "複製",
-            self.state.duplicate_selected,
-            None,
-            "選んでいるものを写して、右下へ少しずらして置く",
-        )
-        edit_menu.addAction(self.duplicate_action)
-        self.delete_action = self._act("削除", self.delete_selected, "Delete")
-        edit_menu.addAction(self.delete_action)
-        self.full_page_action = self._act(
-            "ページ全面にコマを作る", self.add_full_page_panel, "Ctrl+Shift+A"
-        )
-        edit_menu.addAction(self.full_page_action)
-
-        panel_menu = self.menuBar().addMenu("コマ(&M)")
-        # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
-        # 何も選んでいない間はメニュー全体がグレーになる（吹き出しでの失敗）
-        panel_menu.addAction(self._tool_actions[TOOL_PANEL])
-        panel_menu.addSeparator()
-        for tool in (TOOL_SPLIT_H, TOOL_SPLIT_V, TOOL_SPLIT_SLANT):
-            panel_menu.addAction(self._tool_actions[tool])
-        panel_menu.addSeparator()
-        self.slant_flip_action = self._act(
-            "斜めの向きを反転",
-            self.flip_slant,
-            None,
-            "斜めに割った2枚の傾きを / と \\ で入れ替える",
-        )
-        panel_menu.addAction(self.slant_flip_action)
-        panel_menu.addSeparator()
-        # 「ロック」と「ロックを解除」は1項目の文言を入れ替える
-        # （しっぽの「消す／出す」と同じ → `_refresh`）
-        self.lock_toggle_action = self._act(
-            "ロック",
-            self.toggle_panel_lock,
-            None,
-            "選んだコマを動かせなくする。中の画像やフキダシは今まで通り触れる",
-        )
-        panel_menu.addAction(self.lock_toggle_action)
-        self.lock_all_action = self._act(
-            "このページのコマをすべてロック", self.lock_all_panels
-        )
-        panel_menu.addAction(self.lock_all_action)
-        self.unlock_all_action = self._act(
-            "このページのコマのロックをすべて解除", self.unlock_all_panels
-        )
-        panel_menu.addAction(self.unlock_all_action)
-        panel_menu.addSeparator()
-        self.focus_menu = FocusMenu(self, panel_menu)
+        self.edit_menu = EditMenu(self)
+        self.panel_menu = PanelMenu(self)
+        # 平らな別名。右クリックとテストが「集中線」を直に指すときに使う
+        self.focus_menu = self.panel_menu.focus
 
         image_menu = self.menuBar().addMenu("画像(&I)")
         self.paste_action = self._act(
@@ -594,8 +538,8 @@ class MainWindow(QMainWindow):
 
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
-            menu.addAction(self.slant_flip_action)
-            menu.addAction(self.lock_toggle_action)
+            menu.addAction(self.panel_menu.slant_flip_action)
+            menu.addAction(self.panel_menu.lock_toggle_action)
             # **メニューバーと同じものを畳んで出す。** 並べるのは同じ
             # QAction なので、有効・無効と「入れる／消す」の文言は
             # `_refresh` が1か所で面倒を見たままになる（→ 6.12）。
@@ -612,17 +556,17 @@ class MainWindow(QMainWindow):
             # 何も無いところ。選択に効く項目はどれも使えないので出さない。
             # 代わりに、ここでしか呼べない「元に戻す」を添える
             self._add_place_here(menu, x, y, ("panel", "balloon", "sticker", "text"))
-            menu.addAction(self.full_page_action)
+            menu.addAction(self.edit_menu.full_page_action)
             menu.addSeparator()
-            menu.addAction(self.undo_action)
-            menu.addAction(self.redo_action)
+            menu.addAction(self.edit_menu.undo_action)
+            menu.addAction(self.edit_menu.redo_action)
             return menu
 
         menu.addSeparator()
         # 複製と削除は「選んでいるものへの操作」で、どの品書きにも要る。
         # 分岐の外に置いて、種類を足したときに片方だけ抜けないようにする
-        menu.addAction(self.duplicate_action)
-        menu.addAction(self.delete_action)
+        menu.addAction(self.edit_menu.duplicate_action)
+        menu.addAction(self.edit_menu.delete_action)
         return menu
 
     def _show_tips_in_status_bar(self, menu: QMenu) -> None:
@@ -821,43 +765,9 @@ class MainWindow(QMainWindow):
         self.move_page_up_action.setEnabled(index > 0)
         self.move_page_down_action.setEnabled(index < count - 1)
 
-        history = self.state.history
-        self.undo_action.setEnabled(history.can_undo)
-        self.redo_action.setEnabled(history.can_redo)
-        self.undo_action.setText(
-            f"元に戻す: {history.undo_label}" if history.can_undo else "元に戻す"
-        )
-        self.redo_action.setText(
-            f"やり直す: {history.redo_label}" if history.can_redo else "やり直す"
-        )
-        # 「削除」ではなく「コマを削除」「画像を削除」と、対象を名前に出す。
-        # 押す前にカーソルの下で気づけるようにするため（→ `delete_target`）
-        target = self.delete_target()
-        self.delete_action.setEnabled(target is not None)
-        self.delete_action.setText("削除" if target is None else f"{target[0]}を削除")
-        # 複製も対象を名前に出す（→ 6.15）。**斜めに割ったコマでも押せるまま**に
-        # する。グレーにすると「写せない」ことは伝わっても理由が伝わらず、
-        # 出所が斜めであることに気づけない（断りは `duplicate_selected` が出す）
-        name = object_label(self.state.selected_object)
-        self.duplicate_action.setEnabled(bool(name))
-        self.duplicate_action.setText(f"{name}を複製" if name else "複製")
         image = self.state.selected_image
         self.fit_action.setEnabled(image is not None)
         self.reset_rotation_action.setEnabled(image is not None and image.rotation != 0.0)
-        self.slant_flip_action.setEnabled(self.state.selected_slant_pair is not None)
-
-        # ロック（→ 6.17）。「ロック／ロックを解除」は集中線の「入れる／消す」
-        # と同じく1項目の文言を入れ替える。一括の2項目は、押しても何も
-        # 変わらない側をグレーにする（→ `lock_all_panels` の無変化ガード）
-        self.lock_toggle_action.setEnabled(self.state.selected_panel is not None)
-        self.lock_toggle_action.setText(
-            "ロックを解除" if self.state.is_locked_selection else "ロック"
-        )
-        page_panels = self.state.page.panels
-        self.lock_all_action.setEnabled(
-            bool(page_panels) and not all(p.locked for p in page_panels)
-        )
-        self.unlock_all_action.setEnabled(any(p.locked for p in page_panels))
 
         # ここから下の分は、部品が自分のぶんを面倒見る（→ `menus.py`）
         for menu in self._menus:

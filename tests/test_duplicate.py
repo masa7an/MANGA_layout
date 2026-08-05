@@ -332,7 +332,7 @@ def test_斜めに割ったコマは押せるまま断る(window_with_panel):
     state.select(state.page.panels[0].id)
     window_with_panel._refresh()
 
-    assert window_with_panel.duplicate_action.isEnabled()
+    assert window_with_panel.edit_menu.duplicate_action.isEnabled()
     assert state.duplicate_selected() is None
     assert len(state.page.panels) == 2
 
@@ -343,7 +343,7 @@ def test_斜めに割ったコマは押せるまま断る(window_with_panel):
 def test_名前に対象を出す(window_with_panel):
     """「複製」だけだと、コマと画像のどちらが写るのか押す前に分からない。"""
     state = window_with_panel.state
-    action = window_with_panel.duplicate_action
+    action = window_with_panel.edit_menu.duplicate_action
 
     window_with_panel._refresh()
     assert action.text() == "コマを複製"
@@ -364,7 +364,7 @@ def test_名前と実際に写るものが揃っている(window_with_panel):
     state.add_text(TEXT, "セリフ")
     window_with_panel._refresh()
 
-    assert window_with_panel.duplicate_action.text() == "セリフを複製"
+    assert window_with_panel.edit_menu.duplicate_action.text() == "セリフを複製"
     copy = state.duplicate_selected()
 
     assert isinstance(copy, TextObject)

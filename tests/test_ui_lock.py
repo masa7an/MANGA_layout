@@ -80,17 +80,17 @@ def test_解除も1手で戻る(window_with_locked_panel):
 
 def test_メニューの文言がロック_ロックを解除で入れ替わる(window_with_panel):
     window = window_with_panel
-    assert window.lock_toggle_action.text() == "ロック"
+    assert window.panel_menu.lock_toggle_action.text() == "ロック"
     window.toggle_panel_lock()
-    assert window.lock_toggle_action.text() == "ロックを解除"
+    assert window.panel_menu.lock_toggle_action.text() == "ロックを解除"
     window.toggle_panel_lock()
-    assert window.lock_toggle_action.text() == "ロック"
+    assert window.panel_menu.lock_toggle_action.text() == "ロック"
 
 
 def test_右クリックにもロック項目が出る(window_with_panel):
     window = window_with_panel
     menu = window._context_menu(*PANEL_CENTER)
-    assert window.lock_toggle_action in menu.actions()
+    assert window.panel_menu.lock_toggle_action in menu.actions()
 
 
 # -- 選んでいるだけでは分からない。ステータス表示にだけ出る -------------------------

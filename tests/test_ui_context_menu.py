@@ -395,7 +395,7 @@ class TestSharedActions:
         menu = right_click(window_with_panel, *ON_TEXT)
 
         assert window_with_panel.text_menu.bold_action in menu.actions()
-        assert window_with_panel.delete_action in menu.actions()
+        assert window_with_panel.edit_menu.delete_action in menu.actions()
 
     def test_文言の書き換えが右クリック側にも出る(self, window_with_panel):
         """「しっぽを消す／出す」は `_refresh` が1か所で切り替えている。"""
@@ -521,7 +521,7 @@ class TestDeleteTarget:
 
     def test_選んでいるものが名前に出る(self, window_with_panel):
         state = window_with_panel.state
-        action = window_with_panel.delete_action
+        action = window_with_panel.edit_menu.delete_action
 
         right_click(window_with_panel, 400.0, 300.0)
         assert action.text() == "コマを削除"
@@ -538,8 +538,8 @@ class TestDeleteTarget:
 
     def test_何も選んでいなければ無効(self, window_with_panel):
         right_click(window_with_panel, *EMPTY)
-        assert window_with_panel.delete_action.text() == "削除"
-        assert not window_with_panel.delete_action.isEnabled()
+        assert window_with_panel.edit_menu.delete_action.text() == "削除"
+        assert not window_with_panel.edit_menu.delete_action.isEnabled()
 
     def test_名前と実際に消えるものが揃っている(self, window_with_panel):
         """`delete_target` が両方の出所。別々に持つと食い違わせられる。"""
@@ -548,7 +548,7 @@ class TestDeleteTarget:
         state.select(None)
         right_click(window_with_panel, 300.0, 300.0)
 
-        assert window_with_panel.delete_action.text() == "フキダシを削除"
+        assert window_with_panel.edit_menu.delete_action.text() == "フキダシを削除"
         window_with_panel.delete_selected()
 
         assert [f for f in state.page.floating if isinstance(f, BalloonObject)] == []
