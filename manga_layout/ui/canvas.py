@@ -811,8 +811,11 @@ class PageScene(QGraphicsScene):
         if self.preview_rect is not None:
             painter.save()
             self._apply_rotation(painter, self.preview_rect, rotation)
-            painter.setPen(cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
-            painter.setBrush(QBrush(QColor(30, 136, 229, 30)))
+            accent = self._accent()
+            fill = QColor(accent)
+            fill.setAlpha(30)
+            painter.setPen(cosmetic_pen(accent, 1.5, Qt.PenStyle.DashLine))
+            painter.setBrush(QBrush(fill))
             painter.drawRect(qrect(self.preview_rect))
             self._draw_size_hint(painter, self.preview_rect)
             painter.restore()
