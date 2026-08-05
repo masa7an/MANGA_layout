@@ -661,7 +661,37 @@ class StickerObject(SceneObject):
         )
 
 
-# ページ直下に置けるもの。将来 EffectObject などを足すときはここに登録する
+# ページ直下に置けるもの。将来 EffectObject などを足すときは、
+# **ここへの登録だけでは足りない。** 触る場所は他に6ファイル・約15箇所ある
+# （2026-08-05、マークを足した実績から数えた）。次に足す人（＝半年後の自分）が
+# ここだけ直して安心してしまわないよう、一覧をここに置く。
+#
+#     manga_layout/model.py
+#         - 型そのもの（dataclass。BalloonObject などに倣う）
+#         - `_FLOATING_TYPES`（このすぐ下）
+#         - `floating_layer`（重なりの段。どの高さに挟むかを決める → 下の「表示レイヤー」）
+#         - `_ID_PREFIXES`（→ `Project.duplicate` の複製で使う）
+#         - `Project.add_〇〇`（生成口。id の採番をここに絞るため）
+#         - `Project.scale_lengths`（version 1 の mm→px 換算。長さを持つ項目があれば要る）
+#     manga_layout/layout.py
+#         - `〇〇_at(page, x, y)`（当たり判定。描く順と同じ順で拾う → `_pick_at`）
+#     manga_layout/ui/state.py
+#         - `selected_〇〇` プロパティ
+#         - `object_label`（削除・複製で出す呼び名）
+#     manga_layout/ui/canvas.py
+#         - `_pick_at`（クリックで拾う優先順位）
+#         - `_apply_move` / `_apply_resize`（確定時の型ごとの分岐）
+#         - `mousePressEvent` の道具分岐（クリックで置ける道具にする場合）
+#     manga_layout/ui/window.py
+#         - `_hint`（状態表示）
+#         - `delete_target`（「削除」で消える対象と呼び名）
+#         - `_context_menu`（右クリックの出し分け）
+#         - `_add_place_here`（「ここに〜を追加」）
+#     manga_layout/ui/render.py
+#         - `draw_floating` の分岐（描画）
+#
+# **全部を1つのテストで確かめる術は無い。** 足したあと、新しい型を1つ置いて
+# 「選べる・動かせる・消せる・保存して開き直せる」を実機かテストで一通り触ること。
 FloatingObject = BalloonObject | StickerObject | TextObject
 _FLOATING_TYPES: dict[str, Any] = {
     BalloonObject.TYPE: BalloonObject,
