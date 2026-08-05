@@ -51,15 +51,24 @@ EXPORT_DIRNAME = "export"
 
 MM_PER_INCH = 25.4
 
-# 書き出す画像サイズの倍率。100% はページの px 寸法そのまま。
-# 座標系が px になったので、dpi の指定は要らなくなった（要件定義 3章・6.7）
-SCALE_CHOICES = (1.0, 0.75, 0.5)
-DEFAULT_SCALE = 1.0
+# ページの px 寸法そのまま。座標系が px になったので、ここに dpi の指定は
+# 要らなくなった（要件定義 3章・6.7）
+FULL_SCALE = 1.0
 
-# 書き出した画像の大きさの目安を出すときに使う dpi。
-# **書き出す画素数には一切影響しない、参考表示だけの値。**
-# ページの px 寸法は 150dpi 換算の紙寸法を出発点にしている（`PAGE_SIZES`）
+# ページの px 寸法が何 dpi 相当か。ページの px は 150dpi 換算の紙寸法を
+# 出発点にしている（`PAGE_SIZES`）
 REFERENCE_DPI = 150
+
+# 拡大側の1段。175dpi 相当まで上げると A4 相当の長辺が約 2,048px になる。
+# **貼り込む画像素材の原寸が長辺 2,048px 程度**なので、そこから上へ
+# 引き伸ばしても絵は細かくならず、待ち時間とファイルサイズだけが増える
+HIGH_DPI = 175
+HIGH_SCALE = HIGH_DPI / REFERENCE_DPI
+
+# 書き出す画像サイズの倍率。既定は拡大側（クリスタの原稿に貼る下敷きを
+# きめ細かくするため）
+SCALE_CHOICES = (HIGH_SCALE, FULL_SCALE, 0.75, 0.5)
+DEFAULT_SCALE = HIGH_SCALE
 
 # 1辺に許す画素数の上限。A4 相当を 600dpi で描いた 7016px を超える大きさは、
 # 確保できても待たされるだけになる
@@ -72,10 +81,10 @@ TMP_SUFFIX = ".tmp"
 # -- 画素数とファイル名 ------------------------------------------------------
 
 
-def page_px(size: Size, scale: float = DEFAULT_SCALE) -> tuple[int, int]:
+def page_px(size: Size, scale: float = FULL_SCALE) -> tuple[int, int]:
     """書き出される画像の画素数。
 
-    **倍率は画素数をそのまま減らす。** この道具の出力はウェブで読む絵の
+    **倍率は画素数にそのまま効く。** この道具の出力はウェブで読む絵の
     下敷きで、印刷しない（要件定義 1章）。75% と言われたら素直に画素数を
     75% にする。1px 未満にはしない（0 幅の画像は作れない）。
     """
@@ -86,15 +95,32 @@ def scale_label(scale: float) -> str:
     return f"{round(scale * 100)}%"
 
 
-def paper_hint(size: Size) -> str:
+def export_dpi(scale: float) -> float:
+    """PNG に書き込む dpi。
+
+    **拡大したときだけ倍率を折り込む。** 拡大は「クリスタの原稿に貼る
+    下敷きを、大きさは変えずにきめ細かくしたい」操作なので、dpi を
+    一緒に上げないと 1.17 倍に膨れて毎回縮める羽目になる。
+
+    縮小側は `REFERENCE_DPI` に据え置く。50% で 75dpi と書くと、クリスタが
+    A4 のまま粗く貼り、「小さくしたのに小さくならない」になる。倍率を dpi に
+    折り込んで撤回した設計そのもの（要件定義 6.7）。
+    """
+    return REFERENCE_DPI * max(FULL_SCALE, scale)
+
+
+def paper_hint(size: Size, dpi: float = REFERENCE_DPI) -> str:
     """紙に置き換えたときのおおよその大きさ。**参考表示だけ。**
 
     印刷しないので出力には関わらないが、「1240px と言われてもピンと
     こない」ときの手掛かりにはなる（要件定義 6.7）。
+
+    `dpi` は書き出した画像に書き込む値（`export_dpi`）を渡す。既定のまま
+    ページの寸法を渡せば、ページそのものの紙の大きさになる。
     """
-    w = size.w / REFERENCE_DPI * MM_PER_INCH
-    h = size.h / REFERENCE_DPI * MM_PER_INCH
-    return f"紙なら約 {w:.0f} × {h:.0f} mm（{REFERENCE_DPI}dpi 換算）"
+    w = size.w / dpi * MM_PER_INCH
+    h = size.h / dpi * MM_PER_INCH
+    return f"紙なら約 {w:.0f} × {h:.0f} mm（{dpi:.0f}dpi 換算）"
 
 
 def dots_per_meter(dpi: float) -> int:
@@ -102,7 +128,7 @@ def dots_per_meter(dpi: float) -> int:
 
     入れておかないと**クリスタが 72dpi の画像として開く**。印刷しない以上
     この値は覚え書きでしかないが、入れないと原稿用紙に対して極端な大きさで
-    貼られるので、`REFERENCE_DPI` を書いておく。
+    貼られる。
     """
     return round(dpi / (MM_PER_INCH / 1000.0))
 
@@ -178,7 +204,7 @@ class FullImages:
         return self._cache.get(ref, lambda: self.state.read_asset(ref))
 
 
-def render_page(state, page: Page, scale: float = DEFAULT_SCALE) -> QImage:
+def render_page(state, page: Page, scale: float = FULL_SCALE) -> QImage:
     """1ページを画像にする。100% ならページの px 寸法そのまま。
 
     1辺の上限は `MAX_SIDE_PX`。ここから上は確保できても待たされるだけになる。
@@ -203,8 +229,8 @@ def render_page(state, page: Page, scale: float = DEFAULT_SCALE) -> QImage:
     # 用紙の白で塗る。透明のまま渡すと、クリスタで下敷きにしたときに
     # 白地のつもりの部分が抜けて、下のレイヤーが透けて見える
     image.fill(PAGE_BG)
-    image.setDotsPerMeterX(dots_per_meter(REFERENCE_DPI))
-    image.setDotsPerMeterY(dots_per_meter(REFERENCE_DPI))
+    image.setDotsPerMeterX(dots_per_meter(export_dpi(scale)))
+    image.setDotsPerMeterY(dots_per_meter(export_dpi(scale)))
 
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -242,7 +268,7 @@ def write_png(image: QImage, path: pathlib.Path) -> None:
 
 
 def export_pages(
-    state, indexes, dest: pathlib.Path, scale: float = DEFAULT_SCALE
+    state, indexes, dest: pathlib.Path, scale: float = FULL_SCALE
 ) -> list[pathlib.Path]:
     """指定したページを PNG にする。書いたファイルの一覧を返す。
 
@@ -269,9 +295,13 @@ class ExportDialog(QDialog):
     毎回選ばせると、書き出すたびに置き場所が散らばって「最新がどれか」を
     見失う。別の場所へ出したくなったら、書き出してから移せばよい。
 
-    画像サイズは 100% / 75% / 50% の3つだけ。座標系が px なので、
-    ページの寸法そのものが「原寸」になる（要件定義 3章）。dpi の指定は
-    要らなくなった。
+    画像サイズは 117% / 100% / 75% / 50% の4つだけ。座標系が px なので、
+    ページの寸法そのものが「原寸」になる（要件定義 3章）。dpi を数字で
+    指定させることはしない。
+
+    既定は原寸ではなく 117%（175dpi 相当）。原寸のままだと A4 相当で
+    長辺 1,754px にしかならず、貼り込んだ画像素材（長辺 2,048px 程度）の
+    細かさを捨てて書き出すことになる。
 
     紙に置き換えた大きさは**参考として1行出すだけ**。印刷しないので出力には
     関わらないが、「1240px と言われてもピンとこない」ときの手掛かりになる。
@@ -297,7 +327,7 @@ class ExportDialog(QDialog):
         self.scale = QComboBox(self)
         for value in SCALE_CHOICES:
             label = scale_label(value)
-            self.scale.addItem("100%（原寸）" if value == 1.0 else label, value)
+            self.scale.addItem("100%（原寸）" if value == FULL_SCALE else label, value)
         self.scale.setCurrentIndex(self._scale_index(scale))
 
         form = QFormLayout()
@@ -339,10 +369,11 @@ class ExportDialog(QDialog):
         scale = self.chosen_scale()
         width, height = page_px(self.page_size, scale)
         text = f"書き出される画像: {width:,} × {height:,} 画素"
-        if scale != 1.0:
-            full_w, full_h = page_px(self.page_size)
+        if scale != FULL_SCALE:
+            full_w, full_h = page_px(self.page_size, FULL_SCALE)
             text += f"（原寸なら {full_w:,} × {full_h:,}）"
-        self.note.setText(text + "\n" + paper_hint(Size(width, height)))
+        hint = paper_hint(Size(width, height), export_dpi(scale))
+        self.note.setText(text + "\n" + hint)
 
     def chosen_scale(self) -> float:
         return float(self.scale.currentData())

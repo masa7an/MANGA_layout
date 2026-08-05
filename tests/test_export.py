@@ -23,11 +23,14 @@ from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.export import (
     DEFAULT_SCALE,
     EXPORT_DIRNAME,
+    HIGH_DPI,
+    HIGH_SCALE,
     MAX_SIDE_PX,
     REFERENCE_DPI,
     SCALE_CHOICES,
     FullImages,
     dots_per_meter,
+    export_dpi,
     existing_paths,
     export_dir_of,
     export_pages,
@@ -90,20 +93,41 @@ class Test参考表示:
         # 150dpi ＝ 1インチ 150 画素 ＝ 1メートル 5905.5 画素
         assert dots_per_meter(REFERENCE_DPI) == 5906
 
+    def test_拡大したぶんは紙の大きさに出さない(self):
+        """117% は「同じ紙をきめ細かく」なので、mm は A4 のまま。"""
+        width, height = page_px(Size(*A4_PX), HIGH_SCALE)
+        hint = paper_hint(Size(width, height), export_dpi(HIGH_SCALE))
+        assert "210" in hint and "297" in hint
+        assert "175dpi" in hint
+
 
 class Test画像サイズ:
-    """100% / 75% / 50%。**画素数がそのまま減る。**
+    """117% / 100% / 75% / 50%。**画素数がそのまま増減する。**
 
     この道具はウェブで読む絵の下敷きを作るもので、印刷しない（要件定義
     1章）。紙の上で何 mm になるかを保つ細工はしない。
     """
 
-    def test_3つから選ぶ(self):
-        assert SCALE_CHOICES == (1.0, 0.75, 0.5)
-        assert DEFAULT_SCALE == 1.0
+    def test_4つから選ぶ(self):
+        assert SCALE_CHOICES == (HIGH_SCALE, 1.0, 0.75, 0.5)
+
+    def test_既定は拡大側(self):
+        """原寸のままだと、貼り込んだ画像素材の細かさを捨てて書き出す。"""
+        assert DEFAULT_SCALE == HIGH_SCALE
+        assert HIGH_DPI == 175
 
     def test_表示は百分率(self):
-        assert [scale_label(s) for s in SCALE_CHOICES] == ["100%", "75%", "50%"]
+        assert [scale_label(s) for s in SCALE_CHOICES] == ["117%", "100%", "75%", "50%"]
+
+    def test_拡大するとA4相当の長辺が約2048px(self):
+        """素材の原寸（長辺 2,048px 程度）を捨てずに書き出せる大きさ。"""
+        width, height = page_px(Size(*A4_PX), HIGH_SCALE)
+        assert (width, height) == (1447, 2046)
+
+    def test_拡大は全ページ一律(self):
+        """用紙ごとに長辺を揃えるのではなく、どの用紙でも同じ倍率。"""
+        b5 = page_px(Size(1075.0, 1518.0), HIGH_SCALE)
+        assert b5 == (1254, 1771)
 
     def test_100パーセントはページの寸法そのもの(self, saved_state):
         """座標系が px なので、換算を挟まない。"""
@@ -184,6 +208,23 @@ class Test描画:
         image = render_page(saved_state, saved_state.page)
         assert image.dotsPerMeterX() == dots_per_meter(REFERENCE_DPI)
         assert image.dotsPerMeterY() == dots_per_meter(REFERENCE_DPI)
+
+    def test_拡大したらdpiも一緒に上げる(self, saved_state):
+        """上げないと、クリスタで 1.17 倍に膨れて毎回縮めることになる。
+
+        欲しいのは「同じ大きさで、きめが細かい」下敷き。
+        """
+        image = render_page(saved_state, saved_state.page, HIGH_SCALE)
+        assert image.dotsPerMeterX() == dots_per_meter(HIGH_DPI)
+        assert image.dotsPerMeterY() == dots_per_meter(HIGH_DPI)
+
+    def test_縮小してもdpiは据え置く(self, saved_state):
+        """75dpi と書くと A4 のまま粗く貼られ、「小さくしたのに小さく
+        ならない」になる（要件定義 6.7 で撤回した設計）。
+        """
+        image = render_page(saved_state, saved_state.page, 0.5)
+        assert image.dotsPerMeterX() == dots_per_meter(REFERENCE_DPI)
+        assert export_dpi(0.5) == REFERENCE_DPI
 
     def test_大きすぎるページは断る(self, saved_state):
         with saved_state.edit("巨大なページ") as project:
@@ -354,7 +395,7 @@ class Test画面からの書き出し:
         win.state.history.mark_saved()
         win.close()
 
-    def test_既定は原寸(self, window):
+    def test_既定の倍率を覚えている(self, window):
         assert window._export_scale == DEFAULT_SCALE
 
     def test_このページだけ書き出す(self, window, monkeypatch):
