@@ -741,6 +741,37 @@ class SlantPair:
 # ページ
 # --------------------------------------------------------------------------
 
+# 付箋の色（要件定義 6.18）。**意味は割り当てない**。3色は識別のためだけに使い、
+# 合う意味はそのつど一行メモに書く。増やすと「どの色にしたか」を思い出す手間が
+# 色を見て分かる利得を上回るため、3色で止める。
+NOTE_COLORS = ("yellow", "pink", "blue")
+
+
+@dataclass
+class PageNote:
+    """付箋（要件定義 6.18）。サムネイル一覧でだけ見える作業用の覚え書き。
+
+    用紙の絵には出ない（本画面にも書き出しにも出さない）ので、`PageRenderer`
+    は素通りする。一覧の描画側（`ui/pages.py`）だけがこれを読む。
+    """
+
+    color: str  # NOTE_COLORS のいずれか
+    text: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"color": self.color}
+        if self.text:
+            out["text"] = self.text
+        return out
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> "PageNote":
+        d = v.req_mapping(data, where)
+        return cls(
+            color=v.choice(d, "color", where, NOTE_COLORS),
+            text=v.opt_text(d, "text", where),
+        )
+
 
 @dataclass
 class Page:
@@ -749,6 +780,8 @@ class Page:
     panels: list[Panel] = field(default_factory=list)
     floating: list[FloatingObject] = field(default_factory=list)
     slant_pairs: list[SlantPair] = field(default_factory=list)
+    # 付箋（→ 6.18）。**ページに1つだけ。** 入れていなければ None
+    note: PageNote | None = None
 
     # -- 検索 --------------------------------------------------------------
 
@@ -923,6 +956,9 @@ class Page:
         # 作品の project.json が、この機能の追加前と同じ内容のままになる
         if self.slant_pairs:
             out["slant_pairs"] = [s.to_dict() for s in self.slant_pairs]
+        # 付箋の無いページでは項目ごと省く。理由は slant_pairs と同じ
+        if self.note is not None:
+            out["note"] = self.note.to_dict()
         return out
 
     @classmethod
@@ -943,6 +979,12 @@ class Page:
                 SlantPair.from_dict(s, f"{where}.slant_pairs[{i}]")
                 for i, s in enumerate(slant_raw)
             ],
+            # 項目が無い＝付箋なし。この機能より前の作品がそのまま開ける
+            note=(
+                PageNote.from_dict(d["note"], f"{where}.note")
+                if d.get("note") is not None
+                else None
+            ),
         )
 
 

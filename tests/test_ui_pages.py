@@ -616,6 +616,119 @@ class TestPageList:
         assert ITEM_PADDING + NUMBER_WIDTH < rect.width() - panel.iconSize().width()
 
 
+class TestPageNote:
+    """付箋（要件定義 6.18）。操作は一覧の右クリックから。
+
+    保存形式そのものは tests/test_model.py の TestPageNote。
+    """
+
+    def test_色を選ぶと貼られる(self, three_pages):
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+
+        window.state.set_page_note_color(page_id, "yellow")
+
+        note = window.state.project.pages[0].note
+        assert note is not None and note.color == "yellow"
+
+    def test_色を変えてもメモは残る(self, three_pages):
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+        window.state.set_page_note_color(page_id, "yellow")
+        window.state.set_page_note_text(page_id, "ここから再開")
+
+        window.state.set_page_note_color(page_id, "blue")
+
+        note = window.state.project.pages[0].note
+        assert note.color == "blue"
+        assert note.text == "ここから再開"
+
+    def test_付箋の無いページのメモは無視する(self, three_pages):
+        """『色だけでも貼れる』の裏側。色が無いのにメモだけ付くことはない。"""
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+
+        window.state.set_page_note_text(page_id, "書きかけ")
+
+        assert window.state.project.pages[0].note is None
+
+    def test_はがすと消える(self, three_pages):
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+        window.state.set_page_note_color(page_id, "pink")
+
+        window.state.remove_page_note(page_id)
+
+        assert window.state.project.pages[0].note is None
+
+    def test_Undoで戻る(self, three_pages):
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+
+        window.state.set_page_note_color(page_id, "yellow")
+        window.state.undo()
+
+        assert window.state.project.pages[0].note is None
+
+    def test_サムネイルの指紋は変わらない(self, three_pages):
+        """付箋は絵に出ないので、色を変えてもページの絵は描き直さない
+        （→ 6.1 のキャッシュが前提にしている「保存に載らないものは絵にも
+        出ない」を、付箋の側で埋め合わせている）。
+        """
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+        panel = window.pages_panel
+        before = panel.item(0).data(Qt.ItemDataRole.UserRole)
+
+        window.state.set_page_note_color(page_id, "yellow")
+
+        assert panel.item(0).data(Qt.ItemDataRole.UserRole) == before
+
+    def test_一覧の項目データに色が乗る(self, three_pages):
+        from manga_layout.ui.pages import NOTE_COLOR_ROLE
+
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+
+        window.state.set_page_note_color(page_id, "yellow")
+
+        assert window.pages_panel.item(0).data(NOTE_COLOR_ROLE) == "yellow"
+
+    def test_ホバーで全文が読める(self, three_pages):
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+        window.state.set_page_note_color(page_id, "yellow")
+        window.state.set_page_note_text(page_id, "ここから再開")
+
+        assert "ここから再開" in window.pages_panel.item(0).toolTip()
+
+    def test_メニューの色は現在の付箋にチェックが付く(self, three_pages):
+        from manga_layout.model import NOTE_COLORS
+
+        window = three_pages
+        page_id = window.state.project.pages[0].id
+        window.state.set_page_note_color(page_id, "pink")
+
+        menu = window.pages_panel._note_menu(window.state.project.pages[0])
+        color_actions = menu.actions()[: len(NOTE_COLORS)]
+        checked = [a.isChecked() for a in color_actions]
+
+        assert checked == [c == "pink" for c in NOTE_COLORS]
+        menu.deleteLater()
+
+    def test_付箋の無いページはメモとはがすを押せない(self, three_pages):
+        window = three_pages
+        menu = window.pages_panel._note_menu(window.state.project.pages[0])
+
+        memo_action, remove_action = menu.actions()[-2:]
+
+        assert memo_action.text() == "メモ..."
+        assert remove_action.text() == "はがす"
+        assert not memo_action.isEnabled()
+        assert not remove_action.isEnabled()
+        menu.deleteLater()
+
+
 class TestPageJumpBar:
     """見出しの「ページ [n]/総数」。番号を押すと入力欄になる（要件定義 6.1）。"""
 

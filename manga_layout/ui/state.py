@@ -38,10 +38,12 @@ from ..layout import (
 )
 from ..slant import flip_slant_pair, slide_slant_pair
 from ..model import (
+    NOTE_COLORS,
     BalloonObject,
     FocusLines,
     ImageObject,
     Page,
+    PageNote,
     Panel,
     Project,
     SceneObject,
@@ -89,6 +91,14 @@ STICKER_TOOLS = {
 STICKER_KIND_LABELS = {
     STICKER_EXCLAIM: "ビックリマーク",
     STICKER_EXCLAIM_QUESTION: "ビックリはてなマーク",
+}
+
+# 付箋の色の呼び名（要件定義 6.18）。**色に意味は割り当てない。** 見た目の
+# 呼び名だけをここに置く（同じ形 → `STICKER_KIND_LABELS`）
+NOTE_COLOR_LABELS = {
+    "yellow": "黄",
+    "pink": "桃",
+    "blue": "青",
 }
 
 # 吹き出しの種類の呼び名。**道具・メニュー・状態表示・操作後の案内で共通に使う。**
@@ -430,6 +440,33 @@ class EditorState(QObject):
         for page in changed:
             found.extend(outside_page(page))
         return found
+
+    # -- 付箋（要件定義 6.18） -----------------------------------------------
+    #
+    # 一覧の右クリックから呼ばれるので、**表示中のページとは限らない**。
+    # `page_id` を毎回受け取り、`self._page_index` には触れない。
+
+    def set_page_note_color(self, page_id: str, color: str) -> None:
+        """付箋の色を変える（無ければ新しく貼る）。メモは変えずに残す。"""
+        assert color in NOTE_COLORS
+        with self.edit("付箋の色を変更") as project:
+            page = project.page(page_id)
+            text = page.note.text if page.note is not None else None
+            page.note = PageNote(color=color, text=text)
+
+    def set_page_note_text(self, page_id: str, text: str) -> None:
+        """付箋のメモを書き換える。付箋が無いページでは何もしない。"""
+        with self.edit("付箋のメモを変更") as project:
+            page = project.page(page_id)
+            if page.note is None:
+                return
+            page.note = PageNote(color=page.note.color, text=text or None)
+
+    def remove_page_note(self, page_id: str) -> None:
+        """付箋をはがす。"""
+        with self.edit("付箋をはがす") as project:
+            page = project.page(page_id)
+            page.note = None
 
     # -- 画像 --------------------------------------------------------------
 

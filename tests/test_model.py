@@ -21,7 +21,7 @@ from manga_layout import (
     new_project,
 )
 from manga_layout.errors import ProjectFormatError, UnsupportedVersionError
-from manga_layout.model import DEFAULT_FONT_FAMILY, PT_TO_PX
+from manga_layout.model import DEFAULT_FONT_FAMILY, NOTE_COLORS, PT_TO_PX, PageNote
 
 
 class TestIds:
@@ -166,6 +166,62 @@ class TestPanelLock:
         assert "locked" not in data["pages"][0]["panels"][0]
         restored = Project.from_dict(data)
         assert restored.pages[0].panels[0].locked is False
+
+
+class TestPageNote:
+    """付箋（要件定義 6.18）の保存形式。
+
+    操作まわり（右クリックメニュー・重ね描画・Undo）は tests/test_ui_pages.py。
+    """
+
+    def test_既定は付箋なし(self):
+        project = new_project()
+        assert project.pages[0].note is None
+
+    def test_付箋なしでは項目ごと省く(self):
+        """使っていない作品の project.json が、この機能の追加前と同じ
+        内容のままになる（→ ロック・集中線・斜めの組と同じ線引き）。
+        """
+        project = new_project()
+        assert "note" not in project.to_dict()["pages"][0]
+
+    def test_色だけでも往復する(self):
+        """メモは任意。色だけの付箋も保たれる。"""
+        project = new_project()
+        project.pages[0].note = PageNote(color="yellow")
+        restored = Project.from_dict(project.to_dict())
+        assert restored.pages[0].note == PageNote(color="yellow")
+
+    def test_メモ付きも往復する(self):
+        project = new_project()
+        project.pages[0].note = PageNote(color="pink", text="ここから再開")
+        restored = Project.from_dict(project.to_dict())
+        assert restored.pages[0].note.text == "ここから再開"
+
+    def test_空のメモは保存に出さない(self):
+        """空文字は「メモなし」と同じ扱いにする。"""
+        project = new_project()
+        project.pages[0].note = PageNote(color="blue", text="")
+        assert "text" not in project.to_dict()["pages"][0]["note"]
+
+    def test_項目の無いファイルは付箋なしとして読む(self):
+        """`note` が無い（この機能より前の）ファイルもそのまま開ける。"""
+        project = new_project()
+        data = project.to_dict()
+        assert "note" not in data["pages"][0]
+        restored = Project.from_dict(data)
+        assert restored.pages[0].note is None
+
+    def test_決まった色以外は弾く(self):
+        project = new_project()
+        data = project.to_dict()
+        data["pages"][0]["note"] = {"color": "red"}
+        with pytest.raises(ProjectFormatError):
+            Project.from_dict(data)
+
+    def test_色の一覧は3つ(self):
+        """4色以上になると『どの色にしたか』を思い出す手間が増える（→ 6.18）。"""
+        assert len(NOTE_COLORS) == 3
 
 
 class TestPanelMove:

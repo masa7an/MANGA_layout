@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 
 from PySide6.QtCore import QRect, QSize, Qt, Signal
-from PySide6.QtGui import QIcon, QIntValidator, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QColor, QIcon, QIntValidator, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -26,10 +26,12 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QStackedWidget,
     QStyle,
     QStyledItemDelegate,
@@ -40,9 +42,9 @@ from PySide6.QtWidgets import (
 )
 
 from ..geometry import EPS, Size
-from ..model import PAGE_SIZES, Page
+from ..model import NOTE_COLORS, PAGE_SIZES, Page
 from .render import PageRenderer
-from .state import EditorState
+from .state import NOTE_COLOR_LABELS, EditorState
 
 # サムネイルの幅（画面ピクセル）。A4 なら高さは約 150px になる。
 # 小さすぎるとコマ割りが読めず、大きすぎると一覧が縦に伸びて使いにくい
@@ -68,6 +70,18 @@ CUSTOM_LABEL = "カスタム"
 # 描いた 4961×7016 が収まる程度に取ってある
 PAGE_SIZE_MIN_PX = 50
 PAGE_SIZE_MAX_PX = 10000
+
+# 付箋の色見本（画面表示専用）。保存形式に載るのは NOTE_COLORS の識別子だけで、
+# 実際の色の値（見た目）はここでしか使わない
+NOTE_COLOR_SWATCH = {
+    "yellow": QColor("#f5c518"),
+    "pink": QColor("#f194b4"),
+    "blue": QColor("#6fa8dc"),
+}
+
+# 一覧の項目データに付箋の色を持たせる場所。DisplayRole/DecorationRole/
+# UserRole（指紋）は既に使っているので、その次を使う
+NOTE_COLOR_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 def thumbnail_box(pages: list[Page], width: int = THUMB_WIDTH) -> QSize:
@@ -296,6 +310,7 @@ class PageItemDelegate(QStyledItemDelegate):
         # （C++ 側の同じ実体を指しているため）
         number = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         icon = index.data(Qt.ItemDataRole.DecorationRole)
+        note_color = index.data(NOTE_COLOR_ROLE)
 
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
@@ -322,15 +337,32 @@ class PageItemDelegate(QStyledItemDelegate):
         )
 
         if isinstance(icon, QIcon) and not icon.isNull() and width > 0 and height > 0:
-            painter.drawPixmap(
-                QRect(
-                    rect.x() + ITEM_PADDING + NUMBER_WIDTH + ITEM_GAP,
-                    rect.y() + (rect.height() - height) // 2,
-                    width,
-                    height,
-                ),
-                icon.pixmap(width, height),
+            thumb_rect = QRect(
+                rect.x() + ITEM_PADDING + NUMBER_WIDTH + ITEM_GAP,
+                rect.y() + (rect.height() - height) // 2,
+                width,
+                height,
             )
+            painter.drawPixmap(thumb_rect, icon.pixmap(width, height))
+            if isinstance(note_color, str):
+                self._paint_note(painter, thumb_rect, note_color)
+        painter.restore()
+
+    def _paint_note(self, painter: QPainter, thumb_rect: QRect, color: str) -> None:
+        """付箋の色を縮小画像の右上に重ねる（要件定義 6.18）。
+
+        サムネイルの絵そのもの（QPixmap）には焼き込まない。ここで描くのは
+        一覧の表示だけなので、保存形式やサムネイルの指紋には影響しない。
+        """
+        swatch = NOTE_COLOR_SWATCH.get(color)
+        if swatch is None:
+            return
+        size = 14
+        badge = QRect(thumb_rect.right() - size + 3, thumb_rect.top() - 3, size, size)
+        painter.save()
+        painter.setPen(QColor("#00000066"))
+        painter.setBrush(swatch)
+        painter.drawEllipse(badge)
         painter.restore()
 
     def sizeHint(self, option, index) -> QSize:
@@ -364,6 +396,8 @@ class PageListPanel(QListWidget):
         self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFixedWidth(self._fitted_width())
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._open_note_menu)
 
         self.currentRowChanged.connect(self._on_row_changed)
         state.changed.connect(self.sync)
@@ -397,8 +431,15 @@ class PageListPanel(QListWidget):
         保存形式をそのまま使う。**保存に載らないものは見た目にも出ない**
         ので、これが変わらなければサムネイルも変わらない（要件定義 6.8 で
         Undo が同じ性質に乗っているのと同じ理由）。
+
+        **例外は付箋（`note`）。** 保存には載るが `PageRenderer` は描かない
+        （用紙の絵には出さない → 6.18）ので、ここでは除いてから指紋を作る。
+        含めると、色やメモを変えるたびに絵をまるごと描き直すことになる
+        うえ、指紋が変わった時点で前の絵が捨てられ、戻しても再利用されない。
         """
-        body = json.dumps(page.to_dict(), ensure_ascii=False, separators=(",", ":"))
+        data = page.to_dict()
+        data.pop("note", None)
+        body = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
         return f"{box.width()}x{box.height()}:{body}"
 
     def _thumbnail(self, page: Page, box: QSize, key: str) -> QPixmap:
@@ -407,6 +448,18 @@ class PageListPanel(QListWidget):
             cached = render_thumbnail(self.state, page, box)
             self._thumbs[key] = cached
         return cached
+
+    def _tooltip(self, row: int, page: Page) -> str:
+        text = (
+            f"{row + 1} ページ / {page.size.w:.0f} × {page.size.h:.0f} px"
+            f" / コマ {len(page.panels)}"
+        )
+        if page.note is not None:
+            label = NOTE_COLOR_LABELS.get(page.note.color, page.note.color)
+            text += f"\n付箋（{label}）"
+            if page.note.text:
+                text += f": {page.note.text}"
+        return text
 
     def sync(self) -> None:
         """モデルに合わせて一覧を作り直す。
@@ -435,9 +488,11 @@ class PageListPanel(QListWidget):
                     item.setData(Qt.ItemDataRole.UserRole, key)
                 # 番号は並べ替えで変わる。中身が同じでも付け直す
                 item.setText(f"{row + 1}")
-                item.setToolTip(
-                    f"{row + 1} ページ / {page.size.w:.0f} × {page.size.h:.0f} px"
-                    f" / コマ {len(page.panels)}"
+                item.setToolTip(self._tooltip(row, page))
+                # 付箋の色（→ 6.18）。サムネイルの指紋には含めないので、
+                # 一覧を作り直すたびに毎回付け直す
+                item.setData(
+                    NOTE_COLOR_ROLE, page.note.color if page.note is not None else None
                 )
             self.setCurrentRow(self.state.page_index)
         finally:
@@ -488,6 +543,52 @@ class PageListPanel(QListWidget):
 
         if source >= 0 and self.state.move_page(source, target):
             self.state.message.emit(f"{source + 1} ページ目を {target + 1} ページ目へ移しました")
+
+    # -- 付箋（要件定義 6.18） -----------------------------------------------
+
+    def _open_note_menu(self, position) -> None:
+        """一覧を右クリックしたところ。押した行の付箋メニューを出す。"""
+        index = self.indexAt(position)
+        if not index.isValid():
+            return
+        page = self.state.project.pages[index.row()]
+        menu = self._note_menu(page)
+        menu.exec(self.viewport().mapToGlobal(position))
+        menu.deleteLater()
+
+    def _note_menu(self, page: Page) -> QMenu:
+        """付箋のメニュー。色を選ぶ・メモを書く・はがす。
+
+        **色に意味は割り当てない。** 色は識別のためだけに使い、意味は
+        「メモ...」に書く一行に添える。
+        """
+        menu = QMenu(self)
+        for color in NOTE_COLORS:
+            action = menu.addAction(f"付箋を貼る（{NOTE_COLOR_LABELS[color]}）")
+            action.setCheckable(True)
+            action.setChecked(page.note is not None and page.note.color == color)
+            action.triggered.connect(
+                lambda checked=False, c=color, pid=page.id: self.state.set_page_note_color(pid, c)
+            )
+        menu.addSeparator()
+        # メモは色が付いてからでないと編集できない（→ 6.18、色だけでも貼れる）
+        memo_action = menu.addAction("メモ...")
+        memo_action.setEnabled(page.note is not None)
+        memo_action.triggered.connect(lambda: self._edit_note_text(page))
+        remove_action = menu.addAction("はがす")
+        remove_action.setEnabled(page.note is not None)
+        remove_action.triggered.connect(
+            lambda checked=False, pid=page.id: self.state.remove_page_note(pid)
+        )
+        return menu
+
+    def _edit_note_text(self, page: Page) -> None:
+        current = page.note.text if page.note is not None else ""
+        text, ok = QInputDialog.getText(
+            self, "付箋のメモ", "一行メモ:", text=current or ""
+        )
+        if ok:
+            self.state.set_page_note_text(page.id, text.strip())
 
 
 class PageSizeDialog(QDialog):
