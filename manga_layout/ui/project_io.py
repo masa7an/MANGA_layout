@@ -97,6 +97,19 @@ class ProjectIO:
         self._state.reset(make(), None)
         self._state.message.emit("新しい作品を作りました")
 
+    def close_project(self) -> None:
+        """開いている作品を閉じ、空の状態に戻す（アプリは終了しない）。
+
+        中身は `new_project` と同じ処理。表示するメッセージだけ
+        「閉じる」を押した人向けに変えている。
+        """
+        if not self.confirm_discard():
+            return
+        from ..model import new_project as make
+
+        self._state.reset(make(), None)
+        self._state.message.emit("作品を閉じました")
+
     def default_parent(self) -> pathlib.Path:
         """ファイルの窓が始まる場所。
 

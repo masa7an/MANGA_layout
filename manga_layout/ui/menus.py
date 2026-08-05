@@ -143,6 +143,14 @@ class FileMenu:
             )
         )
         menu.addSeparator()
+        menu.addAction(
+            window._act(
+                "閉じる",
+                window.files.close_project,
+                "Ctrl+W",
+                "保存を確認したうえで、開いている作品を閉じて空の状態に戻す（アプリは終了しない）",
+            )
+        )
         menu.addAction(window._act("終了", window.close, "Ctrl+Q"))
 
     def sync_recent_project(self, path: pathlib.Path | None = None) -> None:
