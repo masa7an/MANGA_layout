@@ -798,6 +798,8 @@ class PageScene(QGraphicsScene):
             )
             if self.state.selected_image is not None:
                 self._draw_rotate_handle(painter, bounds, scale)
+            if balloon is not None:
+                self._draw_balloon_outline_highlight(painter, balloon)
             painter.restore()
             if self.rotate_preview is not None:
                 self._draw_angle_hint(painter, bounds, rotation)
@@ -846,6 +848,31 @@ class PageScene(QGraphicsScene):
         if self.state.selected_text is not None:
             return TEXT_ACCENT
         return ACCENT
+
+    def _draw_balloon_outline_highlight(
+        self, painter: QPainter, balloon: BalloonObject
+    ) -> None:
+        """掴んでいるフキダシの縁を、黒から紫へなぞり直す。
+
+        外接矩形の選択枠（`_draw_selection`）だけでは、重なった図形の中で
+        どれを掴んでいるのか分かりにくいとの指摘（本人談 2026-08-06）を
+        受けて追加した。フキダシの実形そのものを、本体の縁と同じ太さで
+        紫になぞることで、縁が紫に変わったように見せる。
+
+        動かしている最中（`preview_rect` が立つ）は呼び出し側で外して
+        あるので、ここでは常にモデルどおりの形を描いてよい。しっぽの
+        先端・付け根だけを動かしている最中は下見に追随させる
+        （`_draw_tail_handle` と同じ流儀）。
+        """
+        if not balloon.border.visible or balloon.border.width <= 0:
+            return
+        previewed = self.renderer.with_preview_tail(balloon, self.drag_preview())
+        path = self.renderer.balloon_path(previewed)
+        pen = QPen(BALLOON_ACCENT, balloon.border.width)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
 
     def _draw_tail_handle(
         self, painter: QPainter, balloon: BalloonObject, scale: float

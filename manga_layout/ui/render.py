@@ -541,7 +541,7 @@ class PageRenderer:
             return balloon
         return dataclasses.replace(balloon, tail=tail)
 
-    def _balloon_path(self, balloon: BalloonObject) -> QPainterPath:
+    def balloon_path(self, balloon: BalloonObject) -> QPainterPath:
         """本体としっぽを**1つの輪郭**にまとめた形。
 
         別々に描くと継ぎ目に枠線が残り、しっぽが貼り付けた三角形に見える。
@@ -574,7 +574,7 @@ class PageRenderer:
         self, painter: QPainter, balloon: BalloonObject, preview: DragPreview
     ) -> None:
         balloon = self.with_preview_tail(balloon, preview)
-        path = self._balloon_path(balloon)
+        path = self.balloon_path(balloon)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QBrush(QColor(balloon.fill)))
         painter.drawPath(path)
