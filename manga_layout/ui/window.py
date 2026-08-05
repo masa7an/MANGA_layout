@@ -58,6 +58,7 @@ from .state import (
     STICKER_KIND_LABELS,
     STICKER_TOOLS,
     TOOL_BALLOON,
+    TOOL_BALLOON_CLOUD,
     TOOL_BALLOON_JAGGED,
     TOOL_BALLOON_RECT,
     TOOL_BALLOON_WAVY,
@@ -349,9 +350,11 @@ class MainWindow(QMainWindow):
             (TOOL_BALLOON, "B"),
             (TOOL_BALLOON_JAGGED, "G"),
             (TOOL_BALLOON_WAVY, "W"),
-            # 四角にキーは割り当てない。**キーを足すこと自体に値打ちは無く、
-            # 元から通っていたものを塞ぐ副作用は必ず付く**（→ 要件定義 7章）。
-            # ビックリはてなマークと同じ扱いで、メニューと右クリックから出す
+            # 雲と四角にキーは割り当てない。**キーを足すこと自体に値打ちは
+            # 無く、元から通っていたものを塞ぐ副作用は必ず付く**
+            # （→ 要件定義 7章）。ビックリはてなマークと同じ扱いで、
+            # メニューと右クリックから出す
+            (TOOL_BALLOON_CLOUD, None),
             (TOOL_BALLOON_RECT, None),
             (TOOL_STICKER_EXCLAIM, "M"),
             (TOOL_STICKER_EXCLAIM_QUESTION, None),

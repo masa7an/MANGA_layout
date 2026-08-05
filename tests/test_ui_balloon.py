@@ -34,6 +34,7 @@ from manga_layout.ui.state import (
     BALLOON_STYLE_LABELS,
     BALLOON_TOOLS,
     TOOL_BALLOON,
+    TOOL_BALLOON_CLOUD,
     TOOL_BALLOON_JAGGED,
     TOOL_BALLOON_RECT,
     TOOL_BALLOON_WAVY,
@@ -280,6 +281,37 @@ class TestAdd:
         window_with_panel.state.set_tool(TOOL_BALLOON_WAVY)
         click(window_with_panel.view, 360.0, 300.0)
         assert window_with_panel.state.page.floating[0].style == "wavy"
+
+    def test_雲の道具で種類が変わる(self, window_with_panel):
+        window_with_panel.state.set_tool(TOOL_BALLOON_CLOUD)
+        click(window_with_panel.view, 360.0, 300.0)
+        assert window_with_panel.state.page.floating[0].style == "cloud"
+
+    def test_雲は丸い飛びしっぽで置かれる(self, window_with_panel):
+        """どちらも心の声を表すので、三角と組み合わせることがまず無い
+        （要件定義 6.22）。
+        """
+        window_with_panel.state.set_tool(TOOL_BALLOON_CLOUD)
+        click(window_with_panel.view, 360.0, 300.0)
+
+        tail = window_with_panel.state.page.floating[0].tail
+        assert tail.enabled is True
+        assert tail.shape == TAIL_SHAPE_BUBBLES
+
+    def test_雲以外は三角のしっぽで置かれる(self, window_with_panel):
+        """丸くするのは雲だけ。他の種類を巻き添えにしない。"""
+        window_with_panel.state.set_tool(TOOL_BALLOON)
+        click(window_with_panel.view, 360.0, 300.0)
+        assert window_with_panel.state.page.floating[0].tail.shape == TAIL_SHAPE_TRIANGLE
+
+    def test_雲にしてもしっぽは黙って丸くならない(self, window_with_balloon):
+        """**丸くするのは置いたときだけ**（四角のしっぽと同じ線引き）。"""
+        balloon = window_with_balloon.state.selected_balloon
+        window_with_balloon.state.set_balloon_style(balloon.id, "cloud")
+
+        changed = window_with_balloon.state.selected_balloon
+        assert changed.style == "cloud"
+        assert changed.tail.shape == TAIL_SHAPE_TRIANGLE
 
     def test_四角の道具で種類が変わる(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_BALLOON_RECT)

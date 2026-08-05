@@ -75,8 +75,11 @@ _ID_RE = re.compile(r"^[a-z]+_(\d+)$")
 #
 # `rect`（四角）は**ナレーション・地の文**で、誰かのセリフではない。
 # 他の3種と違って輪郭が楕円から作れず、当たり判定も矩形で行う
-# （要件定義 10.1）
-BALLOON_STYLES = ("ellipse", "jagged", "wavy", "rect")
+# （要件定義 6.20）。
+#
+# `cloud`（雲）は**心の声・回想**。丸い飛びしっぽ（→ `TAIL_SHAPE_BUBBLES`）と
+# 組にして使う（要件定義 6.22）
+BALLOON_STYLES = ("ellipse", "jagged", "wavy", "rect", "cloud")
 
 # 作った時点でしっぽを消しておく種類。四角はナレーションに使うもので、
 # 指す相手がいない（要件定義 10.1）。
@@ -96,6 +99,13 @@ BALLOON_STYLES_WITHOUT_TAIL = ("rect",)
 TAIL_SHAPE_TRIANGLE = "triangle"
 TAIL_SHAPE_BUBBLES = "bubbles"
 TAIL_SHAPES = (TAIL_SHAPE_TRIANGLE, TAIL_SHAPE_BUBBLES)
+
+# 置いた時点でしっぽを丸い飛びしっぽにする種類。雲は心の声を表すので、
+# 三角のしっぽと組み合わせることがまず無い（要件定義 6.22）。
+#
+# **禁止ではなく、置いたときの既定の話**（`BALLOON_STYLES_WITHOUT_TAIL` と
+# 同じ線引き）。あとから「しっぽを三角にする」で戻せる
+BALLOON_STYLES_WITH_BUBBLE_TAIL = ("cloud",)
 TEXT_ALIGNS = ("left", "center", "right")
 TEXT_DIRECTIONS = ("horizontal", "vertical")
 

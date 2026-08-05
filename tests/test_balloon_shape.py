@@ -16,11 +16,13 @@ from manga_layout import Rect, new_project
 from manga_layout.model import TAIL_SHAPE_BUBBLES
 from manga_layout.layout import (
     BalloonSettings,
+    CLOUD_MIN_SEGMENTS_PER_LOBE,
     WAVY_MIN_SEGMENTS_PER_WAVE,
     attach_target,
     balloon_at,
     balloon_contains,
     balloon_outline,
+    cloud_points,
     default_balloon_rect,
     TAIL_BUBBLE_COUNT,
     TAIL_BUBBLE_MAX_RATIO,
@@ -466,6 +468,63 @@ class TestHitTest:
     def test_何も無ければ返さない(self):
         project = new_project()
         assert balloon_at(project.pages[0], 5.0, 5.0) is None
+
+
+class TestCloud:
+    """雲_フキダシ（心の声・回想 → 要件定義 6.22）。"""
+
+    def test_山と谷の間に収まる(self):
+        for point in cloud_points(RECT, SETTINGS):
+            ratio = distance_ratio(RECT, point)
+            assert 1.0 - SETTINGS.cloud_depth - 1e-9 <= ratio <= 1.0 + 1e-9
+
+    def test_頂点数は膨らみの数の整数倍(self):
+        """半端だとくびれが線分の途中に来て、尖りが丸められる。"""
+        for lobes in (3, 6, 9, 23):
+            points = cloud_points(RECT, BalloonSettings(cloud_lobes=lobes))
+            assert len(points) % lobes == 0
+
+    def test_くびれの数は膨らみの数と一致する(self):
+        """**尖りが頂点の上に乗ること。** 乗らないと谷が浅く丸められ、
+        膨らみの区切りが消えて「ふわふわを深くしただけ」になる。
+        """
+        floor = 1.0 - SETTINGS.cloud_depth
+        ratios = [distance_ratio(RECT, p) for p in cloud_points(RECT, SETTINGS)]
+        assert sum(r == pytest.approx(floor) for r in ratios) == SETTINGS.cloud_lobes
+
+    def test_山は谷より数がずっと多い(self):
+        """**山は丸く、谷は尖らせる**（→ 6.22）。丸い頂は点を多く使い、
+        尖ったくびれは1点で折れる。余弦波（ふわふわ）ではこの差が出ない。
+        """
+        ratios = [distance_ratio(RECT, p) for p in cloud_points(RECT, SETTINGS)]
+        floor = 1.0 - SETTINGS.cloud_depth
+        near_top = sum(r > (1.0 + floor) / 2.0 for r in ratios)
+        assert near_top > len(ratios) // 2
+
+    def test_ふわふわより深く動く(self):
+        """浅いと丸との差が出ず、ふわふわとも見分けが付かない。"""
+        assert SETTINGS.cloud_depth > SETTINGS.wavy_depth
+
+    def test_1つの膨らみあたりの本数に下限がある(self):
+        """角が立つと綿に見えない（ふわふわの下限と同じ考え方 → 6.13）。"""
+        points = cloud_points(RECT, BalloonSettings(cloud_lobes=40))
+        assert len(points) == 40 * CLOUD_MIN_SEGMENTS_PER_LOBE
+
+    def test_谷が深すぎても中心を越えない(self):
+        points = cloud_points(RECT, BalloonSettings(cloud_depth=5.0))
+        assert min(distance_ratio(RECT, p) for p in points) > 0.0
+
+    def test_膨らみが少なすぎても形になる(self):
+        points = cloud_points(RECT, BalloonSettings(cloud_lobes=1))
+        assert len(points) >= 3 * CLOUD_MIN_SEGMENTS_PER_LOBE
+
+    def test_しっぽの付け根はくびれより内側(self, balloon):
+        """輪郭の上に置くと、くびれの位置で本体と離れて隙間が空く（→ 6.4）。"""
+        balloon.style = "cloud"
+        balloon.tail.tip = default_tail_tip(RECT)
+        root = tail_root_point(balloon, SETTINGS)
+        assert root is not None
+        assert distance_ratio(RECT, root) <= 1.0 - SETTINGS.cloud_depth + 1e-9
 
 
 class TestBubbleTail:

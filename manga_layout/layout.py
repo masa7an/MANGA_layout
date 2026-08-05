@@ -88,6 +88,11 @@ class BalloonSettings:
     # 波形の谷の深さ。半径に対する割合。**ギザギザより浅くする。**
     # 深くすると花びらのように見え、叫びとの差でなく別の物になる
     wavy_depth: float = 0.09
+    # 雲の膨らみの数。ギザギザ・波形より少なくして、1つ1つを大きく見せる
+    cloud_lobes: int = 9
+    # 雲のくびれの深さ。半径に対する割合。**浅いと丸との差が出ない。**
+    # 深くしすぎると膨らみが指のように分かれて、綿ではなく花に見える
+    cloud_depth: float = 0.22
     # 楕円を何本の線分で近似するか。書き出しでも同じ値を使う
     ellipse_segments: int = 72
 
@@ -650,6 +655,47 @@ def wavy_points(
     )
 
 
+# 雲の膨らみ1つを最低何本の線分で描くか（→ `cloud_points`）。
+# **波形（8本）より多くする。** 波形は「揺れていること」が伝わればよいが、
+# 雲は膨らみ1つ1つが丸いことがこの形の意味なので、角が立つと綿に見えない
+CLOUD_MIN_SEGMENTS_PER_LOBE = 12
+
+
+def cloud_points(
+    rect: Rect, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], ...]:
+    """雲（心の声・回想）の輪郭。
+
+    ギザギザ・波形と同じく楕円の半径を増減させて作るが、**山を丸く、谷を
+    尖らせる**。余弦波（波形）のまま深くすると花びらに見えて雲にならない
+    ——6.13 に「深くすると花びらや雲に見える」と書いた注意そのもの
+    （要件定義 6.22）。
+
+    `|sin|` は山の頂が丸く、ゼロ点で折れる。これを半径に乗せると
+    「丸い膨らみが、尖ったくびれで区切られる」形になる。
+    `|sin(lobes * t / 2)` は一周で `lobes` 個の膨らみを作る。
+
+    **頂点数は膨らみの数の整数倍にする。** そうするとくびれが必ず頂点の上に
+    乗り、尖りが取れずに残る。半端だとくびれが線分の途中に来て丸められる
+    （波形で継ぎ目に角が出るのを防いでいるのと同じ理由 → 6.13）。
+    """
+    lobes = max(3, settings.cloud_lobes)
+    depth = min(max(settings.cloud_depth, 0.0), 0.9)
+    per_lobe = max(
+        CLOUD_MIN_SEGMENTS_PER_LOBE, -(-max(8, settings.ellipse_segments) // lobes)
+    )
+    n = per_lobe * lobes
+    step = 2.0 * math.pi / n
+    return tuple(
+        _on_ellipse(
+            rect,
+            i * step,
+            1.0 - depth * (1.0 - abs(math.sin(lobes * i * step / 2.0))),
+        )
+        for i in range(n)
+    )
+
+
 def rect_points(rect: Rect) -> tuple[tuple[float, float], ...]:
     """四角（ナレーション・地の文）の輪郭。
 
@@ -678,6 +724,8 @@ def balloon_outline(
         return jagged_points(balloon.rect, settings)
     if balloon.style == "wavy":
         return wavy_points(balloon.rect, settings)
+    if balloon.style == "cloud":
+        return cloud_points(balloon.rect, settings)
     if balloon.style == "rect":
         return rect_points(balloon.rect)
     return ellipse_points(balloon.rect, settings)
@@ -698,6 +746,8 @@ def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float
         return 1.0 - min(max(settings.jagged_depth, 0.0), 0.9)
     if balloon.style == "wavy":
         return 1.0 - min(max(settings.wavy_depth, 0.0), 0.9)
+    if balloon.style == "cloud":
+        return 1.0 - min(max(settings.cloud_depth, 0.0), 0.9)
     return 0.95
 
 
