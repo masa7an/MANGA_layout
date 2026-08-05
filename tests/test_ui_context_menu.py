@@ -249,7 +249,7 @@ class TestContents:
         assert place_first(BALLOON_PLACE_HERE_NAME) in found
         styles = folded_labels(menu, place_first(BALLOON_PLACE_HERE_NAME))
         assert BALLOON_STYLE_LABELS["ellipse"] in styles
-        assert "貼り付け" in found
+        assert "クリップボードから画像を貼り付け" in found
         # 何が消えるかを名前に出す（→ MainWindow.delete_target）
         assert "コマを削除" in found
         # コマの上に重ねてコマを作る道は用意しない（割るほうが素直）
