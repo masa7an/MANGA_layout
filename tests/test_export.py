@@ -408,13 +408,13 @@ class Test画面からの書き出し:
         win.close()
 
     def test_既定の倍率を覚えている(self, window):
-        assert window._export_scale == DEFAULT_SCALE
+        assert window.files.export_scale == DEFAULT_SCALE
 
     def test_このページだけ書き出す(self, window, monkeypatch):
         window.add_page()
         _accept_dialog(monkeypatch, all_pages=False)
 
-        assert window.export_png()
+        assert window.files.export_png()
 
         dest = export_dir_of(window.state)
         assert [p.name for p in dest.iterdir()] == ["p02.png"]
@@ -423,18 +423,18 @@ class Test画面からの書き出し:
         window.add_page()
         _accept_dialog(monkeypatch, all_pages=True)
 
-        assert window.export_png()
+        assert window.files.export_png()
 
         dest = export_dir_of(window.state)
         assert sorted(p.name for p in dest.iterdir()) == ["p01.png", "p02.png"]
 
     def test_取り消せば何も書かない(self, window, monkeypatch):
         monkeypatch.setattr(
-            "manga_layout.ui.window.ExportDialog.exec",
+            "manga_layout.ui.project_io.ExportDialog.exec",
             lambda self: QDialog.DialogCode.Rejected,
         )
 
-        assert not window.export_png()
+        assert not window.files.export_png()
         assert not export_dir_of(window.state).exists()
 
     def test_保存前は保存を促す(self, qapp, monkeypatch):
@@ -446,29 +446,29 @@ class Test画面からの書き出し:
             lambda *a, **k: (asked.append(a[1]), QMessageBox.StandardButton.Cancel)[1],
         )
 
-        assert not window.export_png()
+        assert not window.files.export_png()
         assert asked == ["先に保存が必要です"]
         window.state.history.mark_saved()
         window.close()
 
     def test_上書きを断れば書き換えない(self, window, monkeypatch):
         _accept_dialog(monkeypatch, all_pages=False)
-        window.export_png()
+        window.files.export_png()
         path = export_dir_of(window.state) / "p01.png"
         before = path.read_bytes()
 
         # 2回目は原寸に上げるが、上書きの確認で断る
-        window._export_scale = 1.0
+        window.files.export_scale = 1.0
         monkeypatch.setattr(
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel
         )
 
-        assert not window.export_png()
+        assert not window.files.export_png()
         assert path.read_bytes() == before
 
     def test_上書きを承知すれば書き換える(self, window, monkeypatch):
         _accept_dialog(monkeypatch, all_pages=False, scale=0.5)
-        window.export_png()
+        window.files.export_png()
         path = export_dir_of(window.state) / "p01.png"
         before = path.read_bytes()
 
@@ -477,7 +477,7 @@ class Test画面からの書き出し:
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
         )
 
-        assert window.export_png()
+        assert window.files.export_png()
         assert path.read_bytes() != before
 
     def test_欠けた画像があれば止めて聞く(self, window, monkeypatch):
@@ -490,19 +490,19 @@ class Test画面からの書き出し:
             QMessageBox, "warning", lambda *a, **k: QMessageBox.StandardButton.Cancel
         )
 
-        assert not window.export_png()
+        assert not window.files.export_png()
         assert not export_dir_of(window.state).exists()
 
 
 def _accept_dialog(monkeypatch, *, all_pages: bool, scale: float = 0.5) -> None:
     """設定の窓を出さずに、選んだことにして進める。"""
     monkeypatch.setattr(
-        "manga_layout.ui.window.ExportDialog.exec",
+        "manga_layout.ui.project_io.ExportDialog.exec",
         lambda self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        "manga_layout.ui.window.ExportDialog.wants_all_pages", lambda self: all_pages
+        "manga_layout.ui.project_io.ExportDialog.wants_all_pages", lambda self: all_pages
     )
     monkeypatch.setattr(
-        "manga_layout.ui.window.ExportDialog.chosen_scale", lambda self: scale
+        "manga_layout.ui.project_io.ExportDialog.chosen_scale", lambda self: scale
     )

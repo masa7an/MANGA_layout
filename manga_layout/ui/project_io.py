@@ -10,7 +10,8 @@ from __future__ import annotations
 import pathlib
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from ..autosave_log import AutosaveLog
@@ -19,6 +20,17 @@ from ..recent_project import load_recent_project, save_recent_project
 from ..settings import load_settings
 from ..storage import PROJECT_FILENAME, is_project_dir, project_dir_of
 from . import saving
+from .export import (
+    DEFAULT_SCALE,
+    ExportDialog,
+    existing_paths,
+    export_dir_of,
+    export_pages,
+    missing_assets_in,
+    page_px,
+    planned_paths,
+    scale_label,
+)
 from .saving import SaveAsDialog
 
 if TYPE_CHECKING:
@@ -38,6 +50,10 @@ AUTOSAVE_NO_DIR = "保存先が未定のため自動バックアップしませ�
 AUTOSAVE_NO_CHANGE = "変更が無いため自動バックアップしません"
 AUTOSAVE_FAILED = "自動バックアップできません"
 
+# 上書きの確認に名前を並べる件数の上限。
+# 30 ページの作品でも確認欄が画面を埋めないようにする
+OVERWRITE_LIST_LIMIT = 5
+
 
 class ProjectIO:
     """ファイル入出力の段取り。窓の属性としては `window.files`。
@@ -49,6 +65,10 @@ class ProjectIO:
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window.state
+
+        # 書き出す画像サイズは作品ではなく好みなので、project.json には
+        # 入れない。ただし1回の作業中は同じ値を使い続けるのが普通なので覚えておく
+        self.export_scale = DEFAULT_SCALE
 
         # 一定間隔で作業中の内容を backup/ へ退避する（要件定義 6.6）。
         # 本体（project.json）は触らないので、保存の確認とは食い違わない。
@@ -244,6 +264,130 @@ class ProjectIO:
 
         why = AUTOSAVE_NO_DIR if self._state.project_dir is None else AUTOSAVE_NO_CHANGE
         self.autosave_log.record(why)
+
+    # -- 書き出し ----------------------------------------------------------
+
+    def export_png(self) -> bool:
+        """PNG で書き出す（要件定義 6.7）。書き出したら True。
+
+        断る場所を3つ設けてある。**どれも書き始める前に出す。**
+        書いたあとで知らせても、上書きしてしまったものは戻らない。
+
+        1. 保存前の作品（書き出し先が決まらない）
+        2. 実体が見つからない画像がある（その場所が白く抜ける）
+        3. 同じ名前のファイルがすでにある（上書きになる）
+        """
+        dest = self._export_dest()
+        if dest is None:
+            return False
+
+        dialog = ExportDialog(
+            dest,
+            self._state.page_index,
+            self._state.page_count,
+            self._window,
+            self._state.page.size,
+            self.export_scale,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+
+        self.export_scale = dialog.chosen_scale()
+        indexes = (
+            list(range(self._state.page_count))
+            if dialog.wants_all_pages()
+            else [self._state.page_index]
+        )
+
+        if not self._confirm_missing(indexes):
+            return False
+        if not self._confirm_overwrite(dest, indexes):
+            return False
+        return self._run_export(dest, indexes)
+
+    def _export_dest(self) -> pathlib.Path | None:
+        """書き出し先。保存前なら、先に保存してもらう。
+
+        預かって後で書く（画像の貼り付けの `PendingAssets`）形にはしない。
+        書き出しは「いま欲しいファイルを作る」操作なので、後回しにすると
+        何のために押したのか分からなくなる。
+        """
+        try:
+            return export_dir_of(self._state)
+        except MangaLayoutError as e:
+            answer = QMessageBox.question(
+                self._window,
+                "先に保存が必要です",
+                f"{e}\n\n今すぐ保存しますか。",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if answer != QMessageBox.StandardButton.Save or not self.save_project():
+                return None
+        return export_dir_of(self._state)
+
+    def _confirm_missing(self, indexes: list[int]) -> bool:
+        """実体の無い画像があれば知らせる。続けてよければ True。
+
+        画面では×印が出ているが、書き出しには目印を描かない（作品ではない
+        ため）。黙って白く抜けるので、ここで必ず言う。
+        """
+        count = missing_assets_in(self._state, indexes)
+        if count == 0:
+            return True
+        answer = QMessageBox.warning(
+            self._window,
+            "画像が見つかりません",
+            f"実体の見つからない画像が {count} 個あります。\n"
+            "その場所は白いまま書き出されます。続けますか。",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Ok
+
+    def _confirm_overwrite(self, dest: pathlib.Path, indexes: list[int]) -> bool:
+        """すでにあるファイルを上書きしてよいか聞く。よければ True。
+
+        名前を並べる件数を絞るのは、30 ページの作品で確認欄が画面を
+        埋め尽くすのを避けるため。件数は必ず先に出す。
+        """
+        found = existing_paths(planned_paths(dest, indexes, self._state.page_count))
+        if not found:
+            return True
+
+        shown = [p.name for p in found[:OVERWRITE_LIST_LIMIT]]
+        if len(found) > OVERWRITE_LIST_LIMIT:
+            shown.append(f"ほか {len(found) - OVERWRITE_LIST_LIMIT} 件")
+        answer = QMessageBox.question(
+            self._window,
+            "上書きしますか",
+            f"{dest} に同じ名前のファイルが {len(found)} 件あります。\n"
+            + "、".join(shown)
+            + "\n\n上書きしますか。",
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Ok
+
+    def _run_export(self, dest: pathlib.Path, indexes: list[int]) -> bool:
+        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            written = export_pages(self._state, indexes, dest, self.export_scale)
+        except (MangaLayoutError, OSError) as e:
+            QMessageBox.critical(self._window, "書き出せません", str(e))
+            return False
+        finally:
+            QGuiApplication.restoreOverrideCursor()
+
+        where = written[0].name if len(written) == 1 else f"{len(written)} 枚"
+        px = page_px(self._state.page.size, self.export_scale)
+        self._state.message.emit(
+            f"{dest} に {where} を書き出しました"
+            f"（{scale_label(self.export_scale)}・{px[0]:,} × {px[1]:,} 画素）"
+        )
+        return True
+
+    # -- 終了時 ------------------------------------------------------------
 
     def confirm_discard(self) -> bool:
         """未保存の変更があれば確認する。続けてよければ True。"""

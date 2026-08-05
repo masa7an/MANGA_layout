@@ -32,18 +32,7 @@ from ..recent_project import load_recent_project
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import PROJECT_FILENAME, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
-from .export import (
-    DEFAULT_SCALE,
-    EXPORT_DIRNAME,
-    ExportDialog,
-    existing_paths,
-    export_dir_of,
-    export_pages,
-    missing_assets_in,
-    page_px,
-    planned_paths,
-    scale_label,
-)
+from .export import EXPORT_DIRNAME
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .project_io import ProjectIO
 from .state import (
@@ -193,9 +182,6 @@ BOTTOM_GAP_PX = 20
 # ウィンドウを掴めなくなる
 FRAME_ALLOWANCE_PX = 48
 
-# 上書きの確認に名前を並べる件数の上限。
-# 30 ページの作品でも確認欄が画面を埋めないようにする
-OVERWRITE_LIST_LIMIT = 5
 
 
 class MainWindow(QMainWindow):
@@ -205,10 +191,6 @@ class MainWindow(QMainWindow):
         self.view = PageView(self.state)
         self.setCentralWidget(self.view)
         self._apply_initial_geometry()
-
-        # 書き出す画像サイズは作品ではなく好みなので、project.json には
-        # 入れない。ただし1回の作業中は同じ値を使い続けるのが普通なので覚えておく
-        self._export_scale = DEFAULT_SCALE
 
         # settings.json は手で書き換える前提のファイル。実物が無いと
         # 「どこに何を書けばいいのか」が分からないので、起動時に雛形を置く。
@@ -515,7 +497,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(
             self._act(
                 "PNG で書き出し...",
-                self.export_png,
+                self.files.export_png,
                 "Ctrl+E",
                 f"作品フォルダの {EXPORT_DIRNAME}/ に書き出す",
             )
@@ -1896,128 +1878,6 @@ class MainWindow(QMainWindow):
             return
         self.recent_project_action.setText(f"前回のファイルを開く（{path.name}）")
         self.recent_project_action.setEnabled(True)
-
-    # -- 書き出し ----------------------------------------------------------
-
-    def export_png(self) -> bool:
-        """PNG で書き出す（要件定義 6.7）。書き出したら True。
-
-        断る場所を3つ設けてある。**どれも書き始める前に出す。**
-        書いたあとで知らせても、上書きしてしまったものは戻らない。
-
-        1. 保存前の作品（書き出し先が決まらない）
-        2. 実体が見つからない画像がある（その場所が白く抜ける）
-        3. 同じ名前のファイルがすでにある（上書きになる）
-        """
-        dest = self._export_dest()
-        if dest is None:
-            return False
-
-        dialog = ExportDialog(
-            dest,
-            self.state.page_index,
-            self.state.page_count,
-            self,
-            self.state.page.size,
-            self._export_scale,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return False
-
-        self._export_scale = dialog.chosen_scale()
-        indexes = (
-            list(range(self.state.page_count))
-            if dialog.wants_all_pages()
-            else [self.state.page_index]
-        )
-
-        if not self._confirm_missing(indexes):
-            return False
-        if not self._confirm_overwrite(dest, indexes):
-            return False
-        return self._run_export(dest, indexes)
-
-    def _export_dest(self) -> pathlib.Path | None:
-        """書き出し先。保存前なら、先に保存してもらう。
-
-        預かって後で書く（画像の貼り付けの `PendingAssets`）形にはしない。
-        書き出しは「いま欲しいファイルを作る」操作なので、後回しにすると
-        何のために押したのか分からなくなる。
-        """
-        try:
-            return export_dir_of(self.state)
-        except MangaLayoutError as e:
-            answer = QMessageBox.question(
-                self,
-                "先に保存が必要です",
-                f"{e}\n\n今すぐ保存しますか。",
-                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Save,
-            )
-            if answer != QMessageBox.StandardButton.Save or not self.files.save_project():
-                return None
-        return export_dir_of(self.state)
-
-    def _confirm_missing(self, indexes: list[int]) -> bool:
-        """実体の無い画像があれば知らせる。続けてよければ True。
-
-        画面では×印が出ているが、書き出しには目印を描かない（作品ではない
-        ため）。黙って白く抜けるので、ここで必ず言う。
-        """
-        count = missing_assets_in(self.state, indexes)
-        if count == 0:
-            return True
-        answer = QMessageBox.warning(
-            self,
-            "画像が見つかりません",
-            f"実体の見つからない画像が {count} 個あります。\n"
-            "その場所は白いまま書き出されます。続けますか。",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        return answer == QMessageBox.StandardButton.Ok
-
-    def _confirm_overwrite(self, dest: pathlib.Path, indexes: list[int]) -> bool:
-        """すでにあるファイルを上書きしてよいか聞く。よければ True。
-
-        名前を並べる件数を絞るのは、30 ページの作品で確認欄が画面を
-        埋め尽くすのを避けるため。件数は必ず先に出す。
-        """
-        found = existing_paths(planned_paths(dest, indexes, self.state.page_count))
-        if not found:
-            return True
-
-        shown = [p.name for p in found[:OVERWRITE_LIST_LIMIT]]
-        if len(found) > OVERWRITE_LIST_LIMIT:
-            shown.append(f"ほか {len(found) - OVERWRITE_LIST_LIMIT} 件")
-        answer = QMessageBox.question(
-            self,
-            "上書きしますか",
-            f"{dest} に同じ名前のファイルが {len(found)} 件あります。\n"
-            + "、".join(shown)
-            + "\n\n上書きしますか。",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        return answer == QMessageBox.StandardButton.Ok
-
-    def _run_export(self, dest: pathlib.Path, indexes: list[int]) -> bool:
-        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            written = export_pages(self.state, indexes, dest, self._export_scale)
-        except (MangaLayoutError, OSError) as e:
-            QMessageBox.critical(self, "書き出せません", str(e))
-            return False
-        finally:
-            QGuiApplication.restoreOverrideCursor()
-
-        where = written[0].name if len(written) == 1 else f"{len(written)} 枚"
-        px = page_px(self.state.page.size, self._export_scale)
-        self.state.message.emit(
-            f"{dest} に {where} を書き出しました"
-            f"（{scale_label(self._export_scale)}・{px[0]:,} × {px[1]:,} 画素）"
-        )
-        return True
 
     # -- 終了時 ------------------------------------------------------------
 
