@@ -18,6 +18,7 @@ import pytest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QMessageBox
 
 from manga_layout import Rect, is_project_dir
+from manga_layout.recent_project import load_recent_project
 from manga_layout.settings import AppSettings, save_settings
 from manga_layout.storage import project_dir_of
 from manga_layout.ui import EditorState, MainWindow
@@ -376,6 +377,73 @@ class Test窓が始まる場所:
         save_settings(AppSettings(default_parent_dir=str(あとで)), window.settings_file)
 
         assert window._default_parent() == あとで
+
+
+class Test前回のファイルを開く:
+    """『ファイル』→『開く』の下にある、前回の行き先へのショートカット。
+
+    `settings.json`（手で書き換える前提）とは別に、開く・保存するたびに
+    黙って上書きする記録を見て、選ぶ手間なしで前回の作品を開く。
+    """
+
+    def test_起動直後は無効(self, window):
+        assert not window.recent_project_action.isEnabled()
+
+    def test_保存すると記録される(self, window, tmp_path, monkeypatch):
+        _accept(monkeypatch, tmp_path / "私のネーム")
+        window.add_full_page_panel()
+
+        window.save_project_as()
+
+        assert load_recent_project() == tmp_path / "私のネーム"
+        assert window.recent_project_action.isEnabled()
+        assert "私のネーム" in window.recent_project_action.text()
+
+    def test_開くと記録される(self, window, tmp_path, monkeypatch):
+        other = EditorState()
+        other.save(tmp_path / "先に作った作品")
+        _choose_file(monkeypatch, tmp_path / "先に作った作品" / "project.json")
+
+        window.open_project()
+
+        assert load_recent_project() == tmp_path / "先に作った作品"
+        assert window.recent_project_action.isEnabled()
+
+    def test_選ぶ手間なしで開ける(self, window, tmp_path, monkeypatch):
+        other = EditorState()
+        other.save(tmp_path / "前回の作品")
+        _choose_file(monkeypatch, tmp_path / "前回の作品" / "project.json")
+        window.open_project()
+        window.new_project()
+        assert window.state.project_dir is None
+
+        window.open_recent_project()
+
+        assert window.state.project_dir == tmp_path / "前回の作品"
+
+    def test_記録が無ければ何もしない(self, window):
+        before = window.state.project_dir
+        window.open_recent_project()
+        assert window.state.project_dir == before
+
+    def test_移動されていれば断る(self, window, tmp_path, monkeypatch):
+        other = EditorState()
+        other.save(tmp_path / "動かす作品")
+        _choose_file(monkeypatch, tmp_path / "動かす作品" / "project.json")
+        window.open_project()
+        window.new_project()
+
+        import shutil
+
+        shutil.rmtree(tmp_path / "動かす作品")
+        shown = []
+        monkeypatch.setattr(
+            QMessageBox, "warning", lambda *a, **k: shown.append(a[1])
+        )
+
+        window.open_recent_project()
+
+        assert shown == ["開けません"]
 
 
 def _configure(window, tmp_path: pathlib.Path, parent_dir: pathlib.Path) -> None:

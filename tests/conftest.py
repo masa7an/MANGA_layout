@@ -55,6 +55,22 @@ def 自動バックアップの記録を逃がす(tmp_path_factory, monkeypatch)
     )
 
 
+@pytest.fixture(autouse=True)
+def 前回開いた作品の記録を逃がす(tmp_path_factory, monkeypatch):
+    """本物の `data/recent_project.txt` に書かせない。
+
+    「前回のファイルを開く」（→ `manga_layout.recent_project`）は開く・保存
+    するたびに黙って上書きする。テストで `MainWindow` を作るたびに本物へ
+    書くと、テストで使った `tmp_path`（テストが終われば消える）が実物の
+    記録に残り続けてしまう。
+    """
+    directory = tmp_path_factory.mktemp("recent_project")
+    monkeypatch.setattr(
+        "manga_layout.recent_project.recent_project_path",
+        lambda: directory / "recent_project.txt",
+    )
+
+
 @pytest.fixture
 def png_bytes() -> bytes:
     """透明度ありの基準画像。"""

@@ -23,6 +23,7 @@ from ..errors import MangaLayoutError
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect, image_at
 from ..model import PT_TO_PX, ImageObject, Panel
+from ..recent_project import load_recent_project, save_recent_project
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import (
     PROJECT_FILENAME,
@@ -235,6 +236,9 @@ class MainWindow(QMainWindow):
         # 区別が付かないのが、2026-08-05 の切り分けで困った点
         self.autosave_log.record(f"起動（{interval_sec}秒ごと）", repeat=True)
 
+        # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
+        self._sync_recent_project_action()
+
         self._refresh()
 
     # -- 組み立て ----------------------------------------------------------
@@ -406,6 +410,13 @@ class MainWindow(QMainWindow):
                 f"作品フォルダの中の {PROJECT_FILENAME} を選ぶ",
             )
         )
+        self.recent_project_action = self._act(
+            "前回のファイルを開く",
+            self.open_recent_project,
+            None,
+            "前回開いた・保存した作品を、選ぶ手間なしで開く",
+        )
+        file_menu.addAction(self.recent_project_action)
         file_menu.addSeparator()
         file_menu.addAction(self._act("保存", self.save_project, "Ctrl+S"))
         file_menu.addAction(
@@ -1553,8 +1564,22 @@ class MainWindow(QMainWindow):
         )
         if not chosen:
             return
+        self._open_project_dir(project_dir_of(pathlib.Path(chosen)))
 
-        path = project_dir_of(pathlib.Path(chosen))
+    def open_recent_project(self) -> None:
+        """『前回のファイルを開く』。窓を出さず、前回の行き先をそのまま開く。
+
+        行き先は `data/recent_project.txt`（→ `recent_project.py`）。開く・
+        保存するたびに黙って上書きしている記録で、`settings.json` とは別。
+        """
+        path = load_recent_project()
+        if path is None:
+            return
+        if not self._confirm_discard():
+            return
+        self._open_project_dir(path)
+
+    def _open_project_dir(self, path: pathlib.Path) -> None:
         if not is_project_dir(path):
             QMessageBox.warning(
                 self,
@@ -1577,6 +1602,26 @@ class MainWindow(QMainWindow):
                 "\n".join(f"・{w}" for w in warnings),
             )
         self.state.message.emit(f"開きました: {path}")
+        self._remember_recent_project(path)
+
+    def _remember_recent_project(self, path: pathlib.Path) -> None:
+        """『前回のファイルを開く』の行き先を更新する。"""
+        save_recent_project(path)
+        self._sync_recent_project_action(path)
+
+    def _sync_recent_project_action(self, path: pathlib.Path | None = None) -> None:
+        """『前回のファイルを開く』の表示を、わかっている行き先に合わせる。
+
+        `path` を渡さなければ記録から読み直す（起動直後の初期表示用）。
+        """
+        if path is None:
+            path = load_recent_project()
+        if path is None:
+            self.recent_project_action.setText("前回のファイルを開く")
+            self.recent_project_action.setEnabled(False)
+            return
+        self.recent_project_action.setText(f"前回のファイルを開く（{path.name}）")
+        self.recent_project_action.setEnabled(True)
 
     def save_project(self) -> bool:
         if self.state.project_dir is None:
@@ -1628,6 +1673,7 @@ class MainWindow(QMainWindow):
             return False
         self._refresh()
         self.state.message.emit(f"保存しました: {path}")
+        self._remember_recent_project(path)
         return True
 
     def _autosave(self) -> None:
