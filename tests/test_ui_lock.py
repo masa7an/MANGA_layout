@@ -89,7 +89,7 @@ def test_メニューの文言がロック_ロックを解除で入れ替わる(
 
 def test_右クリックにもロック項目が出る(window_with_panel):
     window = window_with_panel
-    menu = window._context_menu(*PANEL_CENTER)
+    menu = window.context_menu.build(*PANEL_CENTER)
     assert window.panel_menu.lock_toggle_action in menu.actions()
 
 

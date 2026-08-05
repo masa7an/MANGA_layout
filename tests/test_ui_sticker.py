@@ -17,13 +17,13 @@ from manga_layout import Rect
 from manga_layout.model import StickerObject
 from manga_layout.stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION
 from manga_layout.ui import EditorState, MainWindow
+from manga_layout.ui.context_menu import place_here_label
 from manga_layout.ui.state import (
     STICKER_KIND_LABELS,
     TOOL_SELECT,
     TOOL_STICKER_EXCLAIM,
     TOOL_STICKER_EXCLAIM_QUESTION,
 )
-from manga_layout.ui.window import place_here_label
 
 # 既定のマーク（長辺 240px）が余裕をもって収まる大きさ
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
@@ -318,17 +318,17 @@ class Testメニュー:
 class Test右クリックのメニュー:
     def test_コマの上でマークを置ける(self, window_with_panel):
         window_with_panel.state.select(window_with_panel.state.page.panels[0].id)
-        menu = window_with_panel._context_menu(*CENTER)
+        menu = window_with_panel.context_menu.build(*CENTER)
         labels = [a.text() for a in menu.actions()]
         # フキダシが並びの1つめなので、マークは前置きが落ちた形で出る
-        # （→ `manga_layout.ui.window.place_here_label`）
+        # （→ `manga_layout.ui.context_menu.place_here_label`）
         expected = place_here_label(STICKER_KIND_LABELS[STICKER_EXCLAIM], first=False)
         assert expected in labels
         menu.deleteLater()
 
     def test_何も無いところでも置ける(self, window):
         window.state.select(None)
-        menu = window._context_menu(60.0, 60.0)
+        menu = window.context_menu.build(60.0, 60.0)
         labels = [a.text() for a in menu.actions()]
         # ここではコマが並びの1つめ
         expected = place_here_label(STICKER_KIND_LABELS[STICKER_EXCLAIM], first=False)
@@ -341,7 +341,7 @@ class Test右クリックのメニュー:
         assert window_with_panel.state.tool == TOOL_SELECT
 
     def test_マークを選んでいるときは編集の項目が出る(self, window_with_sticker):
-        menu = window_with_sticker._context_menu(*CENTER)
+        menu = window_with_sticker.context_menu.build(*CENTER)
         assert window_with_sticker.sticker_menu.attach_action in menu.actions()
         menu.deleteLater()
 

@@ -315,7 +315,7 @@ def test_コマを選んでいなければつまみが出ない(window_with_focu
 
 def focus_submenu(window):
     """コマの右クリックメニューに畳んである「集中線」の中身。"""
-    menu = window._context_menu(*PANEL_CENTER)
+    menu = window.context_menu.build(*PANEL_CENTER)
     for action in menu.actions():
         sub = action.menu()
         if sub is not None:

@@ -501,7 +501,7 @@ class BalloonMenu:
         # 右クリックのメニューが写して使う（→ `items_to_copy`）。
         # **畳んだ「種類を変える」は写せない**（QMenu を持ち帰れないため）。
         # 右クリック側では同じ控え（`style_copy_items`）から
-        # 組み直す（→ `_context_menu`、集中線と同じ形）
+        # 組み直す（→ `ContextMenu.build`、集中線と同じ形）
         self.copy_items = items_to_copy(
             menu,
             (*window._tool_actions.values(), style_menu_action, *tail_turn_actions),

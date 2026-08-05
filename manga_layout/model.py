@@ -686,7 +686,11 @@ class StickerObject(SceneObject):
 #     manga_layout/ui/window.py
 #         - `_hint`（状態表示）
 #         - `delete_target`（「削除」で消える対象と呼び名）
-#         - `_context_menu`（右クリックの出し分け）
+#     manga_layout/ui/menus.py
+#         - メニュー部品（`StickerMenu` に倣ってクラスを1つ足し、
+#           `MainWindow.__init__` で生成して `_menus` に登録する）
+#     manga_layout/ui/context_menu.py
+#         - `ContextMenu.build`（右クリックの出し分け）
 #         - `_add_place_here`（「ここに〜を追加」）
 #     manga_layout/ui/render.py
 #         - `draw_floating` の分岐（描画）

@@ -2,7 +2,7 @@
 
 **`exec()` は呼べない。** 応答待ちで止まるので、テストでは
 「右クリックを受け取って選び直すところ」と「メニューを組むところ」を
-別々に通す。本番はこの2つを `_show_context_menu` がつないでいる。
+別々に通す。本番はこの2つを `ContextMenu.show` がつないでいる。
 
 ここで押さえたいのは主に2つ。押した場所のものが選び直されること
 （選ばずに出すと、直前に選んでいた別のものへ操作が効く）と、項目が
@@ -20,9 +20,7 @@ from PySide6.QtWidgets import QMenu
 from manga_layout import Rect
 from manga_layout.model import BalloonObject, Panel, TextObject
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.menus import BALLOON_STYLE_MENU_LABEL
-from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
-from manga_layout.ui.window import (
+from manga_layout.ui.context_menu import (
     BALLOON_PLACE_HERE_NAME,
     PLACE_HERE_PREFIX,
     REPLACE_IMAGE_LABEL,
@@ -30,6 +28,8 @@ from manga_layout.ui.window import (
     place_here_label,
     split_here_label,
 )
+from manga_layout.ui.menus import BALLOON_STYLE_MENU_LABEL
+from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
 
 # 呼び名は1箇所（`BALLOON_STYLE_LABELS`）から取る。書き写すと、
 # 改名したときにテストだけが古い名前を通してしまう
@@ -74,7 +74,7 @@ ON_TEXT = (350.0, 300.0)
 def window(qapp):
     win = MainWindow(EditorState())
     # メニューを出す側は外す。つないだままだと exec() で止まる
-    win.view.context_menu_requested.disconnect(win._show_context_menu)
+    win.view.context_menu_requested.disconnect(win.context_menu.show)
     yield win
     win.view.finish_text_edit(commit=False)
     win.state.history.mark_saved()
@@ -102,7 +102,7 @@ def right_click(window: MainWindow, x: float, y: float) -> QMenu:
             QContextMenuEvent.Reason.Mouse, pos, view.viewport().mapToGlobal(pos)
         )
     )
-    return window._context_menu(x, y)
+    return window.context_menu.build(x, y)
 
 
 def labels(menu: QMenu) -> list[str]:
@@ -386,7 +386,7 @@ class TestStatusTips:
 
 
 class TestSharedActions:
-    """項目はメニューバーと同じ実体。作り直さない（→ `_context_menu`）。"""
+    """項目はメニューバーと同じ実体。作り直さない（→ `ContextMenu.build`）。"""
 
     def test_同じ項目を並べている(self, window_with_panel):
         window_with_panel.state.add_text(TEXT_RECT, TEXT_CONTENT)
