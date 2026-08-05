@@ -12,8 +12,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any
 
 from . import validation as v
 from .errors import ProjectFormatError
@@ -30,14 +31,14 @@ class Size:
     w: float
     h: float
 
-    def scaled(self, factor: float) -> "Size":
+    def scaled(self, factor: float) -> Size:
         return Size(self.w * factor, self.h * factor)
 
     def to_dict(self) -> dict[str, float]:
         return {"w": self.w, "h": self.h}
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "Size":
+    def from_dict(cls, data: Any, where: str) -> Size:
         d = v.req_mapping(data, where)
         return cls(w=v.positive(d, "w", where), h=v.positive(d, "h", where))
 
@@ -63,7 +64,7 @@ class Rect:
     def center(self) -> tuple[float, float]:
         return (self.x + self.w / 2.0, self.y + self.h / 2.0)
 
-    def normalized(self) -> "Rect":
+    def normalized(self) -> Rect:
         """幅や高さが負なら、左上を付け替えて正の値にする。
 
         ドラッグで矩形を描くとき、右下から左上へ引くと負の幅になる。
@@ -72,17 +73,17 @@ class Rect:
         y, h = (self.y, self.h) if self.h >= 0 else (self.y + self.h, -self.h)
         return Rect(x, y, w, h)
 
-    def translated(self, dx: float, dy: float) -> "Rect":
+    def translated(self, dx: float, dy: float) -> Rect:
         return Rect(self.x + dx, self.y + dy, self.w, self.h)
 
-    def scaled(self, factor: float) -> "Rect":
+    def scaled(self, factor: float) -> Rect:
         """原点を軸に拡大縮小する。単位の換算（mm → px）に使う。"""
         return Rect(self.x * factor, self.y * factor, self.w * factor, self.h * factor)
 
     def contains(self, x: float, y: float) -> bool:
         return self.x <= x <= self.right and self.y <= y <= self.bottom
 
-    def intersects(self, other: "Rect") -> bool:
+    def intersects(self, other: Rect) -> bool:
         return not (
             other.x > self.right
             or other.right < self.x
@@ -94,7 +95,7 @@ class Rect:
         return {"x": self.x, "y": self.y, "w": self.w, "h": self.h}
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "Rect":
+    def from_dict(cls, data: Any, where: str) -> Rect:
         d = v.req_mapping(data, where)
         return cls(
             x=v.number(d, "x", where),
@@ -221,7 +222,7 @@ class Polygon:
         return len(self.points)
 
     @classmethod
-    def from_rect(cls, rect: Rect) -> "Polygon":
+    def from_rect(cls, rect: Rect) -> Polygon:
         """矩形から作る。MVP のコマ追加はすべてこの経路を通る。"""
         r = rect.normalized()
         return cls(
@@ -233,7 +234,7 @@ class Polygon:
             )
         )
 
-    def scaled(self, factor: float) -> "Polygon":
+    def scaled(self, factor: float) -> Polygon:
         """原点を軸に拡大縮小する。単位の換算（mm → px）に使う。"""
         return Polygon(tuple((x * factor, y * factor) for x, y in self.points))
 
@@ -243,10 +244,10 @@ class Polygon:
         ys = [p[1] for p in self.points]
         return Rect(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
 
-    def translated(self, dx: float, dy: float) -> "Polygon":
+    def translated(self, dx: float, dy: float) -> Polygon:
         return Polygon(tuple((x + dx, y + dy) for x, y in self.points))
 
-    def fitted_to(self, bounds: Rect) -> "Polygon":
+    def fitted_to(self, bounds: Rect) -> Polygon:
         """外接矩形が `bounds` になるよう、頂点を比例で移し替える。
 
         軸並行の長方形に使うと結果は `bounds` そのものになるので、
@@ -320,7 +321,7 @@ class Polygon:
         return [[x, y] for x, y in self.points]
 
     @classmethod
-    def from_list(cls, data: Any, where: str) -> "Polygon":
+    def from_list(cls, data: Any, where: str) -> Polygon:
         seq: Sequence[Any] = v.req_list(data, where)
         if len(seq) < 3:
             raise ProjectFormatError(f"{where}: 多角形には3点以上必要です（{len(seq)}点）")

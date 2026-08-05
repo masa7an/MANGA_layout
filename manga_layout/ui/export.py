@@ -28,7 +28,6 @@ from __future__ import annotations
 import os
 import pathlib
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import (
     QComboBox,
@@ -42,8 +41,8 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import ExportError
-from ..images import ImageCache, Preview, full_from_bytes
 from ..geometry import Size
+from ..images import ImageCache, Preview, full_from_bytes
 from ..model import DEFAULT_PAGE_SIZE, Page, StickerObject
 from .render import PAGE_BG, PageRenderer
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from manga_layout import Polygon, Rect, Size, fit_rect, fit_size
@@ -29,7 +31,7 @@ class TestRect:
     def test_書き換えできない(self):
         # 複数のオブジェクトが同じ矩形を共有して片方の移動が両方に及ぶ、
         # という追いにくい不具合を構造的に防いでいる
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             Rect(0.0, 0.0, 1.0, 1.0).x = 5.0  # type: ignore[misc]
 
     def test_重なりを判定できる(self):

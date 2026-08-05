@@ -13,33 +13,33 @@ import math
 import pytest
 
 from manga_layout import Rect, new_project
-from manga_layout.model import TAIL_SHAPE_BUBBLES
 from manga_layout.layout import (
-    BalloonSettings,
     CLOUD_MIN_SEGMENTS_PER_LOBE,
+    TAIL_BUBBLE_COUNT,
+    TAIL_BUBBLE_MAX_RATIO,
+    TAIL_LENGTH_MIN_PX,
+    TAIL_LENGTH_RATIO,
+    TAIL_ROOT_MAX_GAP,
     WAVY_MIN_SEGMENTS_PER_WAVE,
+    BalloonSettings,
     attach_target,
     balloon_at,
     balloon_contains,
     balloon_outline,
     cloud_points,
     default_balloon_rect,
-    TAIL_BUBBLE_COUNT,
-    TAIL_BUBBLE_MAX_RATIO,
-    TAIL_LENGTH_MIN_PX,
-    TAIL_LENGTH_RATIO,
-    TAIL_ROOT_MAX_GAP,
     default_tail_tip,
-    tail_body_contains,
-    tail_bubbles,
     ellipse_points,
     jagged_points,
     root_y_at,
     tail_base_angle,
+    tail_body_contains,
+    tail_bubbles,
     tail_root_point,
     tail_triangle,
     wavy_points,
 )
+from manga_layout.model import TAIL_SHAPE_BUBBLES
 
 SETTINGS = BalloonSettings()
 RECT = Rect(20.0, 30.0, 40.0, 26.0)
@@ -131,7 +131,10 @@ class TestWavy:
         波形は谷の深さより小さい幅でしか動かない。
         """
         ratios = [distance_ratio(RECT, p) for p in wavy_points(RECT, SETTINGS)]
-        steps = [abs(b - a) for a, b in zip(ratios, ratios[1:] + ratios[:1])]
+        # 1つ回転させただけなので長さは必ず揃う。strict=True で明示する
+        steps = [
+            abs(b - a) for a, b in zip(ratios, ratios[1:] + ratios[:1], strict=True)
+        ]
         assert max(steps) < SETTINGS.wavy_depth
 
     def test_1波あたりの本数に下限がある(self):
@@ -577,7 +580,9 @@ class TestBubbleTail:
 
     def test_円どうしも離れている(self, thinking):
         found = tail_bubbles(thinking, SETTINGS)
-        for (x1, y1, r1), (x2, y2, r2) in zip(found, found[1:]):
+        # 隣り合う組を作るためのずらし。長さが1つ違うのは意図どおりなので
+        # strict=False（`test_ui_context_menu.py` の区切り線チェックと同じ形）
+        for (x1, y1, r1), (x2, y2, r2) in zip(found, found[1:], strict=False):
             assert math.hypot(x2 - x1, y2 - y1) > r1 + r2
 
     def test_先端が輪郭に重なっていれば作らない(self, thinking):

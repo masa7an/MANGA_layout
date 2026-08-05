@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import pathlib
-
 from manga_layout.recent_project import (
     RECENT_PROJECT_FILENAME,
     load_recent_project,

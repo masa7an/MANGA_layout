@@ -20,8 +20,8 @@ from __future__ import annotations
 import contextlib
 import json
 import zlib
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 from .model import Project
 

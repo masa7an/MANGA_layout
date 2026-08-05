@@ -19,7 +19,7 @@ from __future__ import annotations
 import hashlib
 import os
 import pathlib
-from typing import Iterable
+from collections.abc import Iterable
 
 from .errors import AssetError, UnknownImageFormatError
 

@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import pytest
+from test_ui_balloon import click, drag
 
 from manga_layout import Rect
 from manga_layout.model import StickerObject
+from manga_layout.stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import (
     STICKER_KIND_LABELS,
@@ -21,10 +23,7 @@ from manga_layout.ui.state import (
     TOOL_STICKER_EXCLAIM,
     TOOL_STICKER_EXCLAIM_QUESTION,
 )
-from manga_layout.stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION
 from manga_layout.ui.window import place_here_label
-
-from test_ui_balloon import click, drag
 
 # 既定のマーク（長辺 240px）が余裕をもって収まる大きさ
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)

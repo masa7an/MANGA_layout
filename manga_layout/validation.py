@@ -11,7 +11,8 @@ JSON は何でも入るので、モデルへ変換する前にここで弾く。
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from .errors import ProjectFormatError
 

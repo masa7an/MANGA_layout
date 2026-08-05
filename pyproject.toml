@@ -1,0 +1,26 @@
+# ruff（静的解析）の設定だけを置くファイル。パッケージとして配布する
+# 構成ではないので、[build-system] などは持たせない（要らないものは足さない）。
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+# E  : pycodestyle（書式のうち明らかな誤り）
+# F  : pyflakes（未使用の import・変数、未定義の名前など）
+# I  : import の並び順
+# UP : 今のバージョンの Python なら要らない書き方（例: `from __future__ import
+#      annotations` を使っているのに、型注釈をなお文字列で書いている）
+# B  : bugbear（気づきにくい実害のある書き方）
+select = ["E", "F", "I", "UP", "B"]
+
+# E501（1行が長い）は外す。このコードベースは、判断の理由を長い日本語の
+# コメントで残す書き方を選んでいる（→ CLAUDE.md）。折り返しを強制すると
+# 実害のない指摘だけが 169 件（2026-08-05 実測）出て、他の指摘に埋もれる
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+# `as` で名前を変えた import を1つの `from ... import (...)` にまとめる。
+# 既定（false）のままだと、`import x as y` を含む行が1つずつ別の
+# `from ... import (...)` ブロックに割れて書き出される
+# （2026-08-05、`ui/canvas.py` の `..focus` の import で実際に発生）
+combine-as-imports = true

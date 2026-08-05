@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any
 
 from . import validation as v
 from .errors import ProjectFormatError, UnsupportedVersionError
@@ -170,7 +171,7 @@ class Border:
         return {"width": self.width, "color": self.color, "visible": self.visible}
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "Border":
+    def from_dict(cls, data: Any, where: str) -> Border:
         d = v.req_mapping(data, where)
         return cls(
             width=v.number(d, "width", where, 3.5),
@@ -197,7 +198,7 @@ class Font:
         return {"family": self.family, "size_px": self.size_px, "bold": self.bold}
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "Font":
+    def from_dict(cls, data: Any, where: str) -> Font:
         """`size_px` を読む。**version 1 の `size_mm` も受ける。**
 
         値の換算は `Project.from_dict` がまとめて行う。ここは
@@ -245,7 +246,7 @@ class Tail:
     root_y: float | None = None
     shape: str = TAIL_SHAPE_TRIANGLE
 
-    def translated(self, dx: float, dy: float) -> "Tail":
+    def translated(self, dx: float, dy: float) -> Tail:
         return Tail(
             self.enabled,
             (self.tip[0] + dx, self.tip[1] + dy),
@@ -269,7 +270,7 @@ class Tail:
         return data
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "Tail":
+    def from_dict(cls, data: Any, where: str) -> Tail:
         d = v.req_mapping(data, where)
         tip = v.point(d["tip"], f"{where}.tip") if "tip" in d else (0.0, 0.0)
         return cls(
@@ -337,7 +338,7 @@ class FocusLines:
         return data
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "FocusLines":
+    def from_dict(cls, data: Any, where: str) -> FocusLines:
         """**範囲外は切り詰めずに弾く。**
 
         黙って直すと、書き出した値と読み戻した値が食い違い、保存のたびに
@@ -423,7 +424,7 @@ class ImageObject(SceneObject):
         }
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "ImageObject":
+    def from_dict(cls, data: Any, where: str) -> ImageObject:
         d = v.req_mapping(data, where)
         px = v.req_list(d.get("src_px", [0, 0]), f"{where}.src_px")
         if len(px) != 2:
@@ -478,7 +479,7 @@ class Panel(SceneObject):
         return data
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "Panel":
+    def from_dict(cls, data: Any, where: str) -> Panel:
         d = v.req_mapping(data, where)
         shape = v.req_mapping(d.get("shape"), f"{where}.shape")
         kind = v.choice(shape, "kind", f"{where}.shape", ("polygon",))
@@ -531,7 +532,7 @@ class BalloonObject(SceneObject):
         }
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "BalloonObject":
+    def from_dict(cls, data: Any, where: str) -> BalloonObject:
         d = v.req_mapping(data, where)
         return cls(
             id=v.text(d, "id", where),
@@ -577,7 +578,7 @@ class TextObject(SceneObject):
         }
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "TextObject":
+    def from_dict(cls, data: Any, where: str) -> TextObject:
         d = v.req_mapping(data, where)
         return cls(
             id=v.text(d, "id", where),
@@ -637,7 +638,7 @@ class StickerObject(SceneObject):
         }
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "StickerObject":
+    def from_dict(cls, data: Any, where: str) -> StickerObject:
         d = v.req_mapping(data, where)
         px = v.req_list(d.get("src_px", [0, 0]), f"{where}.src_px")
         if len(px) != 2:
@@ -789,7 +790,7 @@ class SlantPair:
     def members(self) -> tuple[str, str]:
         return (self.left_id, self.right_id)
 
-    def flipped(self) -> "SlantPair":
+    def flipped(self) -> SlantPair:
         """傾きの向きを反転した組を返す。"""
         other = SLANT_LEFT if self.direction == SLANT_RIGHT else SLANT_RIGHT
         return dataclasses.replace(self, direction=other)
@@ -804,7 +805,7 @@ class SlantPair:
         }
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "SlantPair":
+    def from_dict(cls, data: Any, where: str) -> SlantPair:
         d = v.req_mapping(data, where)
         ratio = v.number(d, "ratio", where)
         if not 0.0 < ratio < 1.0:
@@ -853,7 +854,7 @@ class PageNote:
         return out
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "PageNote":
+    def from_dict(cls, data: Any, where: str) -> PageNote:
         d = v.req_mapping(data, where)
         return cls(
             color=v.choice(d, "color", where, NOTE_COLORS),
@@ -935,7 +936,7 @@ class Page:
 
     # -- 編集 --------------------------------------------------------------
 
-    def texts_on_balloon(self, balloon_id: str) -> list["TextObject"]:
+    def texts_on_balloon(self, balloon_id: str) -> list[TextObject]:
         """その吹き出しの上に置かれたセリフ。"""
         return [
             f
@@ -997,7 +998,7 @@ class Page:
                     text.rect = text.rect.translated(dx, dy)
                     moved.add(text.id)
 
-    def remove_floating(self, object_id: str) -> "FloatingObject":
+    def remove_floating(self, object_id: str) -> FloatingObject:
         """ページ直下のもの（吹き出し・マーク・セリフ）を消す。
 
         吹き出しを消しても、上に乗っていたセリフは消さず紐づけだけ外す。
@@ -1050,7 +1051,7 @@ class Page:
         return out
 
     @classmethod
-    def from_dict(cls, data: Any, where: str) -> "Page":
+    def from_dict(cls, data: Any, where: str) -> Page:
         d = v.req_mapping(data, where)
         panels_raw = v.req_list(d.get("panels", []), f"{where}.panels")
         floating_raw = v.req_list(d.get("floating", []), f"{where}.floating")
@@ -1361,7 +1362,7 @@ class Project:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> "Project":
+    def from_dict(cls, data: Any) -> Project:
         where = "project.json"
         d = v.req_mapping(data, where)
 
@@ -1432,7 +1433,7 @@ class Project:
                         obj.font, size_px=obj.font.size_px * factor
                     )
 
-    def copy(self) -> "Project":
+    def copy(self) -> Project:
         """完全な複製を作る。
 
         Undo/Redo（要件定義 6.8）のスナップショットはこれを使う。

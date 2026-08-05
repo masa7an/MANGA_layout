@@ -26,10 +26,8 @@ import math
 import pytest
 
 from manga_layout import Rect
-from manga_layout.model import BalloonObject
-from manga_layout.model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE
+from manga_layout.model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE, BalloonObject
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.window import BALLOON_STYLE_MENU_LABEL, TAIL_SHAPE_LABELS
 from manga_layout.ui.state import (
     BALLOON_STYLE_LABELS,
     BALLOON_TOOLS,
@@ -38,9 +36,9 @@ from manga_layout.ui.state import (
     TOOL_BALLOON_JAGGED,
     TOOL_BALLOON_RECT,
     TOOL_BALLOON_WAVY,
-    TOOL_PANEL,
     TOOL_SELECT,
 )
+from manga_layout.ui.window import BALLOON_STYLE_MENU_LABEL, TAIL_SHAPE_LABELS
 
 # 座標は px（要件定義 3章）。既定の吹き出し 236×154 が中に収まる大きさ
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
@@ -207,14 +205,16 @@ class TestBalloonMenu:
 
     def test_追加の項目から道具に切り替わる(self, window):
         items = balloon_menu_items(window)
-        for item, tool in zip(items, BALLOON_TOOLS):
+        # items はメニュー全体（種類の数より多い）なので、先頭だけを見る
+        # 意図的な打ち切り。strict=False で明示する
+        for item, tool in zip(items, BALLOON_TOOLS, strict=False):
             item.trigger()
             assert window.state.tool == tool
 
     def test_道具バーと同じ項目を指す(self, window):
         """別々の項目にすると、選ばれている印が片方にしか付かない。"""
         items = balloon_menu_items(window)
-        for item, tool in zip(items, BALLOON_TOOLS):
+        for item, tool in zip(items, BALLOON_TOOLS, strict=False):
             assert item is window._tool_actions[tool]
 
     def test_選択中だけ使える項目もある(self, window_with_balloon):

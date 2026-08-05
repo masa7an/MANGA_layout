@@ -110,7 +110,7 @@ class AppSettings:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "AppSettings":
+    def from_dict(cls, data: dict) -> AppSettings:
         """辞書から作る。**知らない項目は黙って読み飛ばす。**
 
         設定は人が手で書き換えるものなので、打ち間違いや古い項目が

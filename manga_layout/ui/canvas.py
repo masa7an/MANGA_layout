@@ -63,9 +63,9 @@ from ..layout import (
     panel_at,
     resize_rect,
     resize_rect_keep_aspect,
+    root_y_at,
     set_panel_rect,
     snap_candidates,
-    root_y_at,
     snap_moved_rect,
     snap_point,
     split_panel,
@@ -75,15 +75,6 @@ from ..layout import (
     tail_root_point,
     text_at,
 )
-from ..slant import (
-    clamp_slant_ratio,
-    clamp_slant_rect,
-    set_slant_pair_rect,
-    slant_boundary_x,
-    slant_handle_point,
-    slant_ratio_at,
-    split_panel_slant,
-)
 from ..model import (
     SLANT_RIGHT,
     BalloonObject,
@@ -92,6 +83,15 @@ from ..model import (
     Panel,
     StickerObject,
     TextObject,
+)
+from ..slant import (
+    clamp_slant_ratio,
+    clamp_slant_rect,
+    set_slant_pair_rect,
+    slant_boundary_x,
+    slant_handle_point,
+    slant_ratio_at,
+    split_panel_slant,
 )
 from .render import (
     TEXT_ALIGN_FLAGS,
@@ -666,7 +666,7 @@ class TextEditorItem(QGraphicsTextItem):
     やらずに済む（要件定義 6.5「画面上でその場編集」）。
     """
 
-    def __init__(self, view: "PageView", text: TextObject):
+    def __init__(self, view: PageView, text: TextObject):
         super().__init__(text.content)
         self._view = view
         self._closing = False

@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from manga_layout.geometry import Rect
@@ -82,7 +84,8 @@ class Test配置:
     def test_枠をずらすと字も同じだけずれる(self):
         base = layout("あい\nうえ", Rect(0.0, 0.0, 100.0, 100.0), 10.0)
         moved = layout("あい\nうえ", Rect(30.0, 7.0, 100.0, 100.0), 10.0)
-        for a, b in zip(base, moved):
+        # 同じ文字列を置いただけなので字数は必ず揃う。strict=True で明示する
+        for a, b in zip(base, moved, strict=True):
             assert b.cell.x == pytest.approx(a.cell.x + 30.0)
             assert b.cell.y == pytest.approx(a.cell.y + 7.0)
 
@@ -147,5 +150,5 @@ class Test境界:
 
     def test_結果は書き換えできない(self):
         glyphs = layout("あ", Rect(0.0, 0.0, 100.0, 100.0), 10.0)
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             glyphs[0].ch = "い"  # type: ignore[misc]

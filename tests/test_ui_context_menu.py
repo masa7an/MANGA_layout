@@ -336,8 +336,10 @@ class TestContents:
 
         assert not actions[0].isSeparator()
         assert not actions[-1].isSeparator()
+        # 隣り合う組を作るためのずらしで、長さが1つ違うのは意図どおり
         assert not any(
-            a.isSeparator() and b.isSeparator() for a, b in zip(actions, actions[1:])
+            a.isSeparator() and b.isSeparator()
+            for a, b in zip(actions, actions[1:], strict=False)
         )
 
 

@@ -8,13 +8,12 @@
 from __future__ import annotations
 
 import pytest
+from test_ui_balloon import click, drag
 
 from manga_layout import Rect
 from manga_layout.layout import handle_positions
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import TOOL_SELECT, TOOL_SPLIT_H, TOOL_SPLIT_SLANT
-
-from test_ui_balloon import click, drag, press, move_to, release
 
 # 座標は px（要件定義 3章）
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)

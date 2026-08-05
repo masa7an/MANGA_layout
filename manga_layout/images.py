@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
-from PySide6.QtGui import QImage
 from PySide6.QtCore import QBuffer, QIODevice, Qt
+from PySide6.QtGui import QImage
 
 from .errors import BrokenImageError
 

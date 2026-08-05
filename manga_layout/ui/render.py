@@ -29,7 +29,6 @@ from .. import vertical
 from ..focus import focus_triangles
 from ..geometry import Rect
 from ..layout import balloon_outline, tail_bubbles, tail_triangle
-from ..slant import slant_polygons
 from ..model import (
     BalloonObject,
     FocusLines,
@@ -41,6 +40,7 @@ from ..model import (
     TextObject,
     floating_order,
 )
+from ..slant import slant_polygons
 
 PAGE_BG = QColor("#FFFFFF")
 PAGE_EDGE = QColor("#8A8A8A")

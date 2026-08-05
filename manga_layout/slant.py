@@ -12,8 +12,15 @@ import math
 
 from .geometry import EPS, Polygon, Rect
 from .layout import DEFAULT_SETTINGS, LayoutSettings
-from .model import SLANT_DIRECTIONS, SLANT_LEFT, SLANT_RIGHT, Page, Panel, Project, SlantPair
-
+from .model import (
+    SLANT_DIRECTIONS,
+    SLANT_LEFT,
+    SLANT_RIGHT,
+    Page,
+    Panel,
+    Project,
+    SlantPair,
+)
 
 # --------------------------------------------------------------------------
 # 斜めの縦割り

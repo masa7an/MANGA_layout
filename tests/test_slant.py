@@ -11,7 +11,6 @@ import math
 import pytest
 
 from manga_layout import Polygon, Rect, new_project
-from manga_layout.model import SLANT_LEFT, SLANT_RIGHT, Project, SlantPair
 from manga_layout.layout import (
     LayoutSettings,
     image_at,
@@ -19,6 +18,7 @@ from manga_layout.layout import (
     set_panel_rect,
     split_panel,
 )
+from manga_layout.model import SLANT_LEFT, SLANT_RIGHT, Project, SlantPair
 from manga_layout.slant import (
     check_slant,
     clamp_slant_rect,

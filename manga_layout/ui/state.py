@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import pathlib
-from typing import Iterator
+from collections.abc import Iterator
 
 from PySide6.QtCore import QObject, Signal
 
@@ -36,7 +36,6 @@ from ..layout import (
     outside_page,
     tail_tip_turned_to,
 )
-from ..slant import flip_slant_pair, slide_slant_pair
 from ..model import (
     BALLOON_STYLES_WITH_BUBBLE_TAIL,
     BALLOON_STYLES_WITHOUT_TAIL,
@@ -57,6 +56,7 @@ from ..model import (
     TextObject,
     new_project,
 )
+from ..slant import flip_slant_pair, slide_slant_pair
 from ..stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION, read_sticker
 from ..storage import load_project, save_project, write_autosave
 

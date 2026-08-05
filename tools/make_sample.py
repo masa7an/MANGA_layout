@@ -23,7 +23,14 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from manga_layout import Page, Project, Rect, Tail, new_project, save_project  # noqa: E402
+from manga_layout import (  # noqa: E402
+    Page,
+    Project,
+    Rect,
+    Tail,
+    new_project,
+    save_project,
+)
 from manga_layout.layout import DEFAULT_SETTINGS  # noqa: E402
 from manga_layout.model import MM_TO_PX  # noqa: E402
 

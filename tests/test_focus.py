@@ -12,9 +12,8 @@ import math
 
 import pytest
 
-from manga_layout import Panel, ProjectFormatError, Rect
+from manga_layout import Panel, ProjectFormatError, Rect, focus as F
 from manga_layout.model import FocusLines
-from manga_layout import focus as F
 
 
 def make(**kwargs) -> FocusLines:
