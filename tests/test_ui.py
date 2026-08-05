@@ -865,7 +865,7 @@ class TestFile:
     def test_保存後は未保存の印が消える(self, window, tmp_path):
         window.add_full_page_panel()
         assert "*" in window._title()
-        window._write(tmp_path)
+        window.files.write(tmp_path)
         assert "*" not in window._title()
 
     def test_未保存なら閉じる前に確認する(self, qapp, monkeypatch):
@@ -881,20 +881,20 @@ class TestFile:
                 cls.asked += 1
                 return QMessageBox.StandardButton.Cancel
 
-        monkeypatch.setattr("manga_layout.ui.window.QMessageBox", 取り消しを返す確認)
+        monkeypatch.setattr("manga_layout.ui.project_io.QMessageBox", 取り消しを返す確認)
 
         win = MainWindow(EditorState())
         win.add_full_page_panel()
         assert win.state.is_dirty
 
-        assert win._confirm_discard() is False
+        assert win.files.confirm_discard() is False
         assert 取り消しを返す確認.asked == 1
 
         win.state.history.mark_saved()
         win.close()
 
     def test_保存済みなら確認しない(self, window):
-        assert window._confirm_discard() is True
+        assert window.files.confirm_discard() is True
 
     def test_サンプル作品を開ける(self, window):
         """`samples/basic` は version 1（mm）のまま置いてある。
@@ -980,8 +980,8 @@ class TestAutosave:
         window.state.save(tmp_path)
         window.add_full_page_panel()
 
-        window._autosave_timer.setInterval(30)
-        window._autosave_timer.start()
+        window.files.autosave_timer.setInterval(30)
+        window.files.autosave_timer.start()
         QTest.qWait(300)
 
         assert (tmp_path / "backup" / "autosave.1.json").is_file()
@@ -995,31 +995,31 @@ class TestAutosave:
         )
         win = MainWindow(EditorState())
         try:
-            assert win._autosave_timer.interval() == 30_000
-            assert win._autosave_timer.isActive()
+            assert win.files.autosave_timer.interval() == 30_000
+            assert win.files.autosave_timer.isActive()
         finally:
             win.state.history.mark_saved()
             win.close()
 
     def test_起動を記録に残す(self, window):
         """記録が空なら、タイマーを積んだアプリがそもそも動いていないと分かる。"""
-        text = window.autosave_log.path.read_text(encoding="utf-8")
+        text = window.files.autosave_log.path.read_text(encoding="utf-8")
         assert "起動" in text
 
     def test_何もしなかった理由を記録に残す(self, window, tmp_path):
-        window._autosave()  # 保存先が決まっていない
+        window.files.autosave()  # 保存先が決まっていない
         window.state.save(tmp_path)
-        window._autosave()  # 変化が無い
+        window.files.autosave()  # 変化が無い
 
-        lines = window.autosave_log.path.read_text(encoding="utf-8").splitlines()
+        lines = window.files.autosave_log.path.read_text(encoding="utf-8").splitlines()
         assert any("保存先が未定" in line for line in lines)
         assert any("変更が無いため" in line for line in lines)
 
     def test_同じ理由が続く間は記録を増やさない(self, window):
         for _ in range(5):
-            window._autosave()
+            window.files.autosave()
 
-        lines = window.autosave_log.path.read_text(encoding="utf-8").splitlines()
+        lines = window.files.autosave_log.path.read_text(encoding="utf-8").splitlines()
         assert sum("保存先が未定" in line for line in lines) == 1
 
     def test_退避できた回は毎回記録する(self, window, tmp_path):
@@ -1027,9 +1027,9 @@ class TestAutosave:
         window.state.save(tmp_path)
         for _ in range(3):
             window.add_page()  # 毎回ちがう内容にする
-            window._autosave()
+            window.files.autosave()
 
-        lines = window.autosave_log.path.read_text(encoding="utf-8").splitlines()
+        lines = window.files.autosave_log.path.read_text(encoding="utf-8").splitlines()
         assert sum("自動バックアップしました" in line for line in lines) == 3
 
     def test_失敗しても作業を止めない(self, window, tmp_path, monkeypatch):
@@ -1044,7 +1044,7 @@ class TestAutosave:
 
         messages = []
         window.state.message.connect(messages.append)
-        window._autosave()  # 例外が外へ出ないこと
+        window.files.autosave()  # 例外が外へ出ないこと
 
         assert any("自動バックアップできません" in m for m in messages)
         # 印を進めないので、次の回にまた試す

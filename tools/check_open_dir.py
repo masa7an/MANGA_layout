@@ -77,7 +77,7 @@ def main(argv: list[str]) -> int:
     if window.state.project_dir is not None:
         print("  ※ 作品を開いている間は、設定より「その隣」が優先される")
 
-    start = window._default_parent()
+    start = window.files.default_parent()
     print(f"\n窓が始まる場所: {start}")
 
     _report_contents(start)

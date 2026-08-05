@@ -208,7 +208,7 @@ class Test画面からの保存:
         _accept(monkeypatch, tmp_path / "私のネーム")
         window.add_full_page_panel()
 
-        assert window.save_project_as()
+        assert window.files.save_project_as()
 
         assert is_project_dir(tmp_path / "私のネーム")
         assert window.state.project_dir == tmp_path / "私のネーム"
@@ -216,16 +216,16 @@ class Test画面からの保存:
     def test_深い場所でも親ごと作る(self, window, tmp_path, monkeypatch):
         _accept(monkeypatch, tmp_path / "新しい作品")
 
-        assert window.save_project_as()
+        assert window.files.save_project_as()
         assert (tmp_path / "新しい作品" / "assets").is_dir()
 
     def test_取り消せば何も作らない(self, window, tmp_path, monkeypatch):
         monkeypatch.setattr(
-            "manga_layout.ui.window.SaveAsDialog.exec",
+            "manga_layout.ui.project_io.SaveAsDialog.exec",
             lambda self: QDialog.DialogCode.Rejected,
         )
 
-        assert not window.save_project_as()
+        assert not window.files.save_project_as()
         assert list(tmp_path.iterdir()) == []
         assert window.state.project_dir is None
 
@@ -234,7 +234,7 @@ class Test画面からの保存:
         _accept(monkeypatch, tmp_path / "初めての保存")
         window.state.add_text(Rect(20.0, 20.0, 40.0, 20.0), "あ")
 
-        assert window.save_project()
+        assert window.files.save_project()
         assert is_project_dir(tmp_path / "初めての保存")
 
     def test_既存の作品への上書きは確認する(self, window, tmp_path, monkeypatch):
@@ -247,7 +247,7 @@ class Test画面からの保存:
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel
         )
 
-        assert not window.save_project_as()
+        assert not window.files.save_project_as()
         assert (tmp_path / "先客" / "project.json").read_bytes() == before
         assert window.state.project_dir is None
 
@@ -262,7 +262,7 @@ class Test画面からの保存:
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
         )
 
-        assert window.save_project_as()
+        assert window.files.save_project_as()
         assert (tmp_path / "先客" / "project.json").read_bytes() != before
 
 
@@ -289,7 +289,7 @@ class Test開く:
         other.save(tmp_path / "先に作った作品")
 
         _choose_file(monkeypatch, tmp_path / "先に作った作品" / "project.json")
-        window.open_project()
+        window.files.open_project()
 
         assert window.state.project_dir == tmp_path / "先に作った作品"
 
@@ -297,7 +297,7 @@ class Test開く:
         before = window.state.project_dir
         _choose_file(monkeypatch, None)
 
-        window.open_project()
+        window.files.open_project()
 
         assert window.state.project_dir == before
 
@@ -310,7 +310,7 @@ class Test開く:
             QMessageBox, "warning", lambda *a, **k: shown.append(a[1])
         )
 
-        window.open_project()
+        window.files.open_project()
 
         assert shown == ["開けません"]
         assert window.state.project_dir is None
@@ -328,7 +328,7 @@ class Test窓が始まる場所:
         _configure(window, tmp_path, tmp_path)
         started = _record_start_dir(monkeypatch)
 
-        window.open_project()
+        window.files.open_project()
 
         assert started == [str(tmp_path)]
 
@@ -344,7 +344,7 @@ class Test窓が始まる場所:
     def test_保存も同じ場所から始まる(self, window, tmp_path):
         _configure(window, tmp_path, tmp_path)
 
-        assert window._default_parent() == tmp_path
+        assert window.files.default_parent() == tmp_path
 
     def test_作品を開いていればその隣から始まる(self, window, tmp_path, monkeypatch):
         """設定より、今いる場所のほうが強い。"""
@@ -371,12 +371,12 @@ class Test窓が始まる場所:
         最初.mkdir()
         あとで.mkdir()
         _configure(window, tmp_path, 最初)
-        assert window._default_parent() == 最初
+        assert window.files.default_parent() == 最初
 
         # アプリを開いたまま、設定だけを書き換える
         save_settings(AppSettings(default_parent_dir=str(あとで)), window.settings_file)
 
-        assert window._default_parent() == あとで
+        assert window.files.default_parent() == あとで
 
 
 class Test前回のファイルを開く:
@@ -393,7 +393,7 @@ class Test前回のファイルを開く:
         _accept(monkeypatch, tmp_path / "私のネーム")
         window.add_full_page_panel()
 
-        window.save_project_as()
+        window.files.save_project_as()
 
         assert load_recent_project() == tmp_path / "私のネーム"
         assert window.recent_project_action.isEnabled()
@@ -404,7 +404,7 @@ class Test前回のファイルを開く:
         other.save(tmp_path / "先に作った作品")
         _choose_file(monkeypatch, tmp_path / "先に作った作品" / "project.json")
 
-        window.open_project()
+        window.files.open_project()
 
         assert load_recent_project() == tmp_path / "先に作った作品"
         assert window.recent_project_action.isEnabled()
@@ -413,25 +413,25 @@ class Test前回のファイルを開く:
         other = EditorState()
         other.save(tmp_path / "前回の作品")
         _choose_file(monkeypatch, tmp_path / "前回の作品" / "project.json")
-        window.open_project()
-        window.new_project()
+        window.files.open_project()
+        window.files.new_project()
         assert window.state.project_dir is None
 
-        window.open_recent_project()
+        window.files.open_recent_project()
 
         assert window.state.project_dir == tmp_path / "前回の作品"
 
     def test_記録が無ければ何もしない(self, window):
         before = window.state.project_dir
-        window.open_recent_project()
+        window.files.open_recent_project()
         assert window.state.project_dir == before
 
     def test_移動されていれば断る(self, window, tmp_path, monkeypatch):
         other = EditorState()
         other.save(tmp_path / "動かす作品")
         _choose_file(monkeypatch, tmp_path / "動かす作品" / "project.json")
-        window.open_project()
-        window.new_project()
+        window.files.open_project()
+        window.files.new_project()
 
         import shutil
 
@@ -441,7 +441,7 @@ class Test前回のファイルを開く:
             QMessageBox, "warning", lambda *a, **k: shown.append(a[1])
         )
 
-        window.open_recent_project()
+        window.files.open_recent_project()
 
         assert shown == ["開けません"]
 
@@ -464,14 +464,14 @@ def _record_start_dir(monkeypatch) -> list[str]:
         started.append(directory)
         return "", ""
 
-    monkeypatch.setattr("manga_layout.ui.window.QFileDialog.getOpenFileName", fake)
+    monkeypatch.setattr("manga_layout.ui.project_io.QFileDialog.getOpenFileName", fake)
     return started
 
 
 def _choose_file(monkeypatch, path: pathlib.Path | None) -> None:
     """ファイル選択の窓を出さずに、選んだことにして進める。"""
     monkeypatch.setattr(
-        "manga_layout.ui.window.QFileDialog.getOpenFileName",
+        "manga_layout.ui.project_io.QFileDialog.getOpenFileName",
         lambda *a, **k: (str(path) if path else "", ""),
     )
 
@@ -479,13 +479,13 @@ def _choose_file(monkeypatch, path: pathlib.Path | None) -> None:
 def _accept(monkeypatch, path: pathlib.Path) -> None:
     """窓を出さずに、その行き先を選んだことにして進める。"""
     monkeypatch.setattr(
-        "manga_layout.ui.window.SaveAsDialog.exec",
+        "manga_layout.ui.project_io.SaveAsDialog.exec",
         lambda self: QDialog.DialogCode.Accepted,
     )
     monkeypatch.setattr(
-        "manga_layout.ui.window.SaveAsDialog.chosen_path", lambda self: path
+        "manga_layout.ui.project_io.SaveAsDialog.chosen_path", lambda self: path
     )
     monkeypatch.setattr(
-        "manga_layout.ui.window.SaveAsDialog.overwrites_project",
+        "manga_layout.ui.project_io.SaveAsDialog.overwrites_project",
         lambda self: is_project_dir(path),
     )

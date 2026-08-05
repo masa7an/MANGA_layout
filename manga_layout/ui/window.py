@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
-from ..autosave_log import AutosaveLog
 from ..errors import MangaLayoutError
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect, image_at
@@ -29,14 +28,9 @@ from ..model import (
     ImageObject,
     Panel,
 )
-from ..recent_project import load_recent_project, save_recent_project
+from ..recent_project import load_recent_project
 from ..settings import ensure_settings_file, load_settings, settings_path
-from ..storage import (
-    PROJECT_FILENAME,
-    is_project_dir,
-    project_dir_of,
-    prune_unused_assets,
-)
+from ..storage import PROJECT_FILENAME, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .export import (
     DEFAULT_SCALE,
@@ -51,7 +45,7 @@ from .export import (
     scale_label,
 )
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
-from .saving import SaveAsDialog, default_parent
+from .project_io import ProjectIO
 from .state import (
     BALLOON_STYLE_LABELS,
     BALLOON_TOOLS,
@@ -174,10 +168,6 @@ def split_here_label(name: str, *, first: bool) -> str:
 REPLACE_IMAGE_LABEL = "この画像を差し替え..."
 REPLACE_IMAGE_TIP = "ファイルを選び、この画像と入れ替える（前の絵は消える）"
 
-# 「開く」の窓に出す対象。作品フォルダそのものではなく、その中の
-# project.json を選ばせる（理由は `open_project`）
-PROJECT_FILE_FILTER = f"作品ファイル ({PROJECT_FILENAME});;すべてのファイル (*)"
-
 # 文字の大きさを1段階変える幅と、行き過ぎを止める範囲。
 # 数値を打ち込ませるより、押して確かめるほうが速い。
 #
@@ -207,16 +197,6 @@ FRAME_ALLOWANCE_PX = 48
 # 30 ページの作品でも確認欄が画面を埋めないようにする
 OVERWRITE_LIST_LIMIT = 5
 
-# 自動バックアップで状態表示に出す文言と、記録に残す文言。
-#
-# **同じ表を見る。** 画面で見たものと `data/autosave.log` に残ったものが
-# 食い違うと、報告を突き合わせられなくなる（→ `BALLOON_STYLE_LABELS` と
-# 同じ線引き）
-AUTOSAVE_SAVED = "自動バックアップしました"
-AUTOSAVE_NO_DIR = "保存先が未定のため自動バックアップしません"
-AUTOSAVE_NO_CHANGE = "変更が無いため自動バックアップしません"
-AUTOSAVE_FAILED = "自動バックアップできません"
-
 
 class MainWindow(QMainWindow):
     def __init__(self, state: EditorState | None = None):
@@ -239,6 +219,10 @@ class MainWindow(QMainWindow):
         ensure_settings_file(self.settings_file)
         self.settings = load_settings(self.settings_file)
 
+        # ファイル入出力の部品。メニューがスロットとして参照するので、
+        # メニューの組み立てより先に作る
+        self.files = ProjectIO(self)
+
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
         self._build_menus()
@@ -251,22 +235,6 @@ class MainWindow(QMainWindow):
         self.state.tool_changed.connect(self._sync_tool_actions)
         self.state.message.connect(lambda text: self.statusBar().showMessage(text, 6000))
         self.view.context_menu_requested.connect(self._show_context_menu)
-
-        # 一定間隔で作業中の内容を backup/ へ退避する（要件定義 6.6）。
-        # 本体（project.json）は触らないので、保存の確認とは食い違わない。
-        #
-        # **間隔は設定から取る。** 5分は待って確かめるには長いので、
-        # 短くして動きを見られるようにしてある（→ `AppSettings`）
-        self.autosave_log = AutosaveLog()
-        interval_sec = self.settings.autosave_interval_sec
-        self._autosave_timer = QTimer(self)
-        self._autosave_timer.setInterval(interval_sec * 1000)
-        self._autosave_timer.timeout.connect(self._autosave)
-        self._autosave_timer.start()
-        # 起動を1行残す。**記録が空なら、タイマーを積んだアプリが
-        # そもそも動いていない**と分かる。回っているのに何もしない場合と
-        # 区別が付かないのが、2026-08-05 の切り分けで困った点
-        self.autosave_log.record(f"起動（{interval_sec}秒ごと）", repeat=True)
 
         # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
         self._sync_recent_project_action()
@@ -522,26 +490,26 @@ class MainWindow(QMainWindow):
         self._build_tool_actions()
 
         file_menu = self.menuBar().addMenu("ファイル(&F)")
-        file_menu.addAction(self._act("新規作成", self.new_project, "Ctrl+N"))
+        file_menu.addAction(self._act("新規作成", self.files.new_project, "Ctrl+N"))
         file_menu.addAction(
             self._act(
                 "開く...",
-                self.open_project,
+                self.files.open_project,
                 "Ctrl+O",
                 f"作品フォルダの中の {PROJECT_FILENAME} を選ぶ",
             )
         )
         self.recent_project_action = self._act(
             "前回のファイルを開く",
-            self.open_recent_project,
+            self.files.open_recent_project,
             None,
             "前回開いた・保存した作品を、選ぶ手間なしで開く",
         )
         file_menu.addAction(self.recent_project_action)
         file_menu.addSeparator()
-        file_menu.addAction(self._act("保存", self.save_project, "Ctrl+S"))
+        file_menu.addAction(self._act("保存", self.files.save_project, "Ctrl+S"))
         file_menu.addAction(
-            self._act("名前を付けて保存...", self.save_project_as, "Ctrl+Shift+S")
+            self._act("名前を付けて保存...", self.files.save_project_as, "Ctrl+Shift+S")
         )
         file_menu.addSeparator()
         file_menu.addAction(
@@ -1502,7 +1470,7 @@ class MainWindow(QMainWindow):
         毎回どこか分からない場所を辿ることになる。
         """
         path, _ = QFileDialog.getOpenFileName(
-            self, "画像を選ぶ", self._dialog_start_dir(), IMAGE_FILE_FILTER
+            self, "画像を選ぶ", self.files.dialog_start_dir(), IMAGE_FILE_FILTER
         )
         if not path:
             return None
@@ -1912,96 +1880,8 @@ class MainWindow(QMainWindow):
         self.state.set_page_index(self.state.page_index + 1)
 
     # -- ファイル ----------------------------------------------------------
-
-    def new_project(self) -> None:
-        if not self._confirm_discard():
-            return
-        from ..model import new_project as make
-
-        self.state.reset(make(), None)
-        self.state.message.emit("新しい作品を作りました")
-
-    def _default_parent(self) -> pathlib.Path:
-        """ファイルの窓が始まる場所。
-
-        **開く・保存・画像を選ぶで同じ場所を使う。** 別々にすると、
-        同じ作業の途中なのに窓ごとに違う場所から始まり、そのたびに
-        辿り直すことになる。決め方は `saving.default_parent`
-        （開いている作品の隣 → `settings.json` → ドキュメント）。
-
-        **設定は使う直前に読み直す。** `settings.json` は手で書き換える
-        前提のファイルなのに、起動時に一度読むだけだと**書き換えても
-        アプリを開き直すまで効かない**。しかも効かない理由が画面に出ない
-        ので、設定の書き方を間違えたのかと疑うことになる（2026-08-03 に
-        実際に起きた）。窓を開く瞬間に数百バイト読むだけなので、
-        待たされることはない。
-        """
-        self.settings = load_settings(self.settings_file)
-        return default_parent(self.state.project_dir, self.settings.default_parent_dir)
-
-    def _dialog_start_dir(self) -> str:
-        """`QFileDialog` に渡す形にした `_default_parent`。"""
-        return str(self._default_parent())
-
-    def open_project(self) -> None:
-        """作品を開く。**`project.json` を選ばせる。**
-
-        作品はフォルダ単位なので、内部で使うのはその親フォルダのほう。
-        それでも「フォルダを選ぶ窓」にはしない。利用者から見れば
-        「ファイルを開く」操作で、目当ての `project.json` が一覧に
-        出てこないと、選べないのか場所を間違えたのかが分からない。
-        """
-        if not self._confirm_discard():
-            return
-        chosen, _ = QFileDialog.getOpenFileName(
-            self, "作品を開く", self._dialog_start_dir(), PROJECT_FILE_FILTER
-        )
-        if not chosen:
-            return
-        self._open_project_dir(project_dir_of(pathlib.Path(chosen)))
-
-    def open_recent_project(self) -> None:
-        """『前回のファイルを開く』。窓を出さず、前回の行き先をそのまま開く。
-
-        行き先は `data/recent_project.txt`（→ `recent_project.py`）。開く・
-        保存するたびに黙って上書きしている記録で、`settings.json` とは別。
-        """
-        path = load_recent_project()
-        if path is None:
-            return
-        if not self._confirm_discard():
-            return
-        self._open_project_dir(path)
-
-    def _open_project_dir(self, path: pathlib.Path) -> None:
-        if not is_project_dir(path):
-            QMessageBox.warning(
-                self,
-                "開けません",
-                f"作品として開けませんでした。\n{path}\n\n"
-                f"作品フォルダの中にある {PROJECT_FILENAME} を選んでください。",
-            )
-            return
-        try:
-            warnings = self.state.load(path)
-        except MangaLayoutError as e:
-            QMessageBox.critical(self, "開けません", str(e))
-            return
-
-        self.view.fit_page()
-        if warnings:
-            QMessageBox.information(
-                self,
-                "読み込み時に直した箇所があります",
-                "\n".join(f"・{w}" for w in warnings),
-            )
-        self.state.message.emit(f"開きました: {path}")
-        self._remember_recent_project(path)
-
-    def _remember_recent_project(self, path: pathlib.Path) -> None:
-        """『前回のファイルを開く』の行き先を更新する。"""
-        save_recent_project(path)
-        self._sync_recent_project_action(path)
+    # 実処理は `ProjectIO`（→ `project_io.py`）。ここに残るのは
+    # メニュー項目の表示合わせだけ
 
     def _sync_recent_project_action(self, path: pathlib.Path | None = None) -> None:
         """『前回のファイルを開く』の表示を、わかっている行き先に合わせる。
@@ -2016,92 +1896,6 @@ class MainWindow(QMainWindow):
             return
         self.recent_project_action.setText(f"前回のファイルを開く（{path.name}）")
         self.recent_project_action.setEnabled(True)
-
-    def save_project(self) -> bool:
-        if self.state.project_dir is None:
-            return self.save_project_as()
-        return self._write(self.state.project_dir)
-
-    def save_project_as(self) -> bool:
-        """置き場所と作品名を決めて保存する。
-
-        作品はフォルダなので、「既にあるフォルダを選ぶ」窓では名前を
-        付けられない（選んだ瞬間にそこへ書き込まれる）。専用の窓で
-        置き場所と名前を分けて受け取る（`saving.SaveAsDialog`）。
-        """
-        dialog = SaveAsDialog(
-            self._default_parent(),
-            self.state.project.title,
-            self,
-            self.settings_file,
-        )
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return False
-
-        target = dialog.chosen_path()
-        if dialog.overwrites_project() and not self._confirm_overwrite_project(target):
-            return False
-        return self._write(target)
-
-    def _confirm_overwrite_project(self, path: pathlib.Path) -> bool:
-        """既にある作品への上書きを確かめる。よければ True。
-
-        窓の中でも赤字で伝えているが、上書きすると相手の作品の
-        `project.json` が置き換わる。押し間違いで消せる場所ではない。
-        """
-        answer = QMessageBox.question(
-            self,
-            "上書きしますか",
-            f"{path} には既に別の作品が入っています。\n"
-            "この作品で上書きしますか。",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
-        )
-        return answer == QMessageBox.StandardButton.Ok
-
-    def _write(self, path: pathlib.Path) -> bool:
-        try:
-            self.state.save(path)
-        except (MangaLayoutError, OSError) as e:
-            QMessageBox.critical(self, "保存できません", str(e))
-            return False
-        self._refresh()
-        self.state.message.emit(f"保存しました: {path}")
-        self._remember_recent_project(path)
-        return True
-
-    def _autosave(self) -> None:
-        """タイマーからの自動バックアップ（要件定義 6.6）。
-
-        **失敗しても作業は止めない。** 窓は出さず、状態表示に出すだけに
-        する。利用者が押した操作ではないので、書けなかったからといって
-        手を止めさせる理由がない。
-
-        失敗しても印を進めないので、次の回にまた試す。保存先が外付け
-        ドライブで抜かれている間は毎回知らせることになるが、**退避されて
-        いない事実は伝わったほうがよい。**
-
-        **何もしなかった回も記録には残す**（`data/autosave.log`）。
-        状態表示には出さない——5分ごとに「何もしませんでした」と出ても
-        邪魔なだけで、しかも見ていないうちに消える。記録は同じ内容が
-        続く間 1 行にまとめるので、増え続けることはない。
-        """
-        try:
-            path = self.state.autosave()
-        except (MangaLayoutError, OSError) as e:
-            self.state.message.emit(f"{AUTOSAVE_FAILED}: {e}")
-            self.autosave_log.record(f"{AUTOSAVE_FAILED}: {e}")
-            return
-
-        if path is not None:
-            self.state.message.emit(f"{AUTOSAVE_SAVED}: {path.name}")
-            # 退避できた回は毎回残す。いつの時点の内容が backup/ に
-            # 入っているかは、記録の目的そのもの
-            self.autosave_log.record(f"{AUTOSAVE_SAVED}: {path}", repeat=True)
-            return
-
-        why = AUTOSAVE_NO_DIR if self.state.project_dir is None else AUTOSAVE_NO_CHANGE
-        self.autosave_log.record(why)
 
     # -- 書き出し ----------------------------------------------------------
 
@@ -2160,7 +1954,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Save,
             )
-            if answer != QMessageBox.StandardButton.Save or not self.save_project():
+            if answer != QMessageBox.StandardButton.Save or not self.files.save_project():
                 return None
         return export_dir_of(self.state)
 
@@ -2227,25 +2021,8 @@ class MainWindow(QMainWindow):
 
     # -- 終了時 ------------------------------------------------------------
 
-    def _confirm_discard(self) -> bool:
-        """未保存の変更があれば確認する。続けてよければ True。"""
-        if not self.state.is_dirty:
-            return True
-        answer = QMessageBox.question(
-            self,
-            "保存しますか",
-            "保存していない変更があります。",
-            QMessageBox.StandardButton.Save
-            | QMessageBox.StandardButton.Discard
-            | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Save,
-        )
-        if answer == QMessageBox.StandardButton.Save:
-            return self.save_project()
-        return answer == QMessageBox.StandardButton.Discard
-
     def closeEvent(self, event) -> None:
-        if self._confirm_discard():
+        if self.files.confirm_discard():
             event.accept()
         else:
             event.ignore()
