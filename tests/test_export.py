@@ -317,6 +317,18 @@ class Test原寸:
             project.add_image(panel, "sha1:missing", Rect(12, 12, 80, 55), (100, 100))
         assert missing_assets_in(saved_state, [0]) == 1
 
+    def test_欠けたマークも数える(self, saved_state):
+        """マークはページ直下にあり、コマの子を辿るだけでは見つからない。
+
+        画面には×印が出るのに警告だけ出ない、という抜けが起きていた。
+        """
+        with saved_state.edit("マーク") as project:
+            page = project.pages[0]
+            project.add_sticker(
+                page, "exclamation", "assets/missing.png", Rect(10, 10, 40, 40), (100, 100)
+            )
+        assert missing_assets_in(saved_state, [0]) == 1
+
 
 class Test書き出しの実行:
     """ファイルが実際にできること。"""

@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 from ..errors import ExportError
 from ..images import ImageCache, Preview, full_from_bytes
 from ..geometry import Size
-from ..model import DEFAULT_PAGE_SIZE, Page
+from ..model import DEFAULT_PAGE_SIZE, Page, StickerObject
 from .render import PAGE_BG, PageRenderer
 
 EXPORT_DIRNAME = "export"
@@ -171,15 +171,28 @@ def missing_assets_in(state, indexes) -> int:
 
     書き出しでは目印を描かない（`PageRenderer(aids=False)`）ので、
     黙って穴が空く。数だけ先に数えて、書き出す前に知らせる。
+
+    **コマの中の画像とマークの両方を数える。** マーク（→ 6.14）はページ
+    直下にあってコマの子ではないが、画面では同じ×印が出る
+    （`render._draw_image_upright`）。ここで数え漏らすと、マークだけが
+    欠けている作品が警告なしで白く抜ける。
     """
     count = 0
     for i in indexes:
         page = state.project.pages[i]
-        for panel in page.panels:
-            for image in panel.children:
-                if state.preview(image.asset) is None:
-                    count += 1
+        for image in page_assets(page):
+            if state.preview(image.asset) is None:
+                count += 1
     return count
+
+
+def page_assets(page: Page):
+    """ページにある「画像の実体を持つもの」を順に返す。"""
+    for panel in page.panels:
+        yield from panel.children
+    for obj in page.floating:
+        if isinstance(obj, StickerObject):
+            yield obj
 
 
 # -- 描画 --------------------------------------------------------------------
