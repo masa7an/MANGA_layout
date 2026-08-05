@@ -234,6 +234,88 @@ class Tail:
         )
 
 
+# 本数として読んでよい範囲。**`focus.py` ではなくここに置く。**
+# 読み込みの検証は保存形式の話で、`focus` を読み込まなくても効く必要がある
+# （`focus` は `model` を読む側なので、逆向きには参照できない）
+FOCUS_COUNT_MIN = 4
+FOCUS_COUNT_MAX = 400
+
+
+@dataclass
+class FocusLines:
+    """集中線（要件定義 6.16）。**コマの属性として1つだけ持つ。**
+
+    独立したオブジェクトにしていないので、`id` も `z` も持たない。矩形も
+    持たず、**常にコマいっぱいに広がる**。大きさを別に持たせると、コマを
+    縮めたときに集中線だけ取り残される状態を作れてしまう。
+
+    **長さは1つも持たない。** `center` はコマの外接矩形に対する割合、
+    `hole` と `width` は短辺に対する割合。絶対座標で持つと、コマを縮めた
+    ときに中心がコマの外へ飛び出す（`SlantPair.ratio` と同じ理由）。
+
+    `center` の**範囲は制限しない。** 画面の外から集中させるために中心を
+    コマの外へ置くことがあり、その場合も線は正しく作れる。
+
+    `seed` は形のばらつきを決める数字。**保存しないと開くたびに形が変わり**、
+    書き出した PNG と画面が一致しなくなる。形を作る側は `random` を使わず
+    自前の擬似乱数を回す（→ `manga_layout.focus`）。
+
+    **既定値を持たせていない。** 出発点の値は `FocusSettings` にあり、
+    2か所に持つと片方だけ古くなる。作るときは `focus.default_focus()` を通す。
+    """
+
+    center: tuple[float, float]
+    hole: float
+    count: int
+    width: float
+    seed: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "center": [self.center[0], self.center[1]],
+            "hole": self.hole,
+            "count": self.count,
+            "width": self.width,
+            "seed": self.seed,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> "FocusLines":
+        """**範囲外は切り詰めずに弾く。**
+
+        黙って直すと、書き出した値と読み戻した値が食い違い、保存のたびに
+        形が変わる（`Tail.root_y` と同じ → 要件定義 5章）。
+
+        ここで見るのは「読んでよい値か」だけで、掴んで動かせる範囲
+        （`focus.HOLE_MAX` など）はこれより狭い。操作の都合と保存形式の
+        正しさは別のものとして持つ。
+        """
+        d = v.req_mapping(data, where)
+        hole = v.number(d, "hole", where)
+        width = v.number(d, "width", where)
+        count = v.integer(d, "count", where)
+        seed = v.integer(d, "seed", where)
+        if not 0.0 <= hole <= 1.0:
+            raise ProjectFormatError(f"{where}.hole: 0.0〜1.0 の範囲外です（{hole}）")
+        if not 0.0 <= width <= 1.0:
+            raise ProjectFormatError(f"{where}.width: 0.0〜1.0 の範囲外です（{width}）")
+        if not FOCUS_COUNT_MIN <= count <= FOCUS_COUNT_MAX:
+            raise ProjectFormatError(
+                f"{where}.count: {FOCUS_COUNT_MIN}〜{FOCUS_COUNT_MAX} の範囲外です（{count}）"
+            )
+        if seed < 0:
+            raise ProjectFormatError(f"{where}.seed: 0 以上が必要です（{seed}）")
+        return cls(
+            center=v.point(d["center"], f"{where}.center")
+            if "center" in d
+            else (0.5, 0.5),
+            hole=hole,
+            count=count,
+            width=width,
+            seed=seed,
+        )
+
+
 # --------------------------------------------------------------------------
 # 配置オブジェクト
 # --------------------------------------------------------------------------
@@ -309,6 +391,8 @@ class Panel(SceneObject):
     shape: Polygon = field(default_factory=lambda: Polygon.from_rect(Rect(0.0, 0.0, 10.0, 10.0)))
     border: Border = field(default_factory=Border)
     children: list[ImageObject] = field(default_factory=list)
+    # 集中線（→ 6.16）。**コマに1つだけ。** 入れていなければ None
+    focus_lines: FocusLines | None = None
 
     TYPE = "panel"
 
@@ -316,7 +400,7 @@ class Panel(SceneObject):
         return self.shape.bounds()
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "id": self.id,
             "type": self.TYPE,
             "shape": {"kind": "polygon", "points": self.shape.to_list()},
@@ -324,6 +408,11 @@ class Panel(SceneObject):
             "z": self.z,
             "children": [c.to_dict() for c in self.children],
         }
+        # **入れていないコマでは項目ごと省く。** 集中線を使っていない作品の
+        # project.json が、この機能の追加前と同じ内容のままになる
+        if self.focus_lines is not None:
+            data["focus_lines"] = self.focus_lines.to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, data: Any, where: str) -> "Panel":
@@ -341,6 +430,12 @@ class Panel(SceneObject):
                 ImageObject.from_dict(c, f"{where}.children[{i}]")
                 for i, c in enumerate(children_raw)
             ],
+            # 項目が無い＝集中線なし。この機能より前の作品がそのまま開ける
+            focus_lines=(
+                FocusLines.from_dict(d["focus_lines"], f"{where}.focus_lines")
+                if d.get("focus_lines") is not None
+                else None
+            ),
         )
 
 
@@ -1059,6 +1154,8 @@ class Project:
         **割合と角度には触らない。** `SlantPair.ratio`（0〜1）、
         `Tail.root_y`（-1〜1）、`angle`（度）、`opacity` は単位を持たないので、
         掛けると意味が壊れる。`src_px` も元画像の実寸なので対象外。
+        **`FocusLines` は1つも長さを持たない**ので、まるごと対象外
+        （→ 6.16 で長さを持たせなかったことが、ここでも効いている）。
         """
         self.default_page_size = self.default_page_size.scaled(factor)
         for page in self.pages:

@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import pathlib
 
@@ -37,6 +38,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import MangaLayoutError
+from ..focus import (
+    center_at as focus_center_at,
+    center_point as focus_center_point,
+    hole_at as focus_hole_at,
+    hole_point as focus_hole_point,
+)
 from ..geometry import (
     Polygon,
     Rect,
@@ -81,6 +88,7 @@ from ..slant import (
 from ..model import (
     SLANT_RIGHT,
     BalloonObject,
+    FocusLines,
     ImageObject,
     Panel,
     StickerObject,
@@ -146,6 +154,15 @@ TAIL_TIP_HANDLE_PX = 16.0
 # 大きくしすぎると、小さいフキダシで角のつまみを覆う（付け根のほうが
 # 先に判定されるため → `mousePressEvent`）ので、この程度で止める
 TAIL_ROOT_HANDLE_PX = 14.0
+# 集中線の中心（十字）を掴める範囲（ピクセル）。印は `HANDLE_PX` のまま。
+#
+# **コマの本体より先に判定する**ので、広げるほどコマを掴める場所が減る。
+# 線が集まっていて狙いやすい場所でもあるので、控えめに取る
+FOCUS_CENTER_HANDLE_PX = 18.0
+# 集中線の内側の空き（四角）を掴める範囲（ピクセル）。
+# 左右にしか動かないので、しっぽの付け根と同じくらい広く取る
+FOCUS_HOLE_HANDLE_PX = 16.0
+
 # これ以下の大きさで離した場合、ドラッグではなくクリックとみなして
 # 既定の大きさのコマを置く
 MIN_CREATE_PX = 6.0
@@ -256,6 +273,8 @@ class PageScene(QGraphicsScene):
         self.slant_preview: tuple[str, float] | None = None
         # 回している最中の (画像の id, 角度)
         self.rotate_preview: tuple[str, float] | None = None
+        # 集中線の中心・内側の空きを動かしている最中の (コマの id, その値)
+        self.focus_preview: tuple[str, FocusLines] | None = None
         # その場編集中のセリフ。編集中は下地を描かない
         self.editing_text_id: str | None = None
         self.update_scene_rect()
@@ -274,6 +293,7 @@ class PageScene(QGraphicsScene):
             tail=self.tail_preview,
             root=self.root_preview,
             rotate=self.rotate_preview,
+            focus=self.focus_preview,
             editing_text_id=self.editing_text_id,
         )
 
@@ -331,6 +351,7 @@ class PageScene(QGraphicsScene):
         if balloon is not None:
             self._draw_tail_handle(painter, balloon, scale)
         self._draw_slant_handle(painter, scale)
+        self._draw_focus_handles(painter, scale)
 
         if self.preview_rect is not None:
             painter.save()
@@ -433,6 +454,63 @@ class PageScene(QGraphicsScene):
                 )
             )
         )
+
+    def focus_of_selection(self) -> tuple[Panel, FocusLines] | None:
+        """つまみを出す相手。選択中のコマと、そこに入っている集中線。
+
+        動かしている最中は下見の値を返す。描く側と掴む側で同じ答えが要る
+        ので、1箇所にまとめてある（`slant_handle` と同じ）。
+        """
+        panel = self.state.selected_panel
+        if panel is None or panel.focus_lines is None:
+            return None
+        focus = panel.focus_lines
+        if self.focus_preview is not None and self.focus_preview[0] == panel.id:
+            focus = self.focus_preview[1]
+        return (panel, focus)
+
+    def focus_center_handle(self) -> tuple[float, float] | None:
+        found = self.focus_of_selection()
+        if found is None:
+            return None
+        panel, focus = found
+        return focus_center_point(focus, panel.bounds())
+
+    def focus_hole_handle(self) -> tuple[float, float] | None:
+        found = self.focus_of_selection()
+        if found is None:
+            return None
+        panel, focus = found
+        return focus_hole_point(focus, panel.bounds())
+
+    def _draw_focus_handles(self, painter: QPainter, scale: float) -> None:
+        """集中線の中心（十字）と、内側の空き（四角）のつまみ。
+
+        **中心は十字。** 丸は画像の回転、ひし形はしっぽの付け根、四角は
+        大きさ、矢羽根は斜めの境界で既に使っている。形を分けておかないと、
+        掴む前にどれが動くのか分からない。
+
+        空きのほうは**四角**にする。こちらは大きさを変える操作なので、
+        既にある四角の意味と揃う。
+        """
+        found = self.focus_of_selection()
+        if found is None:
+            return
+        panel, focus = found
+        bounds = panel.bounds()
+        size = HANDLE_PX / scale
+        half = size / 2.0
+
+        painter.setPen(cosmetic_pen(ACCENT, 1.4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        cx, cy = focus_center_point(focus, bounds)
+        painter.drawLine(QLineF(cx - size, cy, cx + size, cy))
+        painter.drawLine(QLineF(cx, cy - size, cx, cy + size))
+
+        hx, hy = focus_hole_point(focus, bounds)
+        painter.setPen(cosmetic_pen(ACCENT, 1.2))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawRect(QRectF(hx - half, hy - half, size, size))
 
     def _draw_selection(
         self, painter: QPainter, bounds: Rect, scale: float, color: QColor = ACCENT
@@ -733,6 +811,7 @@ class PageView(QGraphicsView):
         self._scene.root_preview = None
         self._scene.slant_preview = None
         self._scene.rotate_preview = None
+        self._scene.focus_preview = None
 
     def fit_page(self) -> None:
         page = self.state.page
@@ -989,6 +1068,24 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # 集中線のつまみ。**角と辺のつまみより後、コマ本体より先。**
+        #
+        # 角・辺より後にするのは、中心がコマの隅に寄っているときに
+        # それらを覆い隠さないため（斜めの境界と同じ）。本体より先に
+        # するのは、中心のつまみがコマの真ん中あたりに出るためで、
+        # 後にすると掴んだつもりがコマの移動になる（→ 要件定義 6.16）
+        if self._focus_hole_at(x, y):
+            self._begin_focus_drag("focus_hole")
+            self.state.message.emit("左右にドラッグすると、集中線の内側の空きが変わります")
+            event.accept()
+            return
+
+        if self._focus_center_at(x, y):
+            self._begin_focus_drag("focus_center")
+            self.state.message.emit("ドラッグすると、集中線の中心が動きます")
+            event.accept()
+            return
+
         self.state.select(self._pick_at(x, y))
         if self.state.selected_id is not None:
             self._mode = "move"
@@ -1177,6 +1274,40 @@ class PageView(QGraphicsView):
         half = SLANT_HANDLE_PX / self.view_scale / 2.0
         return abs(x - point[0]) <= half and abs(y - point[1]) <= half
 
+    def _focus_center_at(self, x: float, y: float) -> bool:
+        """集中線の中心のつまみを掴んでいるか。"""
+        return self._near(self._scene.focus_center_handle(), x, y, FOCUS_CENTER_HANDLE_PX)
+
+    def _focus_hole_at(self, x: float, y: float) -> bool:
+        """集中線の内側の空きのつまみを掴んでいるか。"""
+        return self._near(self._scene.focus_hole_handle(), x, y, FOCUS_HOLE_HANDLE_PX)
+
+    def _near(
+        self, point: tuple[float, float] | None, x: float, y: float, size_px: float
+    ) -> bool:
+        """点を中心にした正方形の中か。掴む範囲は**画面の大きさ**で決める。
+
+        表示倍率で割ってシーンの px に直すので、縮小しても掴みにくく
+        ならない。
+        """
+        if point is None:
+            return False
+        half = size_px / self.view_scale / 2.0
+        return abs(x - point[0]) <= half and abs(y - point[1]) <= half
+
+    def _begin_focus_drag(self, mode: str) -> None:
+        """集中線のつまみを掴んだ。下見を今の値で始める。
+
+        モデルには触らない。離した時点で1手として積む（斜めの境界と
+        同じ流儀 → 要件定義 6.10）。
+        """
+        found = self._scene.focus_of_selection()
+        if found is None:
+            return
+        panel, focus = found
+        self._mode = mode
+        self._scene.focus_preview = (panel.id, dataclasses.replace(focus))
+
     def _tail_root_at(self, x: float, y: float) -> bool:
         """選択中の吹き出しの、しっぽの付け根を掴んでいるか。
 
@@ -1289,6 +1420,9 @@ class PageView(QGraphicsView):
                 )
                 self._scene.slant_preview = (held_id, ratio)
 
+        elif self._mode in ("focus_center", "focus_hole"):
+            self._update_focus_preview(x, y)
+
         elif self._mode == "rotate" and self._origin_rect is not None:
             if self._scene.rotate_preview is not None:
                 # 掴んだときのずれを引くと、つまみを持ったまま円を描いた
@@ -1367,10 +1501,14 @@ class PageView(QGraphicsView):
         root = self._scene.root_preview
         slant = self._scene.slant_preview
         rotate = self._scene.rotate_preview
+        focus = self._scene.focus_preview
         mode, origin, press = self._mode, self._origin_rect, self._grab
         self._reset_drag()
 
-        if mode == "rotate":
+        if mode in ("focus_center", "focus_hole"):
+            if focus is not None:
+                self._apply_focus(focus[0], focus[1], mode)
+        elif mode == "rotate":
             if rotate is not None:
                 self._apply_rotate(rotate[0], rotate[1])
         elif mode == "tail":
@@ -1398,6 +1536,40 @@ class PageView(QGraphicsView):
 
         self.viewport().update()
         event.accept()
+
+    def _update_focus_preview(self, x: float, y: float) -> None:
+        """集中線の下見を、マウスの位置に合わせて作り直す。
+
+        中心は**縦横とも**追う（画面の中の好きな場所に置くもの）。空きは
+        **横だけ**追う。印は中心の右にあり左右にしか動かないので、縦を
+        拾うと掴んだ瞬間に値が飛ぶ。
+        """
+        preview = self._scene.focus_preview
+        panel = self.state.selected_panel
+        if preview is None or panel is None:
+            return
+        bounds = panel.bounds()
+        focus = preview[1]
+        if self._mode == "focus_center":
+            focus = dataclasses.replace(focus, center=focus_center_at(bounds, x, y))
+        else:
+            focus = dataclasses.replace(focus, hole=focus_hole_at(focus, bounds, x))
+        self._scene.focus_preview = (preview[0], focus)
+
+    def _apply_focus(self, panel_id: str, focus: FocusLines, mode: str) -> None:
+        """離した時点で1手として積む。**変わっていなければ積まない。**"""
+        panel = self.state.page.find(panel_id)
+        if not isinstance(panel, Panel) or panel.focus_lines is None:
+            return
+        if mode == "focus_center":
+            if panel.focus_lines.center == focus.center:
+                return
+            self.state.set_focus_shape(panel_id, center=focus.center)
+            return
+        if panel.focus_lines.hole == focus.hole:
+            return
+        self.state.set_focus_shape(panel_id, hole=focus.hole)
+        self.state.message.emit(f"集中線の内側: コマの短辺の {focus.hole * 100:.0f}%")
 
     def _handle_at_point(self, x: float, y: float) -> str | None:
         """その位置にある、選択中のもののつまみ。無ければ None。"""
@@ -1508,6 +1680,11 @@ class PageView(QGraphicsView):
             # 左右にしか動かないことを形で示す。掴む順と同じく、
             # 角と辺のつまみより後に見る（先に見ると出る形が実際と食い違う）
             self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
+        elif self._focus_hole_at(x, y):
+            # ここも左右だけ。**掴む順と同じ並びにする**
+            self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
+        elif self._focus_center_at(x, y):
+            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif image is not None and rotated_rect_contains(
             image.rect, x, y, image.rotation
         ):

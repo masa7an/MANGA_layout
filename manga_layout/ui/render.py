@@ -26,11 +26,13 @@ from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 
 from .. import vertical
+from ..focus import focus_triangles
 from ..geometry import Rect
 from ..layout import balloon_outline, tail_triangle
 from ..slant import slant_polygons
 from ..model import (
     BalloonObject,
+    FocusLines,
     Font,
     ImageObject,
     Page,
@@ -49,6 +51,8 @@ MARGIN_GUIDE = QColor("#B7CEE8")
 PANEL_FILL = QColor("#F4F4F4")
 PLACEHOLDER = QColor("#9FB2BF")
 MISSING_IMAGE = QColor("#D9534F")
+# 集中線の色。**黒のみ**（要件定義 6.16）。白集中線は要求が立ってから
+FOCUS_INK = QColor("#000000")
 
 TEXT_ALIGN_FLAGS = {
     "left": Qt.AlignmentFlag.AlignLeft,
@@ -126,6 +130,10 @@ class DragPreview:
     root: tuple[str, float] | None = None
     # 回している最中の (画像の id, 角度)
     rotate: tuple[str, float] | None = None
+    # 集中線の中心・内側の空きを動かしている最中の (コマの id, その値)。
+    # 中心と空きで分けていないのは、どちらも `FocusLines` を1つ差し替える
+    # だけで表せるため。増やすと下見の経路が種類ぶん増える
+    focus: tuple[str, FocusLines] | None = None
     # その場編集中のセリフ。二重に見えないよう、下地を描かない
     editing_text_id: str | None = None
 
@@ -259,8 +267,12 @@ class PageRenderer:
             painter.setBrush(QBrush(PANEL_FILL))
             painter.drawPolygon(polygon)
 
-        if panel.children:
-            self._draw_children(painter, panel, polygon, preview)
+        focus = self._focus_of(panel, preview)
+        if panel.children or focus is not None:
+            # 集中線の基準は、**いま描いている形**の外接矩形。斜めの境界を
+            # ずらしている最中はモデルと形が違うので、`panel` から取り直すと
+            # 線だけ前の位置に残る
+            self._draw_inside(painter, panel, polygon, shape.bounds(), focus, preview)
 
         if panel.border.visible and panel.border.width > 0:
             # 枠線は作品の一部なので、太さは px のまま（表示倍率で見た目が変わる）
@@ -269,20 +281,33 @@ class PageRenderer:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPolygon(polygon)
 
-    def _draw_children(
+    @staticmethod
+    def _focus_of(panel: Panel, preview: DragPreview) -> FocusLines | None:
+        """描くときの集中線。動かしている最中は下見の値を使う。"""
+        if preview.focus is not None and preview.focus[0] == panel.id:
+            return preview.focus[1]
+        return panel.focus_lines
+
+    def _draw_inside(
         self,
         painter: QPainter,
         panel: Panel,
         polygon: QPolygonF,
+        bounds: Rect,
+        focus: FocusLines | None,
         preview: DragPreview = NO_PREVIEW,
     ) -> None:
-        """コマの中の画像を、コマの形で切り抜いて描く。
+        """コマの中身を、コマの形で切り抜いて描く。
 
         切り抜きはコマのポリゴンそのものに対して行う。斜めのコマでも
         そのまま効く（要件定義 4章でポリゴン保存にした狙いのひとつ）。
 
         **切り抜きは画像の回転より外側に掛かる。** 絵を回してもコマの形は
         回らない、という当たり前の見え方になる。
+
+        集中線は**画像より手前**。絵に乗せるものなので、下に潜られては
+        用を成さない。一方**コマ枠より奥**に置く（枠線は呼ぶ側があとから
+        描く）。線が枠線を覆うと、コマの輪郭が途切れて見える。
         """
         path = QPainterPath()
         path.addPolygon(polygon)
@@ -292,7 +317,26 @@ class PageRenderer:
         painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
         for image in sorted(panel.children, key=lambda i: i.z):
             self._draw_image(painter, image, preview)
+        if focus is not None:
+            self._draw_focus(painter, bounds, focus)
         painter.restore()
+
+    def _draw_focus(
+        self, painter: QPainter, bounds: Rect, focus: FocusLines
+    ) -> None:
+        """集中線（要件定義 6.16）。楔形を本数ぶん塗る。
+
+        **内側の空きは白く塗らない。** ここでは集中線が画像の上に乗るので、
+        塗ると中心に置いた人物が消える。線を引かない領域を空けるだけに
+        すれば、下の絵はそのまま見える。
+
+        線はコマの外まで伸びているが、切り抜きの中で描いているので端は
+        自動で落ちる。形を作る側は `manga_layout.focus`。
+        """
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(FOCUS_INK))
+        for triangle in focus_triangles(focus, bounds):
+            painter.drawPolygon(polygon_of(triangle))
 
     @staticmethod
     def _rotation_of(

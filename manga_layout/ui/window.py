@@ -357,6 +357,55 @@ class MainWindow(QMainWindow):
         # 右クリックのメニューが写して使う（→ `_items_to_copy`）
         self.sticker_copy_items = self._items_to_copy(menu)
 
+    def _build_focus_menu(self) -> QMenu:
+        """集中線のメニュー（要件定義 6.16）。**コマのメニューの下に畳む。**
+
+        7項目あるので、コマのメニューへ並べると縦に伸びて読む字数が増える。
+        入れていないコマでは「入れる」1つしか使えないので、畳んでおくほうが
+        目に入る量が少ない。
+
+        **キーは1つも割り当てない。** この道具はマウスで使うもので、キーを
+        足すこと自体に値打ちは無い（→ 要件定義 7章）。
+        """
+        menu = QMenu("集中線", self)
+        # 「入れる」と「消す」は1項目の文言を入れ替える（しっぽと同じ）。
+        # 2つ並べると、片方は必ず押せない状態で場所だけ取る
+        self.focus_toggle_action = self._act(
+            "入れる",
+            self.toggle_focus_lines,
+            None,
+            "選んだコマに放射状の線を引く。中心はあとから動かせる",
+        )
+        menu.addAction(self.focus_toggle_action)
+        menu.addSeparator()
+
+        # ここから下は集中線の入ったコマにだけ効く
+        self.focus_actions: list[QAction] = []
+
+        def add(label: str, slot, tip: str = "") -> QAction:
+            action = self._act(label, slot, None, tip)
+            menu.addAction(action)
+            self.focus_actions.append(action)
+            return action
+
+        add("線を増やす", lambda: self.state.step_focus_count(1))
+        add("線を減らす", lambda: self.state.step_focus_count(-1))
+        menu.addSeparator()
+        add("線を太く", lambda: self.state.step_focus_width(1))
+        add("線を細く", lambda: self.state.step_focus_width(-1))
+        menu.addSeparator()
+        add(
+            "形を振り直す",
+            self.state.reseed_focus,
+            "中心・本数・太さはそのままで、線のばらつきだけを作り直す",
+        )
+
+        # 右クリックのメニューが写して使う（→ `_items_to_copy`）。
+        # **このメソッドは1度しか呼ばない。** 呼ぶたびに QAction を作り直す
+        # ので、2度呼ぶとメニューバー側が古い項目を持ったまま取り残される
+        self.focus_copy_items = self._items_to_copy(menu)
+        return menu
+
     def _build_text_menu(self) -> None:
         """セリフのメニュー。
 
@@ -467,6 +516,8 @@ class MainWindow(QMainWindow):
             "斜めに割った2枚の傾きを / と \\ で入れ替える",
         )
         panel_menu.addAction(self.slant_flip_action)
+        panel_menu.addSeparator()
+        panel_menu.addMenu(self._build_focus_menu())
 
         image_menu = self.menuBar().addMenu("画像(&I)")
         self.paste_action = self._act(
@@ -678,6 +729,11 @@ class MainWindow(QMainWindow):
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
             menu.addAction(self.slant_flip_action)
+            # **メニューバーと同じものを畳んで出す。** 並べるのは同じ
+            # QAction なので、有効・無効と「入れる／消す」の文言は
+            # `_refresh` が1か所で面倒を見たままになる（→ 6.12）。
+            # ここで作り直すと、メニューバー側が古い項目を持ったまま残る
+            self._copy_actions(menu.addMenu("集中線"), self.focus_copy_items)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()
@@ -931,6 +987,15 @@ class MainWindow(QMainWindow):
         self.reset_rotation_action.setEnabled(image is not None and image.rotation != 0.0)
         self.slant_flip_action.setEnabled(self.state.selected_slant_pair is not None)
 
+        # 集中線。入れる／消すはコマを選んでいれば押せ、調整の5項目は
+        # 入っているときだけ（→ 6.16）
+        panel = self.state.selected_panel
+        focus = self.state.selected_focus
+        self.focus_toggle_action.setEnabled(panel is not None)
+        self.focus_toggle_action.setText("消す" if focus is not None else "入れる")
+        for action in self.focus_actions:
+            action.setEnabled(focus is not None)
+
         text = self.state.selected_text
         for action in self.text_actions:
             action.setEnabled(text is not None)
@@ -1009,7 +1074,13 @@ class MainWindow(QMainWindow):
             b = panel.shape.bounds()
             count = len(panel.children)
             inside = f" / 画像 {count} 枚" if count else ""
-            return f"コマを選択中: {b.w:.0f} × {b.h:.0f} px{inside}"
+            # 集中線はつまみ以外に見分ける手がかりが無いので、本数を添える
+            lines = (
+                f" / 集中線 {panel.focus_lines.count} 本"
+                if panel.focus_lines is not None
+                else ""
+            )
+            return f"コマを選択中: {b.w:.0f} × {b.h:.0f} px{inside}{lines}"
 
         return "コマ未選択"
 
@@ -1122,6 +1193,18 @@ class MainWindow(QMainWindow):
         """
         if self.state.flip_slant():
             self.state.message.emit("斜めの向きを反転しました")
+
+    def toggle_focus_lines(self) -> None:
+        """選んだコマの集中線を入れる／消す（要件定義 6.16）。
+
+        1項目の文言を入れ替える形にしてある（しっぽの「消す／出す」と
+        同じ）。どちらが押せるかは選んだコマで決まるので、2つ並べると
+        片方は必ずグレーで場所だけ取る。
+        """
+        if self.state.selected_focus is None:
+            self.state.add_focus_lines()
+        elif self.state.remove_focus_lines():
+            self.state.message.emit("集中線を消しました")
 
     def delete_image(self, image_id: str | None = None) -> None:
         """画像だけ消す。入っていたコマは残り、そのコマを選び直す。

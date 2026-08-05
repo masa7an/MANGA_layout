@@ -15,6 +15,13 @@ from typing import Iterator
 from PySide6.QtCore import QObject, Signal
 
 from ..assets import AssetStore, PendingAssets
+from ..focus import (
+    DEFAULT_FOCUS_SETTINGS,
+    default_focus,
+    new_seed,
+    stepped_count,
+    stepped_width,
+)
 from ..geometry import Rect, Size
 from ..history import History
 from ..images import ImageCache, Preview, preview_from_bytes
@@ -32,6 +39,7 @@ from ..layout import (
 from ..slant import flip_slant_pair, slide_slant_pair
 from ..model import (
     BalloonObject,
+    FocusLines,
     ImageObject,
     Page,
     Panel,
@@ -151,6 +159,7 @@ class EditorState(QObject):
         self.project_dir = project_dir
         self.settings = LayoutSettings()
         self.balloon_settings = BalloonSettings()
+        self.focus_settings = DEFAULT_FOCUS_SETTINGS
         self._page_index = 0
         self._tool = TOOL_SELECT
         self._selected_id: str | None = None
@@ -479,6 +488,137 @@ class EditorState(QObject):
             pair = page.slant_pair_of(panel_id)
             if pair is not None:
                 slide_slant_pair(page, pair, ratio, self.settings)
+
+    # -- 集中線 ------------------------------------------------------------
+    #
+    # 独立したオブジェクトではなくコマの属性なので（→ 要件定義 6.16）、
+    # 選択・削除・複製の経路には出てこない。触れるのはここにある操作だけ。
+
+    @property
+    def selected_focus(self) -> FocusLines | None:
+        """選択中のコマに入っている集中線。無ければ None。"""
+        panel = self.selected_panel
+        return None if panel is None else panel.focus_lines
+
+    def _edit_focus(self, panel_id: str, label: str):
+        """id で引き直してから触るための小さな入れ物。
+
+        Undo で `Project` の実体が差し替わるため、外で掴んだコマを
+        そのまま書き換えてはいけない（`_edit_balloon` と同じ）。
+        """
+
+        @contextlib.contextmanager
+        def scope():
+            with self.edit(label) as project:
+                target = project.pages[self._page_index].find(panel_id)
+                if not isinstance(target, Panel) or target.focus_lines is None:
+                    raise KeyError(f"集中線の入ったコマが見つかりません: {panel_id}")
+                yield target
+
+        return scope()
+
+    def add_focus_lines(self) -> bool:
+        """選択中のコマに集中線を入れる。入れたら True。
+
+        **1コマに1つまで。** 既に入っているコマでは何もしない
+        （メニュー側は「消す」に変わっているので、ここへは来ない）。
+        """
+        panel = self.selected_panel
+        if panel is None:
+            self.message.emit("集中線を入れるコマを選んでください")
+            return False
+        if panel.focus_lines is not None:
+            return False
+
+        panel_id = panel.id
+        with self.edit("集中線を入れる") as project:
+            target = project.pages[self._page_index].panel(panel_id)
+            target.focus_lines = default_focus(self.focus_settings)
+        self.message.emit(
+            "集中線を入れました。十字のつまみで中心、四角のつまみで内側の空きを変えられます"
+        )
+        return True
+
+    def remove_focus_lines(self) -> bool:
+        """選択中のコマから集中線を消す。消したら True。"""
+        panel = self.selected_panel
+        if panel is None or panel.focus_lines is None:
+            return False
+
+        panel_id = panel.id
+        with self.edit("集中線を消す") as project:
+            project.pages[self._page_index].panel(panel_id).focus_lines = None
+        return True
+
+    def set_focus_shape(
+        self,
+        panel_id: str,
+        *,
+        center: tuple[float, float] | None = None,
+        hole: float | None = None,
+    ) -> None:
+        """中心・内側の空きを差し替える。
+
+        1回のドラッグで1手。ドラッグ中は画面側が下見を描くだけで、ここへは
+        離した時点で1度だけ来る（斜めの境界と同じ流儀 → 要件定義 6.10）。
+        """
+        label = "集中線の中心" if center is not None else "集中線の内側"
+        with self._edit_focus(panel_id, label) as panel:
+            if center is not None:
+                panel.focus_lines.center = center
+            if hole is not None:
+                panel.focus_lines.hole = hole
+
+    def step_focus_count(self, steps: int) -> bool:
+        """線の本数を増減する。変わったら True。"""
+        return self._step_focus(
+            "count", stepped_count, steps, lambda n: f"集中線: {n} 本"
+        )
+
+    def step_focus_width(self, steps: int) -> bool:
+        """線の太さを増減する。変わったら True。"""
+        return self._step_focus(
+            "width",
+            stepped_width,
+            steps,
+            lambda w: f"集中線の太さ: {w * 100:.1f}%（コマの短辺に対する割合）",
+        )
+
+    def _step_focus(self, field: str, step, steps: int, label) -> bool:
+        """本数と太さの増減は、値の名前と刻み方だけが違う。
+
+        書き分けると、端で止まったときの扱い（履歴に積まない）が
+        片方だけ抜ける。
+        """
+        panel = self.selected_panel
+        if panel is None or panel.focus_lines is None:
+            return False
+        value = step(getattr(panel.focus_lines, field), steps)
+        if value == getattr(panel.focus_lines, field):
+            # 端まで来ている。**履歴に積まない。** 押しても何も変わらない
+            # 操作で Undo の一手を使わせない
+            return False
+
+        panel_id = panel.id
+        with self._edit_focus(panel_id, "集中線の調整") as target:
+            setattr(target.focus_lines, field, value)
+        self.message.emit(label(value))
+        return True
+
+    def reseed_focus(self) -> bool:
+        """ばらつきだけを作り直す。中心・本数・太さは変えない。
+
+        **1手として積む。** Undo で前の形に戻せないと、気に入っていた形を
+        振り直しで失うことになる（→ 要件定義 6.16）。
+        """
+        panel = self.selected_panel
+        if panel is None or panel.focus_lines is None:
+            return False
+
+        panel_id = panel.id
+        with self._edit_focus(panel_id, "集中線の形を振り直す") as target:
+            target.focus_lines.seed = new_seed()
+        return True
 
     # -- 吹き出し ----------------------------------------------------------
 
