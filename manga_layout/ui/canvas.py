@@ -143,6 +143,12 @@ ROUGH_ACCENT = QColor("#B08968")
 
 # 画面上での大きさ（画面ピクセル）。表示倍率で割ってシーンの px に直して使う
 HANDLE_PX = 9.0
+# コマを選んだときの選択枠の二重線の間隔（画面ピクセル）。
+#
+# コマのつまみは「枠」であることが伝わりにくいとの指摘（本人談 2026-08-06）を
+# 受けて、コマの選択枠だけ二重線にする。画像・フキダシ等の一重線とは
+# ここで見た目を分けている
+PANEL_SELECTION_DOUBLE_GAP_PX = 3.0
 # 斜めの境界を掴める範囲（ピクセル）。**描く印の大きさは `HANDLE_PX` のまま。**
 # 印を大きく描くとコマの上に居座って絵の邪魔になるので、
 # 「小さく描いて広く拾う」形にしてある
@@ -991,6 +997,17 @@ class PageScene(QGraphicsScene):
         painter.setPen(cosmetic_pen(color, 1.5))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(qrect(bounds))
+
+        # コマの選択枠だけ、もう1本内側に添えて二重線にする。
+        # 画像・フキダシ・ステッカー・テキスト・ラフは対象外（それぞれの
+        # 色で一重線のまま）
+        if color == ACCENT:
+            gap = PANEL_SELECTION_DOUBLE_GAP_PX / scale
+            inner = Rect(
+                bounds.x + gap, bounds.y + gap, bounds.w - 2 * gap, bounds.h - 2 * gap
+            )
+            if inner.w > 0 and inner.h > 0:
+                painter.drawRect(qrect(inner))
 
         # ロックしたコマではつまみを出さない（→ 要件定義 6.17）。
         # 出したまま効かないのが一番たちが悪く、掴めないことは見た目で
