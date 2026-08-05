@@ -72,7 +72,7 @@ ROUGH_MENU_LABEL = "ラフ"
 # 「どちらに変わるか」を名前に出す。今の状態を書いても、押した結果が分からない
 ROUGH_FADED_LABELS = {
     True: "青く淡くする",
-    False: "元の色に戻す",
+    False: "ラフの色を戻す",
 }
 
 # しっぽの形を切り替える項目の文言。**「どちらに変わるか」を名前に出す。**
@@ -221,7 +221,7 @@ class FileMenu:
         （→ 6.12）。
         """
         rough = self._state.page.rough
-        # 「どちらに変わるか」を出す。いま淡いなら「元の色に戻す」
+        # 「どちらに変わるか」を出す。いま淡いなら「ラフの色を戻す」
         self.rough_faded_action.setText(
             ROUGH_FADED_LABELS[not (rough is not None and rough.faded)]
         )
