@@ -18,7 +18,13 @@ from ..autosave_log import AutosaveLog
 from ..errors import MangaLayoutError
 from ..recent_project import load_recent_project, save_recent_project
 from ..settings import load_settings
-from ..storage import BACKUP_DIRNAME, PROJECT_FILENAME, is_project_dir, project_dir_of
+from ..storage import (
+    BACKUP_DIRNAME,
+    PROJECT_FILENAME,
+    BackupEntry,
+    is_project_dir,
+    project_dir_of,
+)
 from . import saving
 from .restore import RestoreDialog
 from .export import (
@@ -217,10 +223,7 @@ class ProjectIO:
             self._state.message.emit(f"{BACKUP_DIRNAME}/ に戻せる世代がまだありません")
             return
 
-        dialog = RestoreDialog(entries, self._window)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-        chosen = dialog.chosen()
+        chosen = self._choose_backup(entries)
         if chosen is None:
             return
 
@@ -241,6 +244,29 @@ class ProjectIO:
             f"{chosen.label} に戻しました"
             "（保存はまだです。「元に戻す」で取り消せます）"
         )
+
+    def _choose_backup(self, entries: list[BackupEntry]) -> BackupEntry | None:
+        """戻す世代を選ばせる。選ばなければ None。
+
+        **開けている間は自動バックアップを止める。** 窓は modal だが Qt の
+        タイマーは止まらないので、開けたままにしていると裏で
+        `autosave.N.json` が繰り下がる。一覧が控えているのはパスなので、
+        繰り下がった後に読むと**一覧に出ていた行とは別の中身**が入る
+        （「15コマ」と出ていた行を選んで 18 コマが入るのを実測）。
+
+        窓を閉じている間に世代を動かせるのはこのタイマーだけ。保存は
+        modal の裏では押せないので、ここを止めれば取り違えは起きない。
+        """
+        running = self.autosave_timer.isActive()
+        self.autosave_timer.stop()
+        try:
+            dialog = RestoreDialog(entries, self._window)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return None
+            return dialog.chosen()
+        finally:
+            if running:
+                self.autosave_timer.start()
 
     def save_project(self) -> bool:
         if self._state.project_dir is None:

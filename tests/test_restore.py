@@ -223,6 +223,37 @@ class Test画面からの復元:
             dialog.buttons.StandardButton.Ok
         ).isEnabled()
 
+    def test_窓を開けている間は自動バックアップを止める(self, 保存済みの作品, qapp):
+        """一覧を出してから戻すまでの間に世代が繰り下がらないこと。
+
+        窓は modal だが Qt のタイマーは止まらないので、開けたままにすると
+        裏で `autosave.N.json` が繰り下がり、**一覧に出ていた行とは別の
+        中身**が入る（実測で「15コマ」の行を選んで 18 コマが入った）。
+        """
+        from PySide6.QtWidgets import QDialog
+
+        from manga_layout.ui import MainWindow
+        from manga_layout.ui.restore import RestoreDialog
+
+        window = MainWindow(EditorState())
+        window.state.load(保存済みの作品)
+        assert window.files.autosave_timer.isActive()
+
+        止まっていたか: list[bool] = []
+        RestoreDialog.exec = lambda self: (
+            止まっていたか.append(not window.files.autosave_timer.isActive()),
+            QDialog.DialogCode.Rejected,
+        )[1]
+        try:
+            window.files.restore_backup()
+        finally:
+            del RestoreDialog.exec
+
+        assert 止まっていたか == [True]
+        # 閉じたら元どおり動き出すこと。止めたままにすると、以降まったく
+        # 退避されなくなる
+        assert window.files.autosave_timer.isActive()
+
     def test_選んだ世代が退避で押し出されない(self, 保存済みの作品, sample_project):
         """**順序の検証。** 復元前の退避を先にやると世代が繰り下がり、
         一番古い作業中の世代は最古として消える。読むのが先であること。
