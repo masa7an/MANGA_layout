@@ -104,6 +104,85 @@ class Rect:
         )
 
 
+def normalize_angle(degrees: float) -> float:
+    """角度を `-180`〜`180` に畳む。
+
+    回転を足し続けると値が際限なく増える。保存する前にここを通しておくと、
+    project.json に 3600 のような読んでも分からない数字が残らない。
+    """
+    angle = math.fmod(degrees, 360.0)
+    if angle > 180.0:
+        angle -= 360.0
+    elif angle <= -180.0:
+        angle += 360.0
+    return angle
+
+
+def rotate_point(
+    x: float, y: float, cx: float, cy: float, degrees: float
+) -> tuple[float, float]:
+    """点 (x, y) を (cx, cy) のまわりに `degrees` 度回した位置。
+
+    画面の y は下向きなので、**正の角度は時計回り**になる。`QPainter.rotate`
+    と同じ向きで、描画と当たり判定で符号を合わせるためにこの向きに揃えてある。
+
+    0 度のときは計算せずにそのまま返す。回転を使っていない作品で
+    浮動小数の丸めが入らないようにするため（→ 要件定義 6.3）。
+    """
+    if degrees == 0.0:
+        return (x, y)
+    rad = math.radians(degrees)
+    cos, sin = math.cos(rad), math.sin(rad)
+    dx, dy = x - cx, y - cy
+    return (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos)
+
+
+def rotated_corners(rect: Rect, degrees: float) -> tuple[tuple[float, float], ...]:
+    """矩形を中心まわりに回した4隅。左上から時計回り。"""
+    cx, cy = rect.center
+    return tuple(
+        rotate_point(x, y, cx, cy, degrees)
+        for x, y in (
+            (rect.x, rect.y),
+            (rect.right, rect.y),
+            (rect.right, rect.bottom),
+            (rect.x, rect.bottom),
+        )
+    )
+
+
+def rotated_bounds(rect: Rect, degrees: float) -> Rect:
+    """回した矩形を囲む、傾いていない矩形（外接矩形）。
+
+    「コマにフィット」で、傾いた絵がコマを覆うかどうかを見るのに使う。
+    """
+    if degrees == 0.0:
+        return rect
+    corners = rotated_corners(rect, degrees)
+    xs = [p[0] for p in corners]
+    ys = [p[1] for p in corners]
+    return Rect(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+
+def unrotate_point(
+    x: float, y: float, rect: Rect, degrees: float
+) -> tuple[float, float]:
+    """マウスの位置を、`rect` が傾いていなかったときの位置に戻す。
+
+    **回転を持ち込む3か所の境目のうちの1つ**（→ 要件定義 6.3）。ここを
+    通してから今までの矩形の判定に渡せば、当たり判定・つまみ・リサイズを
+    書き換えずに済む。
+    """
+    cx, cy = rect.center
+    return rotate_point(x, y, cx, cy, -degrees)
+
+
+def rotated_rect_contains(rect: Rect, x: float, y: float, degrees: float) -> bool:
+    """点が、回した矩形の内側にあるか。"""
+    lx, ly = unrotate_point(x, y, rect, degrees)
+    return rect.contains(lx, ly)
+
+
 def _on_segment(
     px: float, py: float, x1: float, y1: float, x2: float, y2: float
 ) -> bool:

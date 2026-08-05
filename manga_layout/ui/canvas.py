@@ -37,7 +37,14 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import MangaLayoutError
-from ..geometry import Polygon, Rect
+from ..geometry import (
+    Polygon,
+    Rect,
+    normalize_angle,
+    rotate_point,
+    rotated_rect_contains,
+    unrotate_point,
+)
 from ..layout import (
     aspect_of,
     balloon_at,
@@ -46,6 +53,7 @@ from ..layout import (
     handle_at,
     handle_positions,
     image_at,
+    keep_anchor,
     panel_at,
     resize_rect,
     resize_rect_keep_aspect,
@@ -172,6 +180,17 @@ CORNER_HANDLES = ("nw", "ne", "se", "sw")
 ASPECT_HINT = "Shift キーを押しながらドラッグで縦横比率を維持"
 ASPECT_HINT_HELD = "縦横比率を維持中（Shift）"
 
+# 回転つまみ（丸）を上辺からどれだけ離すか（画面ピクセル）。
+# 上辺の「n」のつまみ（一辺 `HANDLE_PX`）と重ならない距離にする。
+# 近づけすぎると、大きさを変えるつもりで回してしまう
+ROTATE_HANDLE_GAP_PX = 22.0
+# 回転つまみを掴める範囲（画面ピクセル）。印は `HANDLE_PX` のまま。
+# しっぽの先端（→ `TAIL_TIP_HANDLE_PX`）と同じく、丸は狙って押しても外れやすい
+ROTATE_HANDLE_HIT_PX = 16.0
+# Shift を押している間の角度の刻み（度）
+ROTATE_STEP_DEG = 15.0
+ROTATE_HINT = "ドラッグで回転。Shift キーで 15 度ずつ"
+
 # その場編集に入ったときの案内。
 _TEXT_EDIT_KEYS = "Enter で改行、Ctrl+Enter で確定、Esc で取り消し"
 TEXT_EDIT_HINT = f"文字を入力してください。{_TEXT_EDIT_KEYS}"
@@ -231,6 +250,8 @@ class PageScene(QGraphicsScene):
         self.root_preview: tuple[str, float] | None = None
         # 斜めの境界をずらしている最中の (組のどちらかのコマの id, 割合)
         self.slant_preview: tuple[str, float] | None = None
+        # 回している最中の (画像の id, 角度)
+        self.rotate_preview: tuple[str, float] | None = None
         # その場編集中のセリフ。編集中は下地を描かない
         self.editing_text_id: str | None = None
         self.update_scene_rect()
@@ -248,8 +269,35 @@ class PageScene(QGraphicsScene):
             slant=self.slant_preview,
             tail=self.tail_preview,
             root=self.root_preview,
+            rotate=self.rotate_preview,
             editing_text_id=self.editing_text_id,
         )
+
+    def selection_rotation(self) -> float:
+        """選択枠を描く角度。画像以外は 0。
+
+        回している最中は下見の角度を使う。モデルには離すまで触らないので、
+        ここを見ないと絵だけ回って枠が置いていかれる。
+        """
+        image = self.state.selected_image
+        if image is None:
+            return 0.0
+        if self.rotate_preview is not None and self.rotate_preview[0] == image.id:
+            return self.rotate_preview[1]
+        return image.rotation
+
+    @staticmethod
+    def _apply_rotation(painter: QPainter, rect: Rect, rotation: float) -> None:
+        """以降の描画を、`rect` の中心まわりに回す。
+
+        呼ぶ側が `painter.save()` / `restore()` で挟むこと。
+        """
+        if rotation == 0.0:
+            return
+        cx, cy = rect.center
+        painter.translate(cx, cy)
+        painter.rotate(rotation)
+        painter.translate(-cx, -cy)
 
     def drawBackground(self, painter: QPainter, rect: QRectF) -> None:
         painter.fillRect(rect, CANVAS_BG)
@@ -264,17 +312,30 @@ class PageScene(QGraphicsScene):
 
         bounds = self.state.selected_bounds
         balloon = self.state.selected_balloon
+        # 傾いた画像では、枠・つまみ・下書きの矩形をまとめて回す。
+        # 絵だけ回して枠が水平のまま残ると、掴む場所と絵の角がズレる
+        rotation = self.selection_rotation()
         if bounds is not None and self.preview_rect is None:
+            painter.save()
+            self._apply_rotation(painter, bounds, rotation)
             self._draw_selection(painter, bounds, scale, self._accent())
+            if self.state.selected_image is not None:
+                self._draw_rotate_handle(painter, bounds, scale)
+            painter.restore()
+            if self.rotate_preview is not None:
+                self._draw_angle_hint(painter, bounds, rotation)
         if balloon is not None:
             self._draw_tail_handle(painter, balloon, scale)
         self._draw_slant_handle(painter, scale)
 
         if self.preview_rect is not None:
+            painter.save()
+            self._apply_rotation(painter, self.preview_rect, rotation)
             painter.setPen(cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
             painter.setBrush(QBrush(QColor(30, 136, 229, 30)))
             painter.drawRect(qrect(self.preview_rect))
             self._draw_size_hint(painter, self.preview_rect)
+            painter.restore()
 
         if self.split_preview is not None:
             (x1, y1), (x2, y2) = self.split_preview
@@ -381,6 +442,47 @@ class PageScene(QGraphicsScene):
         painter.setBrush(QBrush(QColor("#FFFFFF")))
         for cx, cy in handle_positions(bounds).values():
             painter.drawRect(QRectF(cx - size / 2, cy - size / 2, size, size))
+
+    def _draw_rotate_handle(
+        self, painter: QPainter, bounds: Rect, scale: float
+    ) -> None:
+        """画像を回すつまみ（丸）。上辺の外に、軸を1本添えて出す。
+
+        **形を四角にしない。** 8方向のつまみと同じ形だと、大きさを変える
+        つもりで回してしまう。しっぽの先端（丸）と同じ理由（→ `_draw_tail_handle`）。
+
+        呼ぶ側が painter を回してあるので、ここでは真上に置くだけでよい。
+        傾いていれば絵と一緒に回った位置に出る。
+        """
+        size = HANDLE_PX / scale
+        cx = bounds.center[0]
+        top = bounds.y - ROTATE_HANDLE_GAP_PX / scale
+        painter.setPen(cosmetic_pen(IMAGE_ACCENT, 1.2))
+        # 軸。どの辺から生えているつまみなのかが、線が無いと分からない
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QLineF(cx, bounds.y, cx, top))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawEllipse(QPointF(cx, top), size / 2.0, size / 2.0)
+
+    def _draw_angle_hint(
+        self, painter: QPainter, bounds: Rect, rotation: float
+    ) -> None:
+        """回している最中の角度を、その場に出す。
+
+        文字は倍率の影響を受けないよう、変換を外してから描く（寸法表示と同じ）。
+        何度傾いているか分からないまま確定するのを防ぐためのものなので、
+        **回しているあいだだけ**出す。
+        """
+        cx, cy = bounds.center
+        # 回した後の上辺の中央に添える。回す前の位置に出すと、大きく
+        # 傾けたときに数字だけ絵から離れて残る
+        hx, hy = rotate_point(cx, bounds.y, cx, cy, rotation)
+        point = painter.transform().map(QPointF(hx, hy))
+        painter.save()
+        painter.resetTransform()
+        painter.setPen(QPen(QColor("#FFFFFF")))
+        painter.drawText(QPointF(point.x() + 8, point.y() - 8), f"{rotation:.0f}°")
+        painter.restore()
 
     def _draw_size_hint(self, painter: QPainter, rect: Rect) -> None:
         """操作中のコマの寸法を、その場に px で出す。
@@ -587,6 +689,22 @@ class PageView(QGraphicsView):
     def _snap_threshold(self) -> float:
         return SNAP_PX / self.view_scale
 
+    def _selected_rotation(self) -> float:
+        """選択中の画像の傾き。画像以外を選んでいるときは 0。"""
+        image = self.state.selected_image
+        return 0.0 if image is None else image.rotation
+
+    def _rect_snap_threshold(self) -> float:
+        """移動・リサイズで使う吸着の距離。**傾いた画像では 0**（吸着しない）。
+
+        吸着は他のコマの縦横の線に吸い付く仕組みなので、傾いた絵に
+        効かせても意味を成さない（→ 要件定義 6.3）。コマを作るときの
+        吸着まで止めないよう、ここは移動とリサイズからだけ呼ぶ。
+        """
+        if self._selected_rotation() != 0.0:
+            return 0.0
+        return self._snap_threshold()
+
     def _candidates(self, exclude_id: str | None):
         return snap_candidates(self.state.page, exclude_id, self.state.settings)
 
@@ -610,6 +728,7 @@ class PageView(QGraphicsView):
         self._scene.tail_preview = None
         self._scene.root_preview = None
         self._scene.slant_preview = None
+        self._scene.rotate_preview = None
 
     def fit_page(self) -> None:
         page = self.state.page
@@ -773,6 +892,7 @@ class PageView(QGraphicsView):
             return
 
         handle = self._handle_at_point(x, y)
+        rotating = self._rotate_handle_at(x, y)
         text = text_at(self.state.page, x, y)
         sticker = sticker_at(self.state.page, x, y)
         balloon = balloon_at(self.state.page, x, y)
@@ -783,6 +903,7 @@ class PageView(QGraphicsView):
         if (
             tool == TOOL_PANEL
             and handle is None
+            and not rotating
             and hit is None
             and balloon is None
             and sticker is None
@@ -829,6 +950,24 @@ class PageView(QGraphicsView):
             self._scene.preview_rect = self._origin_rect
             # 掴んだ時点で出す。動かし始めてからでは遅い
             self._update_aspect_hint(self._shift_held(event))
+            event.accept()
+            return
+
+        # 回転つまみ。8方向のつまみより後に見る。上辺から離して置いてあるので
+        # 普段は重ならないが、重なったときは大きさを変えるほうを優先する
+        # （回転はやり直しやすく、意図せず回っても気づける）
+        if rotating:
+            image = self.state.selected_image
+            self._mode = "rotate"
+            self._origin_rect = image.rect
+            # 掴んだ向きと今の傾きのずれを覚えておく。つまみのどこを掴んでも
+            # 押した瞬間に絵が飛ばない
+            self._grab = (
+                self._angle_at(image.rect, x, y) - image.rotation,
+                0.0,
+            )
+            self._scene.rotate_preview = (image.id, image.rotation)
+            self.state.message.emit(ROTATE_HINT)
             event.accept()
             return
 
@@ -887,7 +1026,11 @@ class PageView(QGraphicsView):
         # 選択中の画像の上なら、コマに持ち替えずにその画像のまま。
         # ここで奪われると、選んだ絵をドラッグした瞬間にコマが動く
         image = self.state.selected_image
-        if image is not None and image.rect.contains(x, y) and panel is not None:
+        if (
+            image is not None
+            and rotated_rect_contains(image.rect, x, y, image.rotation)
+            and panel is not None
+        ):
             return image.id
 
         return None if panel is None else panel.id
@@ -1142,14 +1285,38 @@ class PageView(QGraphicsView):
                 )
                 self._scene.slant_preview = (held_id, ratio)
 
+        elif self._mode == "rotate" and self._origin_rect is not None:
+            if self._scene.rotate_preview is not None:
+                # 掴んだときのずれを引くと、つまみを持ったまま円を描いた
+                # ぶんだけ回る。Shift のときだけ刻む（→ 要件定義 6.3）
+                angle = self._angle_at(self._origin_rect, x, y) - self._grab[0]
+                if self._shift_held(event):
+                    angle = round(angle / ROTATE_STEP_DEG) * ROTATE_STEP_DEG
+                self._scene.rotate_preview = (
+                    self._scene.rotate_preview[0],
+                    normalize_angle(angle),
+                )
+
         elif self._mode == "move" and self._origin_rect is not None:
             moved = self._origin_rect.translated(x - self._grab[0], y - self._grab[1])
             xs, ys = self._candidates(self.state.selected_id)
-            self._scene.preview_rect = snap_moved_rect(moved, xs, ys, threshold)
+            self._scene.preview_rect = snap_moved_rect(
+                moved, xs, ys, self._rect_snap_threshold()
+            )
 
         elif self._mode == "resize" and self._origin_rect is not None and self._handle:
+            rotation = self._selected_rotation()
             xs, ys = self._candidates(self.state.selected_id)
-            sx, sy = snap_point(self._handle, x, y, xs, ys, threshold)
+            # 傾いていたら、まずマウスを「傾いていなかったときの位置」に
+            # 戻す。こうすると以下のリサイズ計算は今までのままでよい
+            px, py = (
+                unrotate_point(x, y, self._origin_rect, rotation)
+                if rotation != 0.0
+                else (x, y)
+            )
+            sx, sy = snap_point(
+                self._handle, px, py, xs, ys, self._rect_snap_threshold()
+            )
             minimum = self.state.settings.min_panel_size
             aspect = self._locked_aspect(event)
             # ドラッグ中も出し直す。案内は数秒で消えるため、
@@ -1163,6 +1330,9 @@ class PageView(QGraphicsView):
                 resized = resize_rect(
                     self._origin_rect, self._handle, sx, sy, minimum
                 )
+            # 傾いていると、幅を変えたぶんだけ中心が動く。掴んでいない側が
+            # 動いて見えないよう、ここで戻す
+            resized = keep_anchor(self._origin_rect, resized, self._handle, rotation)
             # 斜めの組は、細いほうが最小幅を割る手前で止める。下見のうちに
             # 押し戻しておけば、離した瞬間に形が飛ぶことがない
             pair = self.state.selected_slant_pair
@@ -1192,10 +1362,14 @@ class PageView(QGraphicsView):
         tail = self._scene.tail_preview
         root = self._scene.root_preview
         slant = self._scene.slant_preview
+        rotate = self._scene.rotate_preview
         mode, origin, press = self._mode, self._origin_rect, self._grab
         self._reset_drag()
 
-        if mode == "tail":
+        if mode == "rotate":
+            if rotate is not None:
+                self._apply_rotate(rotate[0], rotate[1])
+        elif mode == "tail":
             if tail is not None:
                 self._apply_tail(tail[0], tail[1])
         elif mode == "tail_root":
@@ -1226,7 +1400,40 @@ class PageView(QGraphicsView):
         bounds = self.state.selected_bounds
         if bounds is None:
             return None
-        return handle_at(bounds, x, y, HANDLE_PX / self.view_scale)
+        return handle_at(
+            bounds, x, y, HANDLE_PX / self.view_scale, self._selected_rotation()
+        )
+
+    @staticmethod
+    def _angle_at(rect: Rect, x: float, y: float) -> float:
+        """矩形の中心から見た (x, y) の向き（度）。"""
+        cx, cy = rect.center
+        return math.degrees(math.atan2(y - cy, x - cx))
+
+    def _rotate_handle_point(self) -> tuple[float, float] | None:
+        """回転つまみ（丸）の位置。画像を選んでいないときは None。
+
+        描く側（`PageScene._draw_rotate_handle`）と同じ場所を、painter を
+        使わずに求める。片方だけ直すと、見えている印と掴める場所がズレる。
+        """
+        image = self.state.selected_image
+        if image is None:
+            return None
+        rect = image.rect
+        cx, cy = rect.center
+        top = rect.y - ROTATE_HANDLE_GAP_PX / self.view_scale
+        return rotate_point(cx, top, cx, cy, image.rotation)
+
+    def _rotate_handle_at(self, x: float, y: float) -> bool:
+        """回転つまみの上か。
+
+        描いてある丸より広く取る（→ `ROTATE_HANDLE_HIT_PX`）。
+        """
+        point = self._rotate_handle_point()
+        if point is None:
+            return False
+        half = ROTATE_HANDLE_HIT_PX / self.view_scale / 2.0
+        return abs(x - point[0]) <= half and abs(y - point[1]) <= half
 
     def _update_aspect_hint(self, shift_held: bool) -> None:
         """斜めのつまみで画像を伸縮しているあいだ、Shift の案内を出す。
@@ -1289,11 +1496,17 @@ class PageView(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         elif handle is not None:
             self.viewport().setCursor(_HANDLE_CURSORS[handle])
+        elif self._rotate_handle_at(x, y):
+            # 掴んで動かせるつまみであることだけ示す。回る向きを表す形は
+            # Qt の標準カーソルに無い
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         elif self._slant_handle_at(x, y):
             # 左右にしか動かないことを形で示す。掴む順と同じく、
             # 角と辺のつまみより後に見る（先に見ると出る形が実際と食い違う）
             self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
-        elif image is not None and image.rect.contains(x, y):
+        elif image is not None and rotated_rect_contains(
+            image.rect, x, y, image.rotation
+        ):
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif sticker_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
@@ -1524,6 +1737,21 @@ class PageView(QGraphicsView):
 
         with self.state.edit("コマの移動") as project:
             project.pages[self.state.page_index].move_panel(object_id, dx, dy)
+
+    def _apply_rotate(self, image_id: str, angle: float) -> None:
+        """回した結果を確定する。
+
+        傾きは配置の一部なので、履歴には位置や大きさと同じ1手として積む
+        （→ 要件定義 6.3）。
+        """
+        image = self.state.selected_image
+        if image is None or image.id != image_id or image.rotation == angle:
+            return
+        with self.state.edit("画像の回転") as project:
+            target = project.pages[self.state.page_index].find(image_id)
+            if isinstance(target, ImageObject):
+                target.rotation = angle
+        self.state.message.emit(f"{angle:.0f}° 傾けました")
 
     def _apply_resize(self, rect: Rect) -> None:
         image = self.state.selected_image

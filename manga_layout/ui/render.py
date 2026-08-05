@@ -124,6 +124,8 @@ class DragPreview:
     tail: tuple[str, tuple[float, float]] | None = None
     # しっぽの付け根を上下にずらしている最中の (吹き出しの id, 割合)
     root: tuple[str, float] | None = None
+    # 回している最中の (画像の id, 角度)
+    rotate: tuple[str, float] | None = None
     # その場編集中のセリフ。二重に見えないよう、下地を描かない
     editing_text_id: str | None = None
 
@@ -258,7 +260,7 @@ class PageRenderer:
             painter.drawPolygon(polygon)
 
         if panel.children:
-            self._draw_children(painter, panel, polygon)
+            self._draw_children(painter, panel, polygon, preview)
 
         if panel.border.visible and panel.border.width > 0:
             # 枠線は作品の一部なので、太さは px のまま（表示倍率で見た目が変わる）
@@ -268,12 +270,19 @@ class PageRenderer:
             painter.drawPolygon(polygon)
 
     def _draw_children(
-        self, painter: QPainter, panel: Panel, polygon: QPolygonF
+        self,
+        painter: QPainter,
+        panel: Panel,
+        polygon: QPolygonF,
+        preview: DragPreview = NO_PREVIEW,
     ) -> None:
         """コマの中の画像を、コマの形で切り抜いて描く。
 
         切り抜きはコマのポリゴンそのものに対して行う。斜めのコマでも
         そのまま効く（要件定義 4章でポリゴン保存にした狙いのひとつ）。
+
+        **切り抜きは画像の回転より外側に掛かる。** 絵を回してもコマの形は
+        回らない、という当たり前の見え方になる。
         """
         path = QPainterPath()
         path.addPolygon(polygon)
@@ -282,18 +291,52 @@ class PageRenderer:
         painter.save()
         painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
         for image in sorted(panel.children, key=lambda i: i.z):
-            self._draw_image(painter, image)
+            self._draw_image(painter, image, preview)
         painter.restore()
 
+    @staticmethod
+    def _rotation_of(
+        image: ImageObject | StickerObject, preview: DragPreview
+    ) -> float:
+        """描くときの角度。回している最中は下見の角度を使う。"""
+        if preview.rotate is not None and preview.rotate[0] == image.id:
+            return preview.rotate[1]
+        return image.rotation
+
     def _draw_image(
-        self, painter: QPainter, image: ImageObject | StickerObject
+        self,
+        painter: QPainter,
+        image: ImageObject | StickerObject,
+        preview: DragPreview = NO_PREVIEW,
     ) -> None:
-        """1枚の画像を矩形いっぱいに描く。
+        """1枚の画像を矩形いっぱいに描く。傾いていれば中心まわりに回す。
 
         マーク（→ 6.14）もここを通る。持っている項目が同じで、違うのは
         切り抜かれるかどうか＝**呼ばれる場所**だけ。描き方を書き分けると、
-        透明度の扱いや欠けたときの目印が片方だけ古くなる。
+        透明度の扱いや欠けたときの目印が片方だけ古くなる。マークの
+        `rotation` は常に 0 なので、回転の分岐には入らない。
         """
+        rotation = self._rotation_of(image, preview)
+        if rotation == 0.0:
+            self._draw_image_upright(painter, image)
+            return
+
+        painter.save()
+        cx, cy = image.rect.center
+        painter.translate(cx, cy)
+        painter.rotate(rotation)
+        painter.translate(-cx, -cy)
+        # 回すと画素が斜めに並び、そのままでは縁が階段状になる。
+        # **回っているときだけ**入れる（真っ直ぐな絵まで滑らかにすると、
+        # 等倍で見たときにわずかに眠くなる）
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        self._draw_image_upright(painter, image)
+        painter.restore()
+
+    def _draw_image_upright(
+        self, painter: QPainter, image: ImageObject | StickerObject
+    ) -> None:
+        """傾きを考えずに1枚描く。回転は呼ぶ側が painter に掛けてある。"""
         preview = self.images(image.asset)
         if preview is None:
             self._draw_missing(painter, image)

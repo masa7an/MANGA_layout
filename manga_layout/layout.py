@@ -15,7 +15,7 @@ import math
 from dataclasses import dataclass
 
 from . import vertical
-from .geometry import EPS, Rect
+from .geometry import EPS, Rect, rotate_point, rotated_rect_contains, unrotate_point
 from .model import (
     BalloonObject,
     ImageObject,
@@ -149,15 +149,23 @@ def image_at(panel: Panel, x: float, y: float) -> ImageObject | None:
     if not panel.shape.contains(x, y):
         return None
     for image in sorted(panel.children, key=lambda i: i.z, reverse=True):
-        if image.rect.contains(x, y):
+        if rotated_rect_contains(image.rect, x, y, image.rotation):
             return image
     return None
 
 
-def handle_positions(rect: Rect) -> dict[str, tuple[float, float]]:
-    """8方向のつまみの中心座標。"""
+def handle_positions(
+    rect: Rect, rotation: float = 0.0
+) -> dict[str, tuple[float, float]]:
+    """8方向のつまみの中心座標。
+
+    `rotation` を渡すと、矩形の中心まわりに回した位置を返す。傾いた画像で
+    つまみだけ水平に残ると、掴む場所と絵の角がズレる（→ 要件定義 6.3）。
+    名前（nw / n / ...）は**回す前の向き**のまま。リサイズの計算は回す前の
+    座標で行うので、名前まで回すと対応が取れなくなる。
+    """
     cx, cy = rect.center
-    return {
+    corners = {
         "nw": (rect.x, rect.y),
         "n": (cx, rect.y),
         "ne": (rect.right, rect.y),
@@ -167,14 +175,28 @@ def handle_positions(rect: Rect) -> dict[str, tuple[float, float]]:
         "sw": (rect.x, rect.bottom),
         "w": (rect.x, cy),
     }
+    if rotation == 0.0:
+        return corners
+    return {
+        name: rotate_point(hx, hy, cx, cy, rotation)
+        for name, (hx, hy) in corners.items()
+    }
 
 
-def handle_at(rect: Rect, x: float, y: float, size: float) -> str | None:
+def handle_at(
+    rect: Rect, x: float, y: float, size: float, rotation: float = 0.0
+) -> str | None:
     """その位置にあるつまみの名前。
 
     `size` はつまみの一辺（px）。画面上で常に同じ大きさに見せるため、
     呼ぶ側が表示倍率から換算して渡す。
+
+    傾いているときは**つまみを回すのではなく、点を戻して**から見る。
+    つまみは回っても正方形のままなので、どちらでも同じ結果になり、
+    こちらは判定を1つも書き換えずに済む。
     """
+    if rotation != 0.0:
+        x, y = unrotate_point(x, y, rect, rotation)
     half = size / 2.0
     # 角を優先する。角と辺のつまみが重なる小さなコマで、
     # 角をつかんだつもりが辺になる誤操作を防ぐ
@@ -184,6 +206,38 @@ def handle_at(rect: Rect, x: float, y: float, size: float) -> str | None:
         if abs(x - hx) <= half and abs(y - hy) <= half:
             return name
     return None
+
+
+def anchor_of(rect: Rect, handle: str) -> tuple[float, float]:
+    """つまみを引くあいだ動かない側の代表点（回す前の座標）。
+
+    角のつまみなら対角、辺のつまみなら向かいの辺の中点。
+    """
+    cx, cy = rect.center
+    x = rect.right if "w" in handle else rect.x if "e" in handle else cx
+    y = rect.bottom if "n" in handle else rect.y if "s" in handle else cy
+    return (x, y)
+
+
+def keep_anchor(origin: Rect, resized: Rect, handle: str, rotation: float) -> Rect:
+    """傾いた矩形のリサイズ結果を、掴んでいない側が動かないように直す。
+
+    回転の中心が矩形の中心なので、**幅を変えると中心も動く**。回す前の
+    座標で計算しただけだと、画面の上では固定したはずの反対側の角まで
+    動いて見える。ここで平行移動して打ち消す。
+
+    傾き 0 では絶対に再現しないズレなので、テストで固定してある
+    （`tests/test_layout.py`）。
+    """
+    if rotation == 0.0:
+        return resized
+    ax, ay = anchor_of(origin, handle)
+    ocx, ocy = origin.center
+    rcx, rcy = resized.center
+    # 同じ点が、回す前と後でどこへ行くか。その差だけ戻す
+    wx, wy = rotate_point(ax, ay, ocx, ocy, rotation)
+    nx, ny = rotate_point(ax, ay, rcx, rcy, rotation)
+    return resized.translated(wx - nx, wy - ny)
 
 
 def resize_rect(rect: Rect, handle: str, x: float, y: float, min_size: float) -> Rect:
@@ -319,16 +373,33 @@ def contain_rect_in(outer: Rect, src_px: tuple[int, int]) -> Rect:
     return _centered(outer, aspect, min(outer.w / aspect, outer.h))
 
 
-def cover_rect_in(outer: Rect, src_px: tuple[int, int]) -> Rect:
+def cover_rect_in(
+    outer: Rect, src_px: tuple[int, int], rotation: float = 0.0
+) -> Rect:
     """縦横比を保ったまま `outer` を**埋める**最小の矩形（中央寄せ）。
 
     「コマにフィット」の中身。はみ出した分はコマの形で切り抜かれるので、
     コマの中に隙間が残らない。
+
+    `rotation` を渡すと、**傾けたまま**埋める大きさを返す（→ 要件定義 6.3）。
+    傾いた矩形の外接矩形は `w|cos| + h|sin|` × `w|sin| + h|cos|` なので、
+    これが `outer` を覆う最小の倍率を求める。傾き 0 では `|cos|=1, |sin|=0`
+    となり、式は今までと同じ `max(w/比, h)` に戻る。
     """
     aspect = aspect_of(src_px)
     if aspect <= 0.0 or outer.w <= 0.0 or outer.h <= 0.0:
         return outer
-    return _centered(outer, aspect, max(outer.w / aspect, outer.h))
+    if rotation == 0.0:
+        return _centered(outer, aspect, max(outer.w / aspect, outer.h))
+
+    rad = math.radians(rotation)
+    cos, sin = abs(math.cos(rad)), abs(math.sin(rad))
+    # 高さを t とすると幅は t*比。外接矩形の各辺が `outer` を覆う t を取る
+    wide = aspect * cos + sin
+    tall = aspect * sin + cos
+    height = max(outer.w / wide if wide > EPS else 0.0,
+                 outer.h / tall if tall > EPS else 0.0)
+    return _centered(outer, aspect, height)
 
 
 def resize_rect_keep_aspect(

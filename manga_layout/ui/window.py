@@ -480,6 +480,15 @@ class MainWindow(QMainWindow):
             "コマにフィット", self.fit_image, "Ctrl+Shift+F", "選択中の画像でコマを埋める"
         )
         image_menu.addAction(self.fit_action)
+        # 回すのはつまみ（→ 6.3）。ここに出すのは戻す側だけで、キーは足さない。
+        # 傾けるのは絵を見ながら合わせる操作なので、数値やキーでは代えられない
+        self.reset_rotation_action = self._act(
+            "回転をリセット",
+            self.reset_image_rotation,
+            None,
+            "選択中の画像の傾きを 0 に戻す",
+        )
+        image_menu.addAction(self.reset_rotation_action)
         image_menu.addSeparator()
         image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
 
@@ -661,6 +670,10 @@ class MainWindow(QMainWindow):
 
         elif state.selected_image is not None:
             menu.addAction(self.fit_action)
+            # 傾いていないときは出さない。押しても何も起きない項目が
+            # 並ぶと、メニューを読む手間だけが増える（→ 6.12）
+            if state.selected_image.rotation != 0.0:
+                menu.addAction(self.reset_rotation_action)
 
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
@@ -913,7 +926,9 @@ class MainWindow(QMainWindow):
         target = self.delete_target()
         self.delete_action.setEnabled(target is not None)
         self.delete_action.setText("削除" if target is None else f"{target[0]}を削除")
-        self.fit_action.setEnabled(self.state.selected_image is not None)
+        image = self.state.selected_image
+        self.fit_action.setEnabled(image is not None)
+        self.reset_rotation_action.setEnabled(image is not None and image.rotation != 0.0)
         self.slant_flip_action.setEnabled(self.state.selected_slant_pair is not None)
 
         text = self.state.selected_text
@@ -1209,7 +1224,9 @@ class MainWindow(QMainWindow):
         if panel is None:
             return
 
-        rect = cover_rect_in(panel.shape.bounds(), image.src_px)
+        # 傾けてあれば、傾いたまま覆う大きさにする。ここで 0 に戻すと、
+        # 合わせた傾きが黙って消える（→ 要件定義 6.3）
+        rect = cover_rect_in(panel.shape.bounds(), image.src_px, image.rotation)
         if rect == image.rect:
             return
         image_id = image.id
@@ -1218,6 +1235,22 @@ class MainWindow(QMainWindow):
             if isinstance(target, ImageObject):
                 target.rect = rect
         self.state.message.emit(f"コマを埋めました（{rect.w:.0f} × {rect.h:.0f} px）")
+
+    def reset_image_rotation(self) -> None:
+        """選択中の画像の傾きを 0 に戻す。
+
+        回しすぎて戻せなくなる状態を作らないための逃げ道。つまみで 0 ちょうどに
+        合わせるのは難しく、Undo は回した直後にしか使えない。
+        """
+        image = self.state.selected_image
+        if image is None or image.rotation == 0.0:
+            return
+        image_id = image.id
+        with self.state.edit("回転をリセット") as project:
+            target = project.pages[self.state.page_index].find(image_id)
+            if isinstance(target, ImageObject):
+                target.rotation = 0.0
+        self.state.message.emit("傾きを戻しました")
 
     # -- 吹き出し ----------------------------------------------------------
 
