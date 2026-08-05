@@ -189,6 +189,47 @@ def image_at(panel: Panel, x: float, y: float) -> ImageObject | None:
     return None
 
 
+def pick_stack(page: Page, x: float, y: float) -> list[str]:
+    """その位置で選べるものの id を、**ダブルクリックで巡る順**に並べる
+    （→ 要件定義 6.25）。
+
+        手前のコマ → その中の画像（手前から）→ 次のコマ → その中の画像 → …
+
+    **重なりの順（z）そのままではない。** 画像はコマの上に描かれるので、
+    z の順に並べれば画像が先に来る。ここでコマを先に置いているのは、
+    **1つめの段を「コマ → 中の画像」にするため**で、ダブルクリック1回の
+    動きが今まで（→ 6.3）と変わらないようにしている。
+
+    コマどうし・画像どうしの前後は z のまま（`panel_at`・`image_at` と
+    同じ）。**見えていないものも入る。** 隠れたものを拾い上げるのが
+    この並びの目的で、選択枠は最前面に描かれるので選べば必ず見える。
+    """
+    stack: list[str] = []
+    for panel in sorted(page.panels, key=lambda p: p.z, reverse=True):
+        if not panel.shape.contains(x, y):
+            continue
+        stack.append(panel.id)
+        stack.extend(
+            image.id
+            for image in sorted(panel.children, key=lambda i: i.z, reverse=True)
+            if rotated_rect_contains(image.rect, x, y, image.rotation)
+        )
+    return stack
+
+
+def next_in_stack(stack: list[str], current: str | None) -> str | None:
+    """`current` の次に選ぶものの id。末尾まで行ったら先頭へ戻る。
+
+    **`current` が並びに無いときは先頭の次（＝手前のコマの中の画像）。**
+    フキダシの上でダブルクリックしたときがこれにあたり、今までどおり
+    下にある画像が選ばれる（→ 6.25）。
+    """
+    if not stack:
+        return None
+    index = stack.index(current) if current in stack else 0
+    return stack[(index + 1) % len(stack)]
+
+
 def handle_positions(
     rect: Rect, rotation: float = 0.0
 ) -> dict[str, tuple[float, float]]:

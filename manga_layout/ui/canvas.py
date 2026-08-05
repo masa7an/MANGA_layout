@@ -58,9 +58,10 @@ from ..layout import (
     default_panel_rect,
     handle_at,
     handle_positions,
-    image_at,
     keep_anchor,
+    next_in_stack,
     panel_at,
+    pick_stack,
     resize_rect,
     resize_rect_keep_aspect,
     root_y_at,
@@ -1225,6 +1226,9 @@ class PageView(QGraphicsView):
         # 状態表示に出している案内。同じ文を出し続けないための控え
         self._hint_shown: str | None = None
         self._text_editor: TextEditorItem | None = None
+        # 押される直前に選ばれていたもの。ダブルクリックの巡回で使う
+        # （→ `mouseDoubleClickEvent`、要件定義 6.25）
+        self._selected_before_press: str | None = None
 
         state.changed.connect(self._on_model_changed)
         state.selection_changed.connect(self.viewport().update)
@@ -1427,6 +1431,12 @@ class PageView(QGraphicsView):
         if event.button() != Qt.MouseButton.LeftButton:
             super().mousePressEvent(event)
             return
+
+        # **押して選び直す前の選択を控える。** ダブルクリックの巡回は
+        # 「今選ばれているものの次」で位置を決めるが、2回目のダブルクリックの
+        # 手前には必ず普通の押下が挟まり、そこで手前のコマに選び直されて
+        # しまう。控えが無いと巡回が2つめと3つめを往復する（→ 6.25）
+        self._selected_before_press = self.state.selected_id
 
         x, y = self._scene_px(event)
         tool = self.state.tool
@@ -1795,10 +1805,14 @@ class PageView(QGraphicsView):
         return abs(x - root[0]) <= half and abs(y - root[1]) <= half
 
     def mouseDoubleClickEvent(self, event) -> None:
-        """セリフなら文字の入力へ、コマの中なら画像そのものを選ぶ。
+        """セリフなら文字の入力へ。それ以外は、その場所にあるものを
+        **押すたびに1つずつ選び直す**（→ 要件定義 6.25）。
 
-        1回のクリックでコマではなく画像が選ばれると、コマを動かすつもりの
-        ドラッグが絵だけを動かしてしまう。踏み込む操作を分けておく。
+        巡る順は「コマ → その中の画像 → 次のコマ → …」（→ `pick_stack`）
+        なので、**1回目は必ずコマの中の画像**になる。1クリックで画像が
+        選ばれるとコマを動かすつもりのドラッグが絵だけを動かすため、
+        踏み込む操作を分けてあるのは今までどおりで（→ 6.3）、2回目から
+        先が足した分。
         """
         if event.button() != Qt.MouseButton.LeftButton:
             super().mouseDoubleClickEvent(event)
@@ -1818,19 +1832,44 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        panel = panel_at(self.state.page, x, y)
-        image = image_at(panel, x, y) if panel is not None else None
-        if image is None:
+        stack = pick_stack(self.state.page, x, y)
+        # **押される前の選択から数える。** 直前の押下で手前のコマに
+        # 選び直されているため、今の選択から数えると巡回が戻る（→ 6.25）
+        target = next_in_stack(stack, self._selected_before_press)
+        if target is None or target == self.state.selected_id:
+            # 巡っても同じものに戻る場所（画像の無いコマ1枚など）。
+            # 選択が動いたように見せない
             super().mouseDoubleClickEvent(event)
             return
 
         self._reset_drag()
-        self.state.select(image.id)
-        self.state.message.emit(
-            "画像を選びました。ドラッグで移動、つまみで拡大縮小"
-            "（Shift で縦横比を保つ）。Esc でコマに戻ります"
-        )
+        self.state.select(target)
+        # 次の押下でも同じ位置から続けられるようにする。押下を挟まずに
+        # ダブルクリックが続いた場合（テストや、素早い連打）への備え
+        self._selected_before_press = target
+        self._announce_pick(target, stack)
         event.accept()
+
+    def _announce_pick(self, object_id: str, stack: list[str]) -> None:
+        """ダブルクリックで選んだものを状態表示に出す。
+
+        **画像のときは今までの文のまま。** 踏み込んだ直後に読みたいのは
+        「これから何ができるか」で、そこに巡回の話を混ぜると長くなる。
+
+        コマを選ぶのはこの巡回だけなので（1クリックで選ぶ経路とは別）、
+        そちらには**何番目か**を添える。選んだコマが他のコマの下に
+        隠れていると、枠が出ても「何が起きたのか」が伝わりにくい。
+        """
+        if self.state.selected_image is not None:
+            self.state.message.emit(
+                "画像を選びました。ドラッグで移動、つまみで拡大縮小"
+                "（Shift で縦横比を保つ）。Esc でコマに戻ります"
+            )
+            return
+        position = f"{stack.index(object_id) + 1} / {len(stack)}"
+        self.state.message.emit(
+            f"コマを選びました（{position}）。ダブルクリックで次のものへ"
+        )
 
     def mouseMoveEvent(self, event) -> None:
         if self._pan_from is not None:
