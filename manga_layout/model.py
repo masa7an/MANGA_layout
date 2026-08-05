@@ -1001,6 +1001,28 @@ class Page:
 # プロジェクト
 # --------------------------------------------------------------------------
 
+# 型ごとの ID の接頭辞。**複製で使う**（→ `Project.duplicate`）。
+# `add_*` は種類ごとに分かれているので接頭辞を直に書けるが、複製は
+# 選んだものの型で分かれるため、1箇所から引く形にする
+_ID_PREFIXES: dict[type, str] = {
+    Panel: ID_PREFIX_PANEL,
+    ImageObject: ID_PREFIX_IMAGE,
+    BalloonObject: ID_PREFIX_BALLOON,
+    StickerObject: ID_PREFIX_STICKER,
+    TextObject: ID_PREFIX_TEXT,
+}
+
+
+def _detached_copy(obj: SceneObject) -> Any:
+    """保存形式を往復させた深い写し。**id は元のまま**なので、呼んだ側が振り直す。
+
+    `Project.copy()` と同じ理屈（→ 要件定義 6.8）。項目を手で書き写す形に
+    すると、あとから項目を足したときに写し忘れても静かに通ってしまう。
+    ここを通しておけば、`to_dict()` への追加を忘れた項目は Undo と同じく
+    複製でも落ちるので、抜けが1か所に集まる。
+    """
+    return type(obj).from_dict(obj.to_dict(), f"{obj.id} の複製")
+
 
 @dataclass
 class Project:
@@ -1102,6 +1124,100 @@ class Project:
         )
         page.floating.append(text_obj)
         return text_obj
+
+    # -- 複製（要件定義 6.15） ------------------------------------------------
+
+    def duplicate(self, page: Page, object_id: str, dx: float, dy: float) -> SceneObject:
+        """ページの中の1つを写して、(dx, dy) だけずらして置く。写しを返す。
+
+        写るのは、選んだもの1つと**それに巻き込まれるもの**だけ。
+
+        | 選んだもの | 写るもの |
+        |---|---|
+        | コマ | コマと中の画像。画像の実体は増えない（同じ `asset` を指す） |
+        | 画像 | 画像だけ。同じコマの中に増える |
+        | フキダシ | フキダシと、上に乗っているセリフ |
+        | マーク・セリフ | それだけ |
+
+        **id は振り直す。** 写しは別のものなので、元と同じ id を持たせない
+        （持たせると `attached_panel_id` の解決先が狂う → 6章）。
+
+        **コマへの紐づけは元のまま引き継ぐ。** ただし**フキダシと一緒に
+        写したセリフは、写したフキダシに紐づけ直す**。元のフキダシを指した
+        ままにすると、元を動かしたときに写したセリフだけが飛んでいく（→ 6.5）。
+
+        **斜めに割ったコマは写せない**（`ValueError`）。2枚1組で形が決まって
+        いるので、片方だけ写すと相方のいない平行四辺形が1枚できる（→ 6.10）。
+        呼ぶ側が `Page.slant_pair_of()` で先に断ること。
+        """
+        obj = page.find(object_id)
+        if obj is None:
+            raise KeyError(f"見つかりません: {object_id}")
+
+        if isinstance(obj, Panel):
+            if page.slant_pair_of(object_id) is not None:
+                raise ValueError(f"斜めに割ったコマは複製できません: {object_id}")
+            return self._duplicate_panel(page, obj, dx, dy)
+        if isinstance(obj, ImageObject):
+            return self._duplicate_image(page, obj, dx, dy)
+
+        copy = self._duplicate_floating(page, obj, dx, dy)
+        if isinstance(copy, BalloonObject):
+            # **しっぽの先端も動かす。** 先端はページ座標なので、置いていくと
+            # 写しだけしっぽが伸びて別の形になる。ここは「同じ形のフキダシを
+            # 並べる」操作なので、指す相手を据え置く `move_balloon`（→ 6.4）
+            # ではなく、形をそのまま写すほうを採る
+            copy.tail = copy.tail.translated(dx, dy)
+            for text in page.texts_on_balloon(object_id):
+                text_copy = self._duplicate_floating(page, text, dx, dy)
+                text_copy.attached_balloon_id = copy.id
+        return copy
+
+    def _duplicate_panel(self, page: Page, panel: Panel, dx: float, dy: float) -> Panel:
+        """コマを写す。中の画像も一緒に写り、集中線もそのまま乗る。
+
+        集中線は長さを1つも持たない（中心も空きも割合 → 6.16）ので、
+        ずらしても直すところが無い。
+
+        **写しはロックしない**（→ 6.17 の「新しく作ったコマはロックしない」）。
+        置き場所を決めるために作ったものなので、いきなり動かせないと
+        写すたびに解除の手間が挟まる。
+        """
+        copy = _detached_copy(panel)
+        copy.id = self._new_id(ID_PREFIX_PANEL)
+        copy.z = max((p.z for p in page.panels), default=-1) + 1
+        copy.shape = copy.shape.translated(dx, dy)
+        copy.locked = False
+        for child in copy.children:
+            child.id = self._new_id(ID_PREFIX_IMAGE)
+            child.rect = child.rect.translated(dx, dy)
+        page.panels.append(copy)
+        return copy
+
+    def _duplicate_image(
+        self, page: Page, image: ImageObject, dx: float, dy: float
+    ) -> ImageObject:
+        """画像を写す。**同じコマの中に増える。**"""
+        panel = page.panel_of_image(image.id)
+        # `page.find()` が画像として返した以上、必ずどれかのコマに属している
+        assert panel is not None
+        copy = _detached_copy(image)
+        copy.id = self._new_id(ID_PREFIX_IMAGE)
+        copy.z = max((c.z for c in panel.children), default=-1) + 1
+        copy.rect = copy.rect.translated(dx, dy)
+        panel.children.append(copy)
+        return copy
+
+    def _duplicate_floating(
+        self, page: Page, obj: FloatingObject, dx: float, dy: float
+    ) -> FloatingObject:
+        """ページ直下のものを1つ写す。**同じ段の手前に置く**（`add_*` と同じ）。"""
+        copy = _detached_copy(obj)
+        copy.id = self._new_id(_ID_PREFIXES[type(obj)])
+        copy.z = self._next_floating_z(page)
+        copy.rect = copy.rect.translated(dx, dy)
+        page.floating.append(copy)
+        return copy
 
     # -- ページ操作 --------------------------------------------------------
 

@@ -149,6 +149,30 @@ TOOL_LABELS = {
 DEFAULT_TEXT_SIZE = (230.0, 422.0)
 
 
+def object_label(obj: SceneObject | None) -> str:
+    """選んでいるものの呼び名。何も無ければ空文字。
+
+    **削除（→ 6.12）と複製（→ 6.15）で同じものを使う。** 書き分けると、
+    「コマを複製」と出ているのに「画像の複製」で履歴に積まれる、といった
+    食い違いを作れてしまう（削除で「項目名と実際に消えるものを1か所で
+    決める」ことにしたのと同じ線引き）。
+
+    マークだけは種類ごとに呼び名が違うので `STICKER_KIND_LABELS` を引く。
+    **表に無い `kind` も来る**ので既定を添える（→ 5章）。
+    """
+    if isinstance(obj, ImageObject):
+        return "画像"
+    if isinstance(obj, TextObject):
+        return "セリフ"
+    if isinstance(obj, StickerObject):
+        return STICKER_KIND_LABELS.get(obj.kind, "マーク")
+    if isinstance(obj, BalloonObject):
+        return "フキダシ"
+    if isinstance(obj, Panel):
+        return "コマ"
+    return ""
+
+
 class EditorState(QObject):
     """開いている作品と、画面上の選択・道具。"""
 
@@ -349,6 +373,40 @@ class EditorState(QObject):
         self.selection_changed.emit()
         self.page_changed.emit()
         self.message.emit(message)
+
+    # -- 複製（要件定義 6.15） -----------------------------------------------
+
+    def duplicate_selected(self) -> SceneObject | None:
+        """選んでいるものを1つ写して、右下へずらして置く。写しを返す。
+
+        **ずらす量は隙間1つ分**（`LayoutSettings.gutter`）。真上に重ねると、
+        写せたのかどうかが見て分からない。
+
+        **写したほうを選択状態にする**（他の「追加」と同じ）。続けて押すと
+        階段状に増えるので、2回押して同じ場所に2枚重なることがない。
+
+        写せなかったときは理由を状態表示に出して None を返す。**斜めに割った
+        コマは押せる状態のまま断る**（→ 6.15）。グレーにすると理由を伝える
+        先が無くなり、なぜ写せないのか分からないままになる。
+        """
+        obj = self.selected_object
+        if obj is None:
+            self.message.emit("複製するものを選んでください")
+            return None
+        if isinstance(obj, Panel) and self.page.slant_pair_of(obj.id) is not None:
+            self.message.emit("斜めに割ったコマは複製できません")
+            return None
+
+        object_id = obj.id
+        label = object_label(obj)
+        offset = self.settings.gutter
+        with self.edit(f"{label}の複製") as project:
+            copy = project.duplicate(
+                project.pages[self._page_index], object_id, offset, offset
+            )
+        self.select(copy.id)
+        self.message.emit(f"{label}を複製しました")
+        return copy
 
     # -- ページ ------------------------------------------------------------
 

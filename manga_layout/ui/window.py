@@ -63,6 +63,7 @@ from .state import (
     TOOL_STICKER_EXCLAIM_QUESTION,
     TOOL_TEXT,
     EditorState,
+    object_label,
 )
 
 APP_TITLE = "漫画レイアウタ"
@@ -509,6 +510,15 @@ class MainWindow(QMainWindow):
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
         edit_menu.addSeparator()
+        # **キーは割り当てない**（→ 要件定義 7章）。`Ctrl+D` は他のソフトで
+        # 「選択を解除」に当たっていることがあり、意味が食い違う
+        self.duplicate_action = self._act(
+            "複製",
+            self.state.duplicate_selected,
+            None,
+            "選んでいるものを写して、右下へ少しずらして置く",
+        )
+        edit_menu.addAction(self.duplicate_action)
         self.delete_action = self._act("削除", self.delete_selected, "Delete")
         edit_menu.addAction(self.delete_action)
         self.full_page_action = self._act(
@@ -798,6 +808,9 @@ class MainWindow(QMainWindow):
             return menu
 
         menu.addSeparator()
+        # 複製と削除は「選んでいるものへの操作」で、どの品書きにも要る。
+        # 分岐の外に置いて、種類を足したときに片方だけ抜けないようにする
+        menu.addAction(self.duplicate_action)
         menu.addAction(self.delete_action)
         return menu
 
@@ -1032,6 +1045,12 @@ class MainWindow(QMainWindow):
         target = self.delete_target()
         self.delete_action.setEnabled(target is not None)
         self.delete_action.setText("削除" if target is None else f"{target[0]}を削除")
+        # 複製も対象を名前に出す（→ 6.15）。**斜めに割ったコマでも押せるまま**に
+        # する。グレーにすると「写せない」ことは伝わっても理由が伝わらず、
+        # 出所が斜めであることに気づけない（断りは `duplicate_selected` が出す）
+        name = object_label(self.state.selected_object)
+        self.duplicate_action.setEnabled(bool(name))
+        self.duplicate_action.setText(f"{name}を複製" if name else "複製")
         image = self.state.selected_image
         self.fit_action.setEnabled(image is not None)
         self.reset_rotation_action.setEnabled(image is not None and image.rotation != 0.0)
@@ -1123,7 +1142,7 @@ class MainWindow(QMainWindow):
             w, h = sticker.src_px
             tied = "コマに紐づけ" if sticker.attached_panel_id else "紐づけなし"
             return (
-                f"{self._sticker_label(sticker)}を選択中: "
+                f"{object_label(sticker)}を選択中: "
                 f"{r.w:.0f} × {r.h:.0f} px（元 {w}×{h} px）/ {tied}"
             )
 
@@ -1178,7 +1197,7 @@ class MainWindow(QMainWindow):
         if self.state.selected_text is not None:
             return "セリフ", self.delete_text
         if self.state.selected_sticker is not None:
-            return self._sticker_label(self.state.selected_sticker), self.delete_sticker
+            return object_label(self.state.selected_sticker), self.delete_sticker
         if self.state.selected_balloon is not None:
             return "フキダシ", self.delete_balloon
         if self.state.selected_panel is not None:
@@ -1207,21 +1226,12 @@ class MainWindow(QMainWindow):
         self.state.select(None)
         self.state.message.emit("フキダシを削除しました")
 
-    @staticmethod
-    def _sticker_label(sticker) -> str:
-        """マークの呼び名。**表に無い `kind` も来る**（→ 5章）。
-
-        素材が増えたあとの作品を古いアプリで開くと、知らない値が入る。
-        そのときは種類を言わず「マーク」とだけ呼ぶ。
-        """
-        return STICKER_KIND_LABELS.get(sticker.kind, "マーク")
-
     def delete_sticker(self) -> None:
         """マークを消す。紐づいていたコマはそのまま残る。"""
         sticker = self.state.selected_sticker
         if sticker is None:
             return
-        label = self._sticker_label(sticker)
+        label = object_label(sticker)
         sticker_id = sticker.id
         with self.state.edit(f"{label}の削除") as project:
             project.pages[self.state.page_index].remove_floating(sticker_id)
