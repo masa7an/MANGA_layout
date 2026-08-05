@@ -28,16 +28,17 @@ from ..model import (
     ImageObject,
     Panel,
 )
-from ..recent_project import load_recent_project
 from ..settings import ensure_settings_file, load_settings, settings_path
-from ..storage import PROJECT_FILENAME, prune_unused_assets
+from ..storage import prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
-from .export import EXPORT_DIRNAME
 from .menus import (
     BALLOON_STYLE_MENU_LABEL,
     TAIL_TURN_LABELS,
     BalloonMenu,
     EditMenu,
+    FileMenu,
+    ImageMenu,
+    PageMenu,
     PanelMenu,
     StickerMenu,
     TextMenu,
@@ -192,16 +193,34 @@ class MainWindow(QMainWindow):
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
-        self._build_menus()
+        self._build_tool_actions()  # 各メニューが道具の項目を参照するので先に作る
+
+        # メニューバー。**生成順＝画面での並び順。** 各部品は生成時に自分の
+        # QAction を作り切るので、作り忘れ・順序の入れ替えはここで露見する
+        self.file_menu = FileMenu(self)
+        self.edit_menu = EditMenu(self)
+        self.panel_menu = PanelMenu(self)
+        # 平らな別名。右クリックとテストが「集中線」を直に指すときに使う
+        self.focus_menu = self.panel_menu.focus
+        self.image_menu = ImageMenu(self)
+        self.balloon_menu = BalloonMenu(self)
+        self.sticker_menu = StickerMenu(self)
+        self.text_menu = TextMenu(self)
+        self._build_tool_menu()
+        self.page_menu = PageMenu(self)
+        self._build_view_menu()
+
         # `refresh()` を配って回る部品の一覧（→ `_refresh`）。
         # 部品を足したらここにも足す。足し忘れると、その部品のメニューが
         # 選択に追従しなくなる
         self._menus = [
             self.edit_menu,
             self.panel_menu,  # 集中線（focus_menu）のぶんも面倒を見る
+            self.image_menu,
             self.balloon_menu,
             self.sticker_menu,
             self.text_menu,
+            self.page_menu,
         ]
         self._build_toolbar()
         self._build_status_bar()
@@ -214,7 +233,7 @@ class MainWindow(QMainWindow):
         self.view.context_menu_requested.connect(self._show_context_menu)
 
         # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
-        self._sync_recent_project_action()
+        self.file_menu.sync_recent_project()
 
         self._refresh()
 
@@ -316,115 +335,12 @@ class MainWindow(QMainWindow):
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
 
-    def _build_menus(self) -> None:
-        self._build_tool_actions()
-
-        file_menu = self.menuBar().addMenu("ファイル(&F)")
-        file_menu.addAction(self._act("新規作成", self.files.new_project, "Ctrl+N"))
-        file_menu.addAction(
-            self._act(
-                "開く...",
-                self.files.open_project,
-                "Ctrl+O",
-                f"作品フォルダの中の {PROJECT_FILENAME} を選ぶ",
-            )
-        )
-        self.recent_project_action = self._act(
-            "前回のファイルを開く",
-            self.files.open_recent_project,
-            None,
-            "前回開いた・保存した作品を、選ぶ手間なしで開く",
-        )
-        file_menu.addAction(self.recent_project_action)
-        file_menu.addSeparator()
-        file_menu.addAction(self._act("保存", self.files.save_project, "Ctrl+S"))
-        file_menu.addAction(
-            self._act("名前を付けて保存...", self.files.save_project_as, "Ctrl+Shift+S")
-        )
-        file_menu.addSeparator()
-        file_menu.addAction(
-            self._act(
-                "PNG で書き出し...",
-                self.files.export_png,
-                "Ctrl+E",
-                f"作品フォルダの {EXPORT_DIRNAME}/ に書き出す",
-            )
-        )
-        file_menu.addSeparator()
-        file_menu.addAction(self._act("終了", self.close, "Ctrl+Q"))
-
-        self.edit_menu = EditMenu(self)
-        self.panel_menu = PanelMenu(self)
-        # 平らな別名。右クリックとテストが「集中線」を直に指すときに使う
-        self.focus_menu = self.panel_menu.focus
-
-        image_menu = self.menuBar().addMenu("画像(&I)")
-        self.paste_action = self._act(
-            "貼り付け", self.paste_image, "Ctrl+V", "クリップボードの画像を置く"
-        )
-        self.open_image_action = self._act("ファイルから読み込み...", self.open_image_file)
-        image_menu.addAction(self.paste_action)
-        image_menu.addAction(self.open_image_action)
-        image_menu.addSeparator()
-        self.fit_action = self._act(
-            "コマにフィット", self.fit_image, "Ctrl+Shift+F", "選択中の画像でコマを埋める"
-        )
-        image_menu.addAction(self.fit_action)
-        # 回すのはつまみ（→ 6.3）。ここに出すのは戻す側だけで、キーは足さない。
-        # 傾けるのは絵を見ながら合わせる操作なので、数値やキーでは代えられない
-        self.reset_rotation_action = self._act(
-            "回転をリセット",
-            self.reset_image_rotation,
-            None,
-            "選択中の画像の傾きを 0 に戻す",
-        )
-        image_menu.addAction(self.reset_rotation_action)
-        image_menu.addSeparator()
-        image_menu.addAction(self._act("未使用ファイルを整理...", self.prune_assets))
-
-        self.balloon_menu = BalloonMenu(self)
-        self.sticker_menu = StickerMenu(self)
-        self.text_menu = TextMenu(self)
-
+    def _build_tool_menu(self) -> None:
         tool_menu = self.menuBar().addMenu("道具(&T)")
         for action in self._tool_actions.values():
             tool_menu.addAction(action)
 
-        page_menu = self.menuBar().addMenu("ページ(&P)")
-        # 「追加」は必ず末尾、「挿入」は表示中のページの前。行き先の決まった
-        # ほうを別の項目にしてある（要件定義 6.1）
-        page_menu.addAction(
-            self._act("ページを追加", self.add_page, "Ctrl+Shift+N", "末尾に1枚足す")
-        )
-        page_menu.addAction(
-            self._act(
-                "ページを挿入",
-                self.insert_page,
-                "Ctrl+Shift+I",
-                "表示中のページの前に1枚差し込む",
-            )
-        )
-        self.delete_page_action = self._act("ページを削除...", self.delete_page)
-        page_menu.addAction(self.delete_page_action)
-        page_menu.addSeparator()
-
-        self.move_page_up_action = self._act(
-            "ページを前へ移動", lambda: self.move_page_by(-1), "Ctrl+Shift+PgUp"
-        )
-        self.move_page_down_action = self._act(
-            "ページを後ろへ移動", lambda: self.move_page_by(1), "Ctrl+Shift+PgDown"
-        )
-        page_menu.addAction(self.move_page_up_action)
-        page_menu.addAction(self.move_page_down_action)
-        page_menu.addSeparator()
-
-        page_menu.addAction(
-            self._act("ページサイズ...", self.change_page_size, None, "A4 相当 / B5 相当 / px 指定")
-        )
-        page_menu.addSeparator()
-        page_menu.addAction(self._act("前のページ", self.prev_page, "PgUp"))
-        page_menu.addAction(self._act("次のページ", self.next_page, "PgDown"))
-
+    def _build_view_menu(self) -> None:
         view_menu = self.menuBar().addMenu("表示(&V)")
         self.pages_toggle_action = self.pages_dock.toggleViewAction()
         self.pages_toggle_action.setText(PAGES_MENU_LABEL)
@@ -518,11 +434,11 @@ class MainWindow(QMainWindow):
             self._add_place_here(menu, x, y, ("sticker", "text"))
 
         elif state.selected_image is not None:
-            menu.addAction(self.fit_action)
+            menu.addAction(self.image_menu.fit_action)
             # 傾いていないときは出さない。押しても何も起きない項目が
             # 並ぶと、メニューを読む手間だけが増える（→ 6.12）
             if state.selected_image.rotation != 0.0:
-                menu.addAction(self.reset_rotation_action)
+                menu.addAction(self.image_menu.reset_rotation_action)
             menu.addSeparator()
             # 踏み込んで画像を選んだ状態でも、差し替えと読み込みは要る。
             # ここに無いと、いったん Esc でコマへ戻る手数が挟まる
@@ -534,7 +450,7 @@ class MainWindow(QMainWindow):
                 ),
                 tip=REPLACE_IMAGE_TIP,
             )
-            menu.addAction(self.open_image_action)
+            menu.addAction(self.image_menu.open_image_action)
 
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
@@ -548,8 +464,8 @@ class MainWindow(QMainWindow):
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()
-            menu.addAction(self.paste_action)
-            menu.addAction(self.open_image_action)
+            menu.addAction(self.image_menu.paste_action)
+            menu.addAction(self.image_menu.open_image_action)
             self._add_image_here(menu, state.selected_panel, x, y)
 
         else:
@@ -759,17 +675,8 @@ class MainWindow(QMainWindow):
 
         self.hint_label.setText(self._hint())
 
-        # 「ページ [n]/総数」の見出しは PageJumpBar が自分で追いかける
-        index, count = self.state.page_index, self.state.page_count
-        self.delete_page_action.setEnabled(count > 1)
-        self.move_page_up_action.setEnabled(index > 0)
-        self.move_page_down_action.setEnabled(index < count - 1)
-
-        image = self.state.selected_image
-        self.fit_action.setEnabled(image is not None)
-        self.reset_rotation_action.setEnabled(image is not None and image.rotation != 0.0)
-
-        # ここから下の分は、部品が自分のぶんを面倒見る（→ `menus.py`）
+        # メニューの有効・無効と文言は、各部品が自分のぶんを面倒見る
+        # （→ `menus.py`。どの部品が回るかは `_menus` で決まる）
         for menu in self._menus:
             menu.refresh()
 
@@ -1469,24 +1376,6 @@ class MainWindow(QMainWindow):
 
     def next_page(self) -> None:
         self.state.set_page_index(self.state.page_index + 1)
-
-    # -- ファイル ----------------------------------------------------------
-    # 実処理は `ProjectIO`（→ `project_io.py`）。ここに残るのは
-    # メニュー項目の表示合わせだけ
-
-    def _sync_recent_project_action(self, path: pathlib.Path | None = None) -> None:
-        """『前回のファイルを開く』の表示を、わかっている行き先に合わせる。
-
-        `path` を渡さなければ記録から読み直す（起動直後の初期表示用）。
-        """
-        if path is None:
-            path = load_recent_project()
-        if path is None:
-            self.recent_project_action.setText("前回のファイルを開く")
-            self.recent_project_action.setEnabled(False)
-            return
-        self.recent_project_action.setText(f"前回のファイルを開く（{path.name}）")
-        self.recent_project_action.setEnabled(True)
 
     # -- 終了時 ------------------------------------------------------------
 

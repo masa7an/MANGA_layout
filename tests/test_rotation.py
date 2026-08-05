@@ -457,10 +457,10 @@ class TestFitAndReset:
 
     def test_傾いているときだけメニューに出す(self, window_with_image):
         window_with_image._refresh()
-        assert not window_with_image.reset_rotation_action.isEnabled()
+        assert not window_with_image.image_menu.reset_rotation_action.isEnabled()
         rotate_image(window_with_image, 5.0)
         window_with_image._refresh()
-        assert window_with_image.reset_rotation_action.isEnabled()
+        assert window_with_image.image_menu.reset_rotation_action.isEnabled()
 
 
 class TestPersistence:

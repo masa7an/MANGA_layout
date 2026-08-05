@@ -387,7 +387,7 @@ class Test前回のファイルを開く:
     """
 
     def test_起動直後は無効(self, window):
-        assert not window.recent_project_action.isEnabled()
+        assert not window.file_menu.recent_project_action.isEnabled()
 
     def test_保存すると記録される(self, window, tmp_path, monkeypatch):
         _accept(monkeypatch, tmp_path / "私のネーム")
@@ -396,8 +396,8 @@ class Test前回のファイルを開く:
         window.files.save_project_as()
 
         assert load_recent_project() == tmp_path / "私のネーム"
-        assert window.recent_project_action.isEnabled()
-        assert "私のネーム" in window.recent_project_action.text()
+        assert window.file_menu.recent_project_action.isEnabled()
+        assert "私のネーム" in window.file_menu.recent_project_action.text()
 
     def test_開くと記録される(self, window, tmp_path, monkeypatch):
         other = EditorState()
@@ -407,7 +407,7 @@ class Test前回のファイルを開く:
         window.files.open_project()
 
         assert load_recent_project() == tmp_path / "先に作った作品"
-        assert window.recent_project_action.isEnabled()
+        assert window.file_menu.recent_project_action.isEnabled()
 
     def test_選ぶ手間なしで開ける(self, window, tmp_path, monkeypatch):
         other = EditorState()

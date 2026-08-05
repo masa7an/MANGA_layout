@@ -413,7 +413,7 @@ class TestSharedActions:
         コマを選んでいるだけの状態では出さない。
         """
         menu = right_click(window_with_panel, 400.0, 300.0)
-        assert window_with_panel.fit_action not in menu.actions()
+        assert window_with_panel.image_menu.fit_action not in menu.actions()
 
     def test_メニューバーを辿られても組める(self, window_with_panel):
         """`QAction.menu()` を呼ばれた後でも右クリックのメニューが出ること。

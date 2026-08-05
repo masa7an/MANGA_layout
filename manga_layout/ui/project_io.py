@@ -177,7 +177,7 @@ class ProjectIO:
     def _remember_recent_project(self, path: pathlib.Path) -> None:
         """『前回のファイルを開く』の行き先を更新する。"""
         save_recent_project(path)
-        self._window._sync_recent_project_action(path)
+        self._window.file_menu.sync_recent_project(path)
 
     def save_project(self) -> bool:
         if self._state.project_dir is None:

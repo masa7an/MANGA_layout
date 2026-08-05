@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
@@ -24,6 +25,9 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QMenu
 
 from ..model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE
+from ..recent_project import load_recent_project
+from ..storage import PROJECT_FILENAME
+from .export import EXPORT_DIRNAME
 from .state import (
     BALLOON_STYLE_LABELS,
     BALLOON_TOOLS,
@@ -99,6 +103,61 @@ def items_to_copy(
             continue
         items.append(None if action.isSeparator() else action)
     return items
+
+
+class FileMenu:
+    """ファイルのメニュー。実処理は `ProjectIO`（→ `project_io.py`）。"""
+
+    def __init__(self, window: MainWindow) -> None:
+        menu = window.menuBar().addMenu("ファイル(&F)")
+        menu.addAction(window._act("新規作成", window.files.new_project, "Ctrl+N"))
+        menu.addAction(
+            window._act(
+                "開く...",
+                window.files.open_project,
+                "Ctrl+O",
+                f"作品フォルダの中の {PROJECT_FILENAME} を選ぶ",
+            )
+        )
+        self.recent_project_action = window._act(
+            "前回のファイルを開く",
+            window.files.open_recent_project,
+            None,
+            "前回開いた・保存した作品を、選ぶ手間なしで開く",
+        )
+        menu.addAction(self.recent_project_action)
+        menu.addSeparator()
+        menu.addAction(window._act("保存", window.files.save_project, "Ctrl+S"))
+        menu.addAction(
+            window._act(
+                "名前を付けて保存...", window.files.save_project_as, "Ctrl+Shift+S"
+            )
+        )
+        menu.addSeparator()
+        menu.addAction(
+            window._act(
+                "PNG で書き出し...",
+                window.files.export_png,
+                "Ctrl+E",
+                f"作品フォルダの {EXPORT_DIRNAME}/ に書き出す",
+            )
+        )
+        menu.addSeparator()
+        menu.addAction(window._act("終了", window.close, "Ctrl+Q"))
+
+    def sync_recent_project(self, path: pathlib.Path | None = None) -> None:
+        """『前回のファイルを開く』の表示を、わかっている行き先に合わせる。
+
+        `path` を渡さなければ記録から読み直す（起動直後の初期表示用）。
+        """
+        if path is None:
+            path = load_recent_project()
+        if path is None:
+            self.recent_project_action.setText("前回のファイルを開く")
+            self.recent_project_action.setEnabled(False)
+            return
+        self.recent_project_action.setText(f"前回のファイルを開く（{path.name}）")
+        self.recent_project_action.setEnabled(True)
 
 
 class EditMenu:
@@ -285,6 +344,95 @@ class FocusMenu:
             action.setEnabled(focus is not None)
         if focus is not None:
             self.color_action.setText("黒に戻す" if focus.white else "白にする")
+
+
+class ImageMenu:
+    """画像のメニュー。貼り付け・読み込み・フィット・回転リセット・整理。"""
+
+    def __init__(self, window: MainWindow) -> None:
+        self._state = window.state
+        menu = window.menuBar().addMenu("画像(&I)")
+        self.paste_action = window._act(
+            "貼り付け", window.paste_image, "Ctrl+V", "クリップボードの画像を置く"
+        )
+        self.open_image_action = window._act(
+            "ファイルから読み込み...", window.open_image_file
+        )
+        menu.addAction(self.paste_action)
+        menu.addAction(self.open_image_action)
+        menu.addSeparator()
+        self.fit_action = window._act(
+            "コマにフィット", window.fit_image, "Ctrl+Shift+F", "選択中の画像でコマを埋める"
+        )
+        menu.addAction(self.fit_action)
+        # 回すのはつまみ（→ 6.3）。ここに出すのは戻す側だけで、キーは足さない。
+        # 傾けるのは絵を見ながら合わせる操作なので、数値やキーでは代えられない
+        self.reset_rotation_action = window._act(
+            "回転をリセット",
+            window.reset_image_rotation,
+            None,
+            "選択中の画像の傾きを 0 に戻す",
+        )
+        menu.addAction(self.reset_rotation_action)
+        menu.addSeparator()
+        menu.addAction(window._act("未使用ファイルを整理...", window.prune_assets))
+
+    def refresh(self) -> None:
+        image = self._state.selected_image
+        self.fit_action.setEnabled(image is not None)
+        self.reset_rotation_action.setEnabled(
+            image is not None and image.rotation != 0.0
+        )
+
+
+class PageMenu:
+    """ページのメニュー。追加・挿入・削除・並べ替え・サイズ・ページ送り。"""
+
+    def __init__(self, window: MainWindow) -> None:
+        self._state = window.state
+        menu = window.menuBar().addMenu("ページ(&P)")
+        # 「追加」は必ず末尾、「挿入」は表示中のページの前。行き先の決まった
+        # ほうを別の項目にしてある（要件定義 6.1）
+        menu.addAction(
+            window._act("ページを追加", window.add_page, "Ctrl+Shift+N", "末尾に1枚足す")
+        )
+        menu.addAction(
+            window._act(
+                "ページを挿入",
+                window.insert_page,
+                "Ctrl+Shift+I",
+                "表示中のページの前に1枚差し込む",
+            )
+        )
+        self.delete_page_action = window._act("ページを削除...", window.delete_page)
+        menu.addAction(self.delete_page_action)
+        menu.addSeparator()
+
+        self.move_up_action = window._act(
+            "ページを前へ移動", lambda: window.move_page_by(-1), "Ctrl+Shift+PgUp"
+        )
+        self.move_down_action = window._act(
+            "ページを後ろへ移動", lambda: window.move_page_by(1), "Ctrl+Shift+PgDown"
+        )
+        menu.addAction(self.move_up_action)
+        menu.addAction(self.move_down_action)
+        menu.addSeparator()
+
+        menu.addAction(
+            window._act(
+                "ページサイズ...", window.change_page_size, None, "A4 相当 / B5 相当 / px 指定"
+            )
+        )
+        menu.addSeparator()
+        menu.addAction(window._act("前のページ", window.prev_page, "PgUp"))
+        menu.addAction(window._act("次のページ", window.next_page, "PgDown"))
+
+    def refresh(self) -> None:
+        # 「ページ [n]/総数」の見出しは PageJumpBar が自分で追いかける
+        index, count = self._state.page_index, self._state.page_count
+        self.delete_page_action.setEnabled(count > 1)
+        self.move_up_action.setEnabled(index > 0)
+        self.move_down_action.setEnabled(index < count - 1)
 
 
 class BalloonMenu:

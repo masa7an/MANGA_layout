@@ -316,14 +316,14 @@ class TestMovePage:
         window.move_page_by(1)
 
         assert page_ids(window)[1] == showing
-        assert window.move_page_up_action.isEnabled()
+        assert window.page_menu.move_up_action.isEnabled()
 
     def test_端では項目が選べない(self, three_pages):
         window = three_pages
         window.state.set_page_index(0)
-        assert not window.move_page_up_action.isEnabled()
+        assert not window.page_menu.move_up_action.isEnabled()
         window.state.set_page_index(2)
-        assert not window.move_page_down_action.isEnabled()
+        assert not window.page_menu.move_down_action.isEnabled()
 
 
 class TestPageSize:
