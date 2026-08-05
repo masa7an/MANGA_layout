@@ -20,10 +20,10 @@ from PySide6.QtWidgets import QMenu
 from manga_layout import Rect
 from manga_layout.model import BalloonObject, Panel, TextObject
 from manga_layout.ui import EditorState, MainWindow
+from manga_layout.ui.menus import BALLOON_STYLE_MENU_LABEL
 from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
 from manga_layout.ui.window import (
     BALLOON_PLACE_HERE_NAME,
-    BALLOON_STYLE_MENU_LABEL,
     PLACE_HERE_PREFIX,
     REPLACE_IMAGE_LABEL,
     SPLIT_HERE_PREFIX,

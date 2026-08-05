@@ -28,6 +28,7 @@ import pytest
 from manga_layout import Rect
 from manga_layout.model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE, BalloonObject
 from manga_layout.ui import EditorState, MainWindow
+from manga_layout.ui.menus import BALLOON_STYLE_MENU_LABEL, TAIL_SHAPE_LABELS
 from manga_layout.ui.state import (
     BALLOON_STYLE_LABELS,
     BALLOON_TOOLS,
@@ -38,7 +39,6 @@ from manga_layout.ui.state import (
     TOOL_BALLOON_WAVY,
     TOOL_SELECT,
 )
-from manga_layout.ui.window import BALLOON_STYLE_MENU_LABEL, TAIL_SHAPE_LABELS
 
 # 座標は px（要件定義 3章）。既定の吹き出し 236×154 が中に収まる大きさ
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
@@ -162,7 +162,7 @@ def balloon_menu_items(window):
     持ち帰ってよいのは、ウィンドウが親の QAction だけ
     （→ `menus.items_to_copy`）。
     """
-    marker = window.tail_action
+    marker = window.balloon_menu.tail_action
     for action in window.menuBar().actions():
         menu = action.menu()
         if menu is not None and marker in menu.actions():
@@ -175,13 +175,13 @@ def balloon_menu_items(window):
 
 
 def balloon_style_items(window):
-    """畳んだ「種類を変える」の中身（→ `MainWindow._build_balloon_style_menu`）。
+    """畳んだ「種類を変える」の中身（→ `BalloonMenu._build_style_menu`）。
 
     **メニューを辿らず、控えてある QAction を見る。** 畳んだ QMenu を取るには
     `QAction.menu()` を呼ぶことになり、アプリ側が持っている項目の実体まで
     巻き込んで消してしまう（→ `balloon_menu_items` の但し書き）。
     """
-    return [a for a in window.balloon_actions if a.text().endswith("にする")]
+    return [a for a in window.balloon_menu.actions if a.text().endswith("にする")]
 
 
 class TestBalloonMenu:
@@ -367,9 +367,9 @@ class TestAdd:
     def test_項目名は押した先の形を出す(self, window_with_balloon):
         """今の形を書くと、押した結果が分からない（「入れる／消す」と同じ）。"""
         window = window_with_balloon
-        assert window.tail_shape_action.text() == TAIL_SHAPE_LABELS[TAIL_SHAPE_BUBBLES]
+        assert window.balloon_menu.tail_shape_action.text() == TAIL_SHAPE_LABELS[TAIL_SHAPE_BUBBLES]
         window.toggle_tail_shape()
-        assert window.tail_shape_action.text() == TAIL_SHAPE_LABELS[TAIL_SHAPE_TRIANGLE]
+        assert window.balloon_menu.tail_shape_action.text() == TAIL_SHAPE_LABELS[TAIL_SHAPE_TRIANGLE]
 
     def test_四角にしてもしっぽは黙って消えない(self, window_with_balloon):
         """**消すのは置いたときだけ。** 種類を変える操作で消すと、

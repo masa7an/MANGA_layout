@@ -23,10 +23,34 @@ from typing import TYPE_CHECKING
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
-from .state import STICKER_TOOLS, TOOL_TEXT
+from ..model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE
+from .state import BALLOON_STYLE_LABELS, BALLOON_TOOLS, STICKER_TOOLS, TOOL_TEXT
 
 if TYPE_CHECKING:
     from .window import MainWindow
+
+
+# しっぽの向きを変える項目（→ `TAIL_DIRECTIONS`）。
+#
+# **右と左を分ける。** まとめて「横へ」にすると、どちら側になるかが
+# 先端の現在位置任せになる。左右に2人が向かい合うコマでは、指す相手を
+# 選べないと使えない（相談 2026-08-05）
+#
+# **メニューの文言と操作後の案内が同じ表を見る。** 書き分けると、
+# 改名したときに片方だけ古いまま残る（→ `BALLOON_STYLE_LABELS` と同じ線引き）
+TAIL_TURN_ITEMS = (("上", "up"), ("右", "right"), ("左", "left"), ("下", "down"))
+TAIL_TURN_LABELS = {direction: where for where, direction in TAIL_TURN_ITEMS}
+
+# 畳んだメニューの見出し。メニューバーと右クリックの2か所が同じ名前を出す
+# ので、書き分けないよう1箇所に持つ（→ `BalloonMenu`）
+BALLOON_STYLE_MENU_LABEL = "種類を変える"
+
+# しっぽの形を切り替える項目の文言。**「どちらに変わるか」を名前に出す。**
+# 今の形を書いても、押した結果が分からない（「入れる／消す」と同じ形 → 6.19）
+TAIL_SHAPE_LABELS = {
+    TAIL_SHAPE_TRIANGLE: "しっぽを三角にする",
+    TAIL_SHAPE_BUBBLES: "しっぽを丸くする",
+}
 
 
 def items_to_copy(
@@ -135,6 +159,123 @@ class FocusMenu:
             action.setEnabled(focus is not None)
         if focus is not None:
             self.color_action.setText("黒に戻す" if focus.white else "白にする")
+
+
+class BalloonMenu:
+    """フキダシのメニュー。
+
+    まず「作る」を置く。これが無いと、吹き出しを1つも選んでいない間は
+    メニュー全体がグレーになり、どこから作るのか分からなくなる。
+    """
+
+    def __init__(self, window: MainWindow) -> None:
+        self._state = window.state
+        menu = window.menuBar().addMenu("フキダシ(&B)")
+        for tool in BALLOON_TOOLS:
+            menu.addAction(window._tool_actions[tool])
+        menu.addSeparator()
+
+        # ここから下は選択中の吹き出しに対する操作
+        self.actions: list[QAction] = []
+        # 種類を変える項目は畳む（→ `_build_style_menu`）。
+        #
+        # **畳んだ側の見出しは `actions` に入れない。** この QAction は
+        # 下位の QMenu が持っているもので、誰かが `QAction.menu()` を呼んだ
+        # 時点で QMenu ごと引き取られ、実体が消える。持ってよいのは `_act` で
+        # 作った QAction（親がウィンドウ）だけ（→ `items_to_copy`）。
+        # 見出しを持たせたところ、メニューバーを辿ったあとの `_refresh` が
+        # `Internal C++ object already deleted` で落ちた（2026-08-05 に実測）。
+        #
+        # 見出しは使えるままで、中身だけがグレーになる。集中線と同じ形
+        style_menu_action = menu.addMenu(self._build_style_menu(window))
+        menu.addSeparator()
+
+        self.tail_action = window._act("しっぽを消す", window.toggle_tail)
+        menu.addAction(self.tail_action)
+        self.actions.append(self.tail_action)
+
+        # 「入れる／消す」と同じく1項目の文言を入れ替える。2つ並べると、
+        # 片方は必ず押しても何も変わらない状態で場所だけ取る
+        self.tail_shape_action = window._act(
+            TAIL_SHAPE_LABELS[TAIL_SHAPE_BUBBLES],
+            window.toggle_tail_shape,
+            tip="心の声・独り言に使う、円が並んだしっぽに変える",
+        )
+        menu.addAction(self.tail_shape_action)
+        self.actions.append(self.tail_shape_action)
+
+        # しっぽの向きを変える4つは右クリックには出さない。選択中の
+        # フキダシだけでも右クリックのメニューは項目数が多く（実測13、
+        # 外して10）、これ以上増やすと選びにくくなる（相談 2026-08-05）
+        tail_turn_actions: list[QAction] = []
+        for where, direction in TAIL_TURN_ITEMS:
+            action = window._act(
+                f"しっぽを{where}へ",
+                lambda _=False, d=direction: window.turn_tail(d),
+                tip=f"しっぽの向きを{where}に変えます。先端も一緒に回ります",
+            )
+            menu.addAction(action)
+            self.actions.append(action)
+            tail_turn_actions.append(action)
+
+        self.attach_action = window._act(
+            "コマへの紐づけを解除", window.toggle_attachment
+        )
+        menu.addAction(self.attach_action)
+        self.actions.append(self.attach_action)
+
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）。
+        # **畳んだ「種類を変える」は写せない**（QMenu を持ち帰れないため）。
+        # 右クリック側では同じ控え（`style_copy_items`）から
+        # 組み直す（→ `_context_menu`、集中線と同じ形）
+        self.copy_items = items_to_copy(
+            menu,
+            (*window._tool_actions.values(), style_menu_action, *tail_turn_actions),
+        )
+
+    def _build_style_menu(self, window: MainWindow) -> QMenu:
+        """種類を変えるメニュー（要件定義 10.1）。**フキダシのメニューに畳む。**
+
+        種類が増えるぶん「◯◯にする」がそのまま縦に伸びる。今の種類へ
+        変える項目は必ず1つ混ざっているので、**並べても常に1行は無駄に
+        場所を取る**。集中線と同じ扱いで畳んでおく（→ 6.12、6.16）。
+
+        一覧は `BALLOON_STYLE_LABELS` から作る。書き並べると、種類を
+        足したときにここへ足し忘れて相互に変えられなくなる。
+        """
+        menu = QMenu(BALLOON_STYLE_MENU_LABEL, window)
+        for style, name in BALLOON_STYLE_LABELS.items():
+            action = window._act(
+                f"{name}にする", lambda _=False, s=style: window.set_balloon_style(s)
+            )
+            menu.addAction(action)
+            self.actions.append(action)
+
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）
+        self.style_copy_items = items_to_copy(menu, window._tool_actions.values())
+        return menu
+
+    def refresh(self) -> None:
+        balloon = self._state.selected_balloon
+        for action in self.actions:
+            action.setEnabled(balloon is not None)
+        if balloon is not None:
+            self.tail_action.setText(
+                "しっぽを消す" if balloon.tail.enabled else "しっぽを出す"
+            )
+            # 押した先の形を名前に出す（→ `TAIL_SHAPE_LABELS`）
+            self.tail_shape_action.setText(
+                TAIL_SHAPE_LABELS[
+                    TAIL_SHAPE_TRIANGLE
+                    if balloon.tail.shape == TAIL_SHAPE_BUBBLES
+                    else TAIL_SHAPE_BUBBLES
+                ]
+            )
+            self.attach_action.setText(
+                "コマへの紐づけを解除"
+                if balloon.attached_panel_id
+                else "重なっているコマに紐づける"
+            )
 
 
 class TextMenu:
