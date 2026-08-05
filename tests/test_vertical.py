@@ -114,11 +114,23 @@ class Test整列:
         glyphs = layout("あい", Rect(0.0, 0.0, 100.0, 100.0), 10.0, "なにか")
         assert glyphs[0].cell.y == pytest.approx(40.0)
 
-    def test_列ごとに独立して寄せる(self):
-        # 横書きが行ごとに独立して寄るのと同じ
+    def test_center_は行頭を列間で揃える(self):
+        # 短い行だけ字下がりにならないよう、いちばん長い列を基準に
+        # ブロックとして中央へ置き、行頭の y は列によらず揃う
         glyphs = layout("あ\nいうえ", Rect(0.0, 0.0, 100.0, 100.0), 10.0, "center")
-        assert glyphs[0].cell.y == pytest.approx(45.0)  # 1 文字 → (100-10)/2
-        assert glyphs[1].cell.y == pytest.approx(35.0)  # 3 文字 → (100-30)/2
+        assert glyphs[0].cell.y == pytest.approx(35.0)  # (100 - 30) / 2
+        assert glyphs[1].cell.y == pytest.approx(35.0)
+
+    def test_left_は列間でも上寄せのまま揃う(self):
+        glyphs = layout("あ\nいうえ", Rect(0.0, 0.0, 100.0, 100.0), 10.0, "left")
+        assert glyphs[0].cell.y == pytest.approx(0.0)
+        assert glyphs[1].cell.y == pytest.approx(0.0)
+
+    def test_right_は列間でも下寄せのまま揃う(self):
+        glyphs = layout("あ\nいうえ", Rect(0.0, 0.0, 100.0, 100.0), 10.0, "right")
+        # 短い行・長い行それぞれの最後の字が枠の下端に接する
+        assert glyphs[0].cell.bottom == pytest.approx(100.0)
+        assert glyphs[-1].cell.bottom == pytest.approx(100.0)
 
 
 class Testはみ出し:

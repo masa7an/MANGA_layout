@@ -77,10 +77,18 @@ def layout(
     block_w = pitch * len(columns)
     first_center_x = rect.x + (rect.w + block_w) / 2.0 - pitch / 2.0
 
+    # center 揃えは行頭を列間で揃えたい（短い行だけ字下がりになるのは避ける）。
+    # そのため、いちばん長い列を基準にブロックとしての開始位置を1つだけ決め、
+    # 全列で共有する。left は常に rect.y、right は常に「自分の文字数ぶん
+    # 手前」が rect.y + rect.h に一致するので、これらは元から列間で行頭・
+    # 行末が揃っており、共有する基準を作る必要が無い。
+    max_len = max((len(line) for line in columns), default=0)
+    center_top = rect.y + (rect.h - size_px * max_len) / 2.0
+
     glyphs: list[Glyph] = []
     for index, line in enumerate(columns):
         center_x = first_center_x - pitch * index
-        top = _column_top(rect, len(line), size_px, align)
+        top = _column_top(rect, line, size_px, align, center_top)
         for order, ch in enumerate(line):
             glyphs.append(
                 Glyph(
@@ -96,14 +104,12 @@ def layout(
     return glyphs
 
 
-def _column_top(rect: Rect, count: int, size_px: float, align: str) -> float:
-    """1 列ぶんの、いちばん上の字の上端。
-
-    列ごとに独立して寄せる。横書きが行ごとに独立して寄るのと同じ。
-    """
-    used = size_px * count
+def _column_top(
+    rect: Rect, line: str, size_px: float, align: str, center_top: float
+) -> float:
+    """1 列ぶんの、いちばん上の字の上端。"""
     if align in ALIGN_TO_TOP:
         return rect.y
     if align in ALIGN_TO_BOTTOM:
-        return rect.y + rect.h - used
-    return rect.y + (rect.h - used) / 2.0
+        return rect.y + rect.h - size_px * len(line)
+    return center_top
