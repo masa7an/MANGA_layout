@@ -421,7 +421,8 @@ class ProjectIO:
         answer = QMessageBox.question(
             self._window,
             "保存しますか",
-            "保存していない変更があります。",
+            "プロジェクトの変更を保存しますか？\n"
+            "保存しない場合、コマの位置・画像の回転などのレイアウト情報は失われます。",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
             | QMessageBox.StandardButton.Cancel,
