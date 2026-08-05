@@ -188,6 +188,7 @@ class PageRenderer:
         guides: bool = True,
         shadow: bool = True,
         edge: bool = True,
+        rough: bool = True,
     ) -> None:
         """用紙とその中身を描く。
 
@@ -197,8 +198,14 @@ class PageRenderer:
         `edge` は用紙の輪郭線。画面とサムネイルでは、白い紙がどこまでかを
         示すのに要る。**書き出しでは切る**。用紙そのものが画像の範囲なので、
         輪郭線は絵の一部として四辺に残ってしまう。
+
+        `rough` はラフ（下敷き → 6.23）。**書き出しでは切る。** なぞる相手で
+        あって作品の中身ではない。`aids` に相乗りさせていないのは、一覧の
+        サムネイルには出したいため（`aids` は書き出しだけが False）。
         """
         self.draw_paper(painter, page, shadow=shadow, edge=edge)
+        if rough:
+            self.draw_rough(painter, page)
         if guides:
             self.draw_margin(painter, page)
         for panel in sorted(page.panels, key=lambda p: p.z):
@@ -218,6 +225,36 @@ class PageRenderer:
             painter.setPen(cosmetic_pen(PAGE_EDGE))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
+
+    def draw_rough(self, painter: QPainter, page: Page) -> None:
+        """ラフ（下敷き → 要件定義 6.23）。**用紙のすぐ上、一番奥に敷く。**
+
+        目安線よりも奥に描く。目安線はラフの上でも見えている必要がある
+        （どこまでが基本枠かは、ラフを敷いても変わらない）。
+
+        コマより奥なので、**コマを置いた部分は隠れる**。画面ではコマの
+        下地（薄い灰色）が不透明に塗られるためで、狙った挙動そのもの
+        （置き終わった場所からラフが消えていく）。
+
+        **青くするのと薄くするのは、切り替えの1手にまとめてある**（→ 6.23）。
+        `faded` を落としたときは元の写真がそのまま出る——細かいところを
+        確かめるための状態なので、そこで薄いままだと確かめられない。
+        濃さは設定から取る（→ `settings.rough_opacity`）。
+
+        **実体が無いときは何も描かない。** 画像の×印（`_draw_missing`）に
+        当たるものは出さない——ラフは作品の一部ではないので、欠けていても
+        書き出しには響かず、用紙の上に赤い×だけが残るほうが邪魔になる。
+        """
+        rough = page.rough
+        if rough is None:
+            return
+        preview = self.state.rough_preview(rough.asset, rough.faded)
+        if preview is None:
+            return
+        if rough.faded:
+            painter.setOpacity(self.state.rough_opacity)
+        painter.drawImage(qrect(rough.rect), preview.image)
+        painter.setOpacity(1.0)
 
     def draw_margin(self, painter: QPainter, page: Page) -> None:
         """基本枠（内側の目安線）。作品には出ない、置き場所の目印。"""

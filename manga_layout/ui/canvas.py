@@ -23,10 +23,13 @@ from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QCursor,
     QFont,
     QFontMetricsF,
     QPainter,
+    QPainterPath,
     QPen,
+    QPixmap,
     QTextCursor,
     QTextOption,
 )
@@ -108,6 +111,7 @@ from .state import (
     STICKER_KIND_LABELS,
     STICKER_TOOLS,
     TOOL_PANEL,
+    TOOL_ROUGH,
     TOOL_SELECT,
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
@@ -134,6 +138,10 @@ STICKER_ACCENT = QColor("#00897B")
 # 以前はここが漏れており、コマ（青）にフォールバックしていたため、
 # セリフを選んでいるのかコマを選んでいるのか枠の色では区別できなかった
 TEXT_ACCENT = QColor("#E53935")
+# ラフを調整しているときの枠とカーソルの色（→ 要件定義 6.23）。
+# 鉛筆の軸の色に寄せてある。**ラフの青（`images.ROUGH_BLUE`）は使わない。**
+# 下敷きそのものと同じ色で枠を描くと、絵の中の線と枠の区別が付かない
+ROUGH_ACCENT = QColor("#B08968")
 
 # 画面上での大きさ（画面ピクセル）。表示倍率で割ってシーンの px に直して使う
 HANDLE_PX = 9.0
@@ -274,6 +282,60 @@ _RESIZE_TARGETS = (
     *_MOVE_TARGETS,
     (lambda s: s.selected_balloon, BalloonObject, "フキダシ"),
 )
+
+
+# 鉛筆カーソルの大きさと、先端（掴む点）の位置（画面ピクセル）
+PENCIL_CURSOR_PX = 24
+PENCIL_TIP = (4, 20)
+
+# 作った鉛筆カーソルの控え。**1回だけ作って使い回す**（→ `pencil_cursor`）
+_pencil_cursor: QCursor | None = None
+
+
+def pencil_cursor() -> QCursor:
+    """鉛筆の形のカーソル。**ラフを調整している間だけ出す**（要件定義 6.23）。
+
+    Qt の標準カーソルに鉛筆は無いので、その場で描いて作る。道具箱の
+    選択状態は画面の上端にあり、絵を見ている間は目に入らない。手元の形が
+    変わっていれば、いま掴めるのがラフだけであることがその場で分かる。
+
+    **1回だけ作って使い回す。** カーソルはマウスを動かすたびに設定されるので、
+    毎回作ると動かしている間ずっと絵を描き続けることになる。
+
+    **`QApplication` ができてから呼ぶこと。** QPixmap は画面まわりの
+    初期化が済む前には作れない。
+    """
+    global _pencil_cursor
+    if _pencil_cursor is not None:
+        return _pencil_cursor
+
+    pixmap = QPixmap(PENCIL_CURSOR_PX, PENCIL_CURSOR_PX)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    # 先端を原点に置いてから、左下を向くように倒す。掴む点と絵の先端が
+    # 必ず一致する（別々に決めると、押した場所と効く場所がずれる）
+    painter.translate(float(PENCIL_TIP[0]), float(PENCIL_TIP[1]))
+    painter.rotate(45.0)
+
+    body = QPainterPath()
+    body.addPolygon(
+        polygon_of(((0.0, 0.0), (-3.0, -5.0), (-3.0, -19.0), (3.0, -19.0), (3.0, -5.0)))
+    )
+    body.closeSubpath()
+    # 白で縁取ってから塗る。用紙の白の上でも、暗い絵の上でも形が残る
+    painter.setPen(QPen(QColor("#FFFFFF"), 2.5))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawPath(body)
+    painter.setPen(QPen(QColor("#1A1A1A"), 1.0))
+    painter.setBrush(QBrush(ROUGH_ACCENT))
+    painter.drawPath(body)
+    # 芯と軸の境目。1本引くだけで鉛筆に見える
+    painter.drawLine(QLineF(-3.0, -5.0, 3.0, -5.0))
+    painter.end()
+
+    _pencil_cursor = QCursor(pixmap, PENCIL_TIP[0], PENCIL_TIP[1])
+    return _pencil_cursor
 
 
 class Drag:
@@ -599,6 +661,67 @@ class FocusDrag(Drag):
         view._apply_focus(panel_id, focus, self.kind)
 
 
+class RoughMoveDrag(Drag):
+    """ラフ（下敷き）を動かす（→ 要件定義 6.23）。**吸着しない。**
+
+    吸着はコマの縦横の線に揃えるための仕組み。下敷きを合わせる相手は
+    絵の中身であって、コマの辺ではない。効かせると、狙った場所の手前で
+    勝手に止まる。
+    """
+
+    def __init__(self, origin_rect: Rect, grab: tuple[float, float]):
+        self.origin_rect = origin_rect
+        self.grab = grab
+        self.preview_rect = origin_rect
+
+    @classmethod
+    def begin(cls, view: PageView, x: float, y: float) -> RoughMoveDrag:
+        return cls(view.state.page.rough.rect, (x, y))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        gx, gy = self.grab
+        self.preview_rect = self.origin_rect.translated(x - gx, y - gy)
+
+    def commit(self, view: PageView) -> None:
+        view._apply_rough_rect(self.origin_rect, self.preview_rect, "ラフの移動")
+
+
+class RoughResizeDrag(Drag):
+    """ラフの大きさを変える。**縦横比は常に保つ**（マークと同じ → 6.14）。
+
+    下敷きは写真なので、比を崩すと元の絵が歪む。歪んだ下敷きをなぞっても
+    使いものにならないので、Shift で外せる余地も作らない。写真に余白が
+    写り込んでいる場合は、拡大して外へ追い出せば済む。
+    """
+
+    def __init__(self, handle: str, origin_rect: Rect, aspect: float):
+        self.handle = handle
+        self.origin_rect = origin_rect
+        self.aspect = aspect
+        self.preview_rect = origin_rect
+
+    @classmethod
+    def begin(cls, view: PageView, handle: str) -> RoughResizeDrag:
+        rough = view.state.page.rough
+        return cls(handle, rough.rect, aspect_of(rough.src_px))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        minimum = view.state.settings.min_panel_size
+        if self.aspect > 0.0:
+            self.preview_rect = resize_rect_keep_aspect(
+                self.origin_rect, self.handle, x, y, minimum, self.aspect
+            )
+        else:
+            self.preview_rect = resize_rect(
+                self.origin_rect, self.handle, x, y, minimum
+            )
+
+    def commit(self, view: PageView) -> None:
+        view._apply_rough_rect(
+            self.origin_rect, self.preview_rect, "ラフの大きさ変更"
+        )
+
+
 class PageScene(QGraphicsScene):
     """1ページぶんの描画。部品を持たず、その場で描く。"""
 
@@ -705,6 +828,13 @@ class PageScene(QGraphicsScene):
         if scale <= 0:
             return
 
+        # ラフを調整している間は、ラフの枠だけを出す（→ 要件定義 6.23）。
+        # **選択枠もつまみも出さない。** 掴めないものにつまみが付いていると、
+        # 掴めるつもりで押して何も起きないことになる
+        if self.state.tool == TOOL_ROUGH:
+            self._draw_rough_frame(painter, scale)
+            return
+
         bounds = self.state.selected_bounds
         balloon = self.state.selected_balloon
         # 傾いた画像では、枠・つまみ・下書きの矩形をまとめて回す。
@@ -739,6 +869,21 @@ class PageScene(QGraphicsScene):
             (x1, y1), (x2, y2) = self.split_preview
             painter.setPen(cosmetic_pen(ACCENT, 1.5, Qt.PenStyle.DashLine))
             painter.drawLine(QLineF(x1, y1, x2, y2))
+
+    def _draw_rough_frame(self, painter: QPainter, scale: float) -> None:
+        """ラフの枠とつまみ（要件定義 6.23）。ラフが無いページでは何も出さない。
+
+        動かしている最中は下見の矩形を描く。モデルは離すまで触らないので、
+        ここを見ないと絵が付いてこない（他のドラッグと同じ流儀）。
+        """
+        rough = self.state.page.rough
+        if rough is None:
+            return
+        moving = self.preview_rect is not None
+        bounds = self.preview_rect if moving else rough.rect
+        self._draw_selection(painter, bounds, scale, ROUGH_ACCENT)
+        if moving:
+            self._draw_size_hint(painter, bounds)
 
     def _accent(self) -> QColor:
         """選択枠の色。何を選んでいるかで変える。"""
@@ -1351,6 +1496,14 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # ラフの調整（→ 要件定義 6.23）。**他の判定より先に、ここで打ち切る。**
+        # 一番下に敷いてあるものなので、コマや吹き出しの判定を通すと、
+        # ラフを掴むつもりが必ず上のものに取られる
+        if tool == TOOL_ROUGH:
+            self._begin_rough_drag(x, y)
+            event.accept()
+            return
+
         # 吹き出し・マーク・セリフはコマの上に置くものなので、下に何があっても
         # 作れる。コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で
         # 作れない
@@ -1460,6 +1613,44 @@ class PageView(QGraphicsView):
                 self.state.message.emit("斜めに割った2枚は、まとめて動きます")
         event.accept()
 
+    def _rough_handle_at(self, x: float, y: float) -> str | None:
+        """その位置にあるラフのつまみ。無ければ None。
+
+        傾きは持たないので角度は 0 で渡す。ラフに回転を入れていないのは、
+        傾いた写真は撮り直せるため（マークの `rotation` と同じ線引き → 6.14）。
+        """
+        rough = self.state.page.rough
+        if rough is None:
+            return None
+        return handle_at(rough.rect, x, y, HANDLE_PX / self.view_scale, 0.0)
+
+    def _begin_rough_drag(self, x: float, y: float) -> None:
+        """ラフ調整の道具で押された。つまみなら大きさ変更、内側なら移動。
+
+        **ラフ以外には何も起きない。** 道具を持ち替えている間だけラフを
+        掴める、という切り分けそのもの（→ 要件定義 6.23）。
+        """
+        rough = self.state.page.rough
+        if rough is None:
+            self.state.message.emit(
+                "このページにはラフがありません（ファイル → ラフ → 読み込む）"
+            )
+            return
+
+        handle = self._rough_handle_at(x, y)
+        if handle is not None:
+            self._drag = RoughResizeDrag.begin(self, handle)
+            return
+        if rough.rect.contains(x, y):
+            self._drag = RoughMoveDrag.begin(self, x, y)
+
+    def _apply_rough_rect(self, origin: Rect, final: Rect, label: str) -> None:
+        """離した時点で1手として積む。**動いていなければ積まない。**"""
+        if final == origin:
+            return
+        self.state.set_rough_rect(final, label)
+        self.state.message.emit(f"ラフ: {final.w:.0f} × {final.h:.0f} px")
+
     def _pick_at(self, x: float, y: float) -> str | None:
         """その位置で選ぶものの id。何も無ければ None。
 
@@ -1520,7 +1711,10 @@ class PageView(QGraphicsView):
 
         point = self.mapToScene(event.pos())
         x, y = point.x(), point.y()
-        self.state.select(self._pick_at(x, y))
+        # ラフの調整中は選び直さない（→ 6.23）。この道具では選択枠を出して
+        # いないので、裏で選ばれても見えないまま次の操作に効いてしまう
+        if self.state.tool != TOOL_ROUGH:
+            self.state.select(self._pick_at(x, y))
         self.viewport().update()
         self.context_menu_requested.emit(x, y, event.globalPos())
         event.accept()
@@ -1665,6 +1859,12 @@ class PageView(QGraphicsView):
         """
         if event.button() != Qt.MouseButton.LeftButton:
             super().mouseDoubleClickEvent(event)
+            return
+
+        # ラフの調整中は踏み込まない（→ 6.23）。掴めないものが選ばれるだけで、
+        # しかも枠を出していないので選ばれたことに気づけない
+        if self.state.tool == TOOL_ROUGH:
+            event.accept()
             return
 
         x, y = self._scene_px(event)
@@ -1843,6 +2043,19 @@ class PageView(QGraphicsView):
         return aspect_of(image.src_px)
 
     def _update_cursor(self, x: float, y: float) -> None:
+        # ラフの調整中は鉛筆（→ 要件定義 6.23）。**他のどの判定よりも先に見る。**
+        # この道具ではラフしか掴めないので、コマや吹き出しの上で移動の形が
+        # 出ると、掴めるつもりで押して何も起きないことになる。
+        # つまみの上だけは、伸びる向きを示す形のままにする
+        if self.state.tool == TOOL_ROUGH:
+            rough_handle = self._rough_handle_at(x, y)
+            self.viewport().setCursor(
+                _HANDLE_CURSORS[rough_handle]
+                if rough_handle is not None
+                else pencil_cursor()
+            )
+            return
+
         handle = self._handle_at_point(x, y)
         image = self.state.selected_image
         if (

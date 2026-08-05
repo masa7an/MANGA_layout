@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QBuffer, QIODevice, Qt
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QColor, QImage, QPainter
 
 from .errors import BrokenImageError
 
@@ -26,6 +26,13 @@ from .errors import BrokenImageError
 # A4 を 600dpi で描いても長辺 7016px なので、画面で見るぶんには十分足りる。
 # 上げるほど拡大したときに綺麗になり、そのぶんメモリと描画時間が増える
 PREVIEW_MAX_PX = 1600
+
+# ラフ（下敷き → 要件定義 6.23）を染める青。**下書きに使う青鉛筆の色。**
+#
+# 黒いままだと、上に置いたコマ枠・フキダシの線と見分けが付かない。色を
+# 変えてしまえば、濃さを上げても「これは下敷き」と一目で分かる。灰色に
+# 落とす手もあるが、鉛筆で描いたラフはもともと灰色なので差が出ない
+ROUGH_BLUE = QColor("#4A7FC1")
 
 
 def decode(data: bytes) -> QImage:
@@ -76,6 +83,34 @@ def make_preview(image: QImage) -> QImage:
     )
 
 
+def to_blue_pencil(image: QImage) -> QImage:
+    """青鉛筆の下書きに見えるよう染めた1枚（要件定義 6.23）。
+
+    手順は2つだけ。**まず色を捨てて**（`Format_Grayscale8`）、**その上から
+    青を Screen で乗せる**。Screen は「白はそのまま、黒は乗せた色になる」
+    合成なので、紙の白は白のまま残り、鉛筆の線だけが青くなる。線の濃淡も
+    そのまま階調として残る。
+
+    元の色を先に捨てるのは、色付きのラフ（青ボールペン・色鉛筆）でも
+    同じ濃さに揃えるため。捨てずに青を乗せると、赤い線だけが黒く沈む。
+
+    **透明な部分は白として扱われる**（`Format_Grayscale8` がアルファを
+    落とすため）。ラフは紙を写したものなので透明は普通は無く、あった
+    ときも「白い紙」として見えるだけで破綻はしない。
+
+    濃さ（透明度）はここでは焼き込まない。描くときに `setOpacity` で
+    掛ける（→ `settings.rough_opacity`）。焼き込むと、設定を書き換えた
+    ときに画像を展開し直すことになる。
+    """
+    gray = image.convertToFormat(QImage.Format.Format_Grayscale8)
+    out = gray.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    painter = QPainter(out)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Screen)
+    painter.fillRect(out.rect(), ROUGH_BLUE)
+    painter.end()
+    return out
+
+
 @dataclass(frozen=True)
 class Preview:
     """画面に描くための1枚。"""
@@ -92,6 +127,19 @@ class Preview:
 def preview_from_bytes(data: bytes) -> Preview:
     full = decode(data)
     return Preview(image=make_preview(full), source_px=size_px(full))
+
+
+def rough_preview_from_bytes(data: bytes) -> Preview:
+    """ラフ用の1枚。画面用に縮めてから青く染める（要件定義 6.23）。
+
+    **染めるのは縮めたあと。** 先に染めると、縮小のたびに全画素ぶんの
+    合成をやり直すことになる。ラフは長辺 2,000px を超える写真が普通なので、
+    順番を逆にすると読み込みで待たされる。
+
+    書き出しには出ない（→ 6.23）ので、原寸を返す経路は要らない。
+    """
+    full = decode(data)
+    return Preview(image=to_blue_pencil(make_preview(full)), source_px=size_px(full))
 
 
 def full_from_bytes(data: bytes) -> Preview:

@@ -867,6 +867,50 @@ class PageNote:
 
 
 @dataclass
+class PageRough:
+    """ラフ（下敷き → 要件定義 6.23）。紙に描いた下書きをページの一番下に敷く。
+
+    **画像でもマークでもなく、ページの属性として持つ。** どちらかにすると
+    「選べる・掴める・複製できる」が付いて回るが、ラフはなぞる相手であって
+    作品の中身ではない。掴めるのは調整の道具に持ち替えている間だけでよい。
+
+    `faded` は**青く淡くしているか**（青鉛筆の下書きに寄せた見え方）。
+    透明度そのものは持たない。作品ではなく **この PC での見やすさ**の話なので、
+    `settings.json` の `rough_opacity` から取る（→ `settings.AppSettings`）。
+    ここに焼き込むと、同じ作品を別の PC で開いたときに相手の好みを上書きする。
+    """
+
+    asset: str
+    rect: Rect
+    src_px: tuple[int, int]
+    faded: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "asset": self.asset,
+            "rect": self.rect.to_dict(),
+            "src_px": [self.src_px[0], self.src_px[1]],
+            # **省かない。** 2値しか無いうえ `rough` 自体が省ける項目なので、
+            # 「書いてあれば読む」で足りる。省くと、既定がどちらだったかを
+            # JSON を読む人が思い出さないと分からなくなる
+            "faded": self.faded,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> PageRough:
+        d = v.req_mapping(data, where)
+        px = v.req_list(d.get("src_px", [0, 0]), f"{where}.src_px")
+        if len(px) != 2:
+            raise ProjectFormatError(f"{where}.src_px: [幅, 高さ] の 2 要素が必要です")
+        return cls(
+            asset=v.text(d, "asset", where),
+            rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
+            src_px=(int(px[0]), int(px[1])),
+            faded=v.flag(d, "faded", where, True),
+        )
+
+
+@dataclass
 class Page:
     id: str
     size: Size = DEFAULT_PAGE_SIZE
@@ -875,6 +919,8 @@ class Page:
     slant_pairs: list[SlantPair] = field(default_factory=list)
     # 付箋（→ 6.18）。**ページに1つだけ。** 入れていなければ None
     note: PageNote | None = None
+    # ラフ（→ 6.23）。**ページに1枚だけ。** 敷いていなければ None
+    rough: PageRough | None = None
 
     # -- 検索 --------------------------------------------------------------
 
@@ -1052,6 +1098,10 @@ class Page:
         # 付箋の無いページでは項目ごと省く。理由は slant_pairs と同じ
         if self.note is not None:
             out["note"] = self.note.to_dict()
+        # ラフも同じ（→ 6.23）。敷いていない作品の project.json は
+        # この機能の追加前と一字一句変わらない
+        if self.rough is not None:
+            out["rough"] = self.rough.to_dict()
         return out
 
     @classmethod
@@ -1076,6 +1126,12 @@ class Page:
             note=(
                 PageNote.from_dict(d["note"], f"{where}.note")
                 if d.get("note") is not None
+                else None
+            ),
+            # 項目が無い＝ラフなし（→ 6.23）。付箋と同じ読み方
+            rough=(
+                PageRough.from_dict(d["rough"], f"{where}.rough")
+                if d.get("rough") is not None
                 else None
             ),
         )
@@ -1342,14 +1398,22 @@ class Project:
             if isinstance(obj, StickerObject):
                 yield obj
 
+    def iter_roughs(self) -> Iterator[PageRough]:
+        """敷いてあるラフ（→ 6.23）。1ページに1枚まで。"""
+        for page in self.pages:
+            if page.rough is not None:
+                yield page.rough
+
     def referenced_assets(self) -> set[str]:
         """どこかが参照している assets/ のパス一覧。
 
-        **マークも数える。** 数え漏らすと「未使用ファイルを整理」が
-        マークの実体を `_unused/` へ移し、次に開いたときに×印だけが残る。
+        **マークとラフも数える。** 数え漏らすと「未使用ファイルを整理」が
+        実体を `_unused/` へ移し、次に開いたときに×印だけが残る（ラフは
+        ×印すら出ないので、黙って消えたように見える → 6.23）。
         """
         used = {img.asset for img in self.iter_images() if img.asset}
         used |= {s.asset for s in self.iter_stickers() if s.asset}
+        used |= {r.asset for r in self.iter_roughs() if r.asset}
         return used
 
     # -- 変換 --------------------------------------------------------------
@@ -1418,6 +1482,11 @@ class Project:
         self.default_page_size = self.default_page_size.scaled(factor)
         for page in self.pages:
             page.size = page.size.scaled(factor)
+            # ラフは version 1（mm）の頃には無いので実際には通らないが、
+            # 「長さを持つものはここに並ぶ」を崩さないために足しておく。
+            # 抜けを見つけるのは、寸法が10倍ずれた作品を開いたときになる
+            if page.rough is not None:
+                page.rough.rect = page.rough.rect.scaled(factor)
             for panel in page.panels:
                 panel.shape = panel.shape.scaled(factor)
                 panel.border.width *= factor

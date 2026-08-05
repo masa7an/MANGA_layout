@@ -22,6 +22,8 @@ from .menus import BALLOON_STYLE_MENU_LABEL
 from .state import (
     BALLOON_STYLE_LABELS,
     STICKER_KIND_LABELS,
+    TOOL_ROUGH,
+    TOOL_SELECT,
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
@@ -120,6 +122,22 @@ class ContextMenu:
         self._show_tips_in_status_bar(menu)
         state = self._state
 
+        # ラフの調整中は、ラフの項目だけ出す（→ 要件定義 6.23）。この道具では
+        # 何も選べないので、選択に効く項目はどれも押せない
+        if state.tool == TOOL_ROUGH:
+            menu.addAction(window.file_menu.rough_faded_action)
+            menu.addAction(window.file_menu.rough_remove_action)
+            menu.addSeparator()
+            # ここに出しておかないと、道具を戻すのにメニューバーへ
+            # 戻ることになる（この道具は道具箱の一番端にある）
+            self._menu_act(
+                menu,
+                "調整をやめる",
+                lambda _checked=False: state.set_tool(TOOL_SELECT),
+                tip="選択の道具に戻る。ラフはそのまま残る",
+            )
+            return menu
+
         if state.selected_text is not None:
             self._copy_actions(menu, window.text_menu.copy_items)
 
@@ -179,6 +197,11 @@ class ContextMenu:
             # 代わりに、ここでしか呼べない「元に戻す」を添える
             self._add_place_here(menu, x, y, ("panel", "balloon", "sticker", "text"))
             menu.addAction(window.edit_menu.full_page_action)
+            # ラフ（→ 6.23）は敷いてあるときだけ。押した場所は関係ない操作
+            # なので、コマの上ではなく「何も無いところ」に置く
+            if self._state.page.rough is not None:
+                menu.addSeparator()
+                self._add_rough_actions(menu)
             menu.addSeparator()
             menu.addAction(window.edit_menu.undo_action)
             menu.addAction(window.edit_menu.redo_action)
@@ -292,6 +315,20 @@ class ContextMenu:
                 lambda _=False, s=style: view.add_balloon_at(x, y, s),
                 tip=place_here_label(name, first=True),
             )
+
+    def _add_rough_actions(self, menu: QMenu) -> None:
+        """ラフの色の切り替えと、位置・大きさの調整（→ 要件定義 6.23）。
+
+        **メニューバーと同じ実体を並べる。** 文言の入れ替え（「青く淡くする」
+        ↔「元の色に戻す」）と有効・無効は `FileMenu.refresh` が1か所で
+        面倒を見たままになる（集中線・ロックと同じ形 → 6.12）。
+
+        畳まずに直に並べるのは、ここに出るのが2項目しかないため。畳むと
+        開く操作が1つ増えるだけになる（ファイルのメニューでは4項目なので畳む）。
+        """
+        window = self._window
+        menu.addAction(window.file_menu.rough_faded_action)
+        menu.addAction(window.file_menu.rough_tool_action)
 
     def _add_image_here(self, menu: QMenu, panel: Panel, x: float, y: float) -> None:
         """カーソルの下に画像があれば、その画像に効く項目を出す。

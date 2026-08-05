@@ -7,7 +7,7 @@
 画面・サムネイルと**同じ `PageRenderer`** を通す。書き出し用に描き直すと
 「画面で見た通りに出ない」が起き、しかもクリスタで開くまで気づけない。
 
-画面と違うのは3点だけで、いずれも `PageRenderer` の引数で切り替える。
+画面と違うのは4点だけで、いずれも `PageRenderer` の引数で切り替える。
 
 1. **画像は原寸を使う**（`FullImages`）。画面用の縮小版（長辺 1600px）を
    引き伸ばすと、書き出したものだけがぼやける
@@ -16,6 +16,9 @@
 3. **画面でだけ要る補助表示を描かない**（`aids=False`）。コマの下地（薄い
    灰色）、空のセリフの点線枠、欠けた画像の×印がこれに当たる。コマの範囲は
    枠線が示すし、欠けた画像は書き出す前の警告で知らせる
+4. **ラフ（下敷き）を描かない**（`rough=False` → 6.23）。なぞる相手であって
+   作品の中身ではない。`aids` に含めていないのは、一覧のサムネイルには
+   出したいため（`aids` を落とすのは書き出しだけ）
 
 ## 書き出し先
 
@@ -266,7 +269,7 @@ def render_page(state, page: Page, scale: float = FULL_SCALE) -> QImage:
     # 丸めのぶんだけ右端・下端に描き残しの筋が出る
     painter.scale(width / page.size.w, height / page.size.h)
     PageRenderer(state, FullImages(state), aids=False).draw(
-        painter, page, guides=False, shadow=False, edge=False
+        painter, page, guides=False, shadow=False, edge=False, rough=False
     )
     painter.end()
     return image

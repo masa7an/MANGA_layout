@@ -33,6 +33,7 @@ from .state import (
     BALLOON_TOOLS,
     STICKER_TOOLS,
     TOOL_PANEL,
+    TOOL_ROUGH,
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
@@ -58,6 +59,21 @@ TAIL_TURN_LABELS = {direction: where for where, direction in TAIL_TURN_ITEMS}
 # 畳んだメニューの見出し。メニューバーと右クリックの2か所が同じ名前を出す
 # ので、書き分けないよう1箇所に持つ（→ `BalloonMenu`）
 BALLOON_STYLE_MENU_LABEL = "種類を変える"
+
+# ラフ（下敷き → 6.23）を畳んだメニューの見出しと、その中の項目の文言。
+#
+# **畳むのは、ファイルのメニューが4項目ぶん伸びるのを避けるため。** ラフは
+# 1つの作品で最初に1回敷いたら、あとは調整と色の切り替えしか使わない。
+# 開く・保存・書き出しと同じ高さに常時並べる頻度ではない（集中線・
+# フキダシの種類と同じ畳み方 → 6.12）
+ROUGH_MENU_LABEL = "ラフ"
+
+# 色の切り替えは**1項目の文言を入れ替える**（集中線の白 → 6.19 と同じ形）。
+# 「どちらに変わるか」を名前に出す。今の状態を書いても、押した結果が分からない
+ROUGH_FADED_LABELS = {
+    True: "青く淡くする",
+    False: "元の色に戻す",
+}
 
 # しっぽの形を切り替える項目の文言。**「どちらに変わるか」を名前に出す。**
 # 今の形を書いても、押した結果が分からない（「入れる／消す」と同じ形 → 6.19）
@@ -106,9 +122,15 @@ def items_to_copy(
 
 
 class FileMenu:
-    """ファイルのメニュー。実処理は `ProjectIO`（→ `project_io.py`）。"""
+    """ファイルのメニュー。実処理は `ProjectIO`（→ `project_io.py`）。
+
+    ラフ（→ 6.23）だけは `MainWindow` 側に実処理がある。作品まるごとの
+    出し入れではなく、表示中のページに1枚敷くだけの操作なので、
+    `ProjectIO` の受け持ち（新規・開く・保存・書き出し）とは筋が違う。
+    """
 
     def __init__(self, window: MainWindow) -> None:
+        self._state = window.state
         menu = window.menuBar().addMenu("ファイル(&F)")
         menu.addAction(window._act("新規作成", window.files.new_project, "Ctrl+N"))
         menu.addAction(
@@ -134,6 +156,8 @@ class FileMenu:
             )
         )
         menu.addSeparator()
+        self._build_rough_menu(window, menu)
+        menu.addSeparator()
         menu.addAction(
             window._act(
                 "画像で書き出し...",
@@ -152,6 +176,58 @@ class FileMenu:
             )
         )
         menu.addAction(window._act("終了", window.close, "Ctrl+Q"))
+
+    def _build_rough_menu(self, window: MainWindow, parent_menu: QMenu) -> None:
+        """ラフ（下敷き → 6.23）を畳んで出す。
+
+        **畳んだ見出しの QAction を控えない。** この QAction は下位の QMenu が
+        持っているもので、控えて有効・無効を触ると実体ごと消える
+        （→ `items_to_copy`、PySide6の落とし穴.md の 1）。
+        """
+        menu = QMenu(ROUGH_MENU_LABEL, parent_menu)
+        menu.addAction(
+            window._act(
+                "読み込む...",
+                window.load_rough,
+                None,
+                "紙に描いたラフを、このページの一番下に敷く（書き出しには出ない）",
+            )
+        )
+        # 色の切り替えと調整の道具は、右クリックからも同じ実体を出す
+        # （→ `context_menu.py`）。作り直すと有効・無効が片方だけ古くなる
+        self.rough_faded_action = window._act(
+            ROUGH_FADED_LABELS[True],
+            window.toggle_rough_faded,
+            None,
+            "青鉛筆の下書きのように淡くする／写真のままの色に戻す",
+        )
+        menu.addAction(self.rough_faded_action)
+        self.rough_tool_action = window._tool_actions[TOOL_ROUGH]
+        menu.addAction(self.rough_tool_action)
+        self.rough_remove_action = window._act(
+            "外す",
+            window.remove_rough,
+            None,
+            "このページのラフを外す（画像そのものは消えない）",
+        )
+        menu.addAction(self.rough_remove_action)
+        parent_menu.addMenu(menu)
+
+    def refresh(self) -> None:
+        """ラフの項目を、いまのページの状態に合わせる。
+
+        ラフが無いページでは、読み込む以外の3つを押せなくする。押しても
+        何も起きない項目が並ぶより、押せないことが先に分かるほうがよい
+        （→ 6.12）。
+        """
+        rough = self._state.page.rough
+        # 「どちらに変わるか」を出す。いま淡いなら「元の色に戻す」
+        self.rough_faded_action.setText(
+            ROUGH_FADED_LABELS[not (rough is not None and rough.faded)]
+        )
+        self.rough_faded_action.setEnabled(rough is not None)
+        self.rough_tool_action.setEnabled(rough is not None)
+        self.rough_remove_action.setEnabled(rough is not None)
 
     def sync_recent_project(self, path: pathlib.Path | None = None) -> None:
         """『前回のファイルを開く』の表示を、わかっている行き先に合わせる。

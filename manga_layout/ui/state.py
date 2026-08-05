@@ -24,7 +24,12 @@ from ..focus import (
 )
 from ..geometry import Rect, Size
 from ..history import History
-from ..images import ImageCache, Preview, preview_from_bytes
+from ..images import (
+    ImageCache,
+    Preview,
+    preview_from_bytes,
+    rough_preview_from_bytes,
+)
 from ..layout import (
     BalloonSettings,
     LayoutSettings,
@@ -47,6 +52,7 @@ from ..model import (
     ImageObject,
     Page,
     PageNote,
+    PageRough,
     Panel,
     Project,
     SceneObject,
@@ -56,6 +62,7 @@ from ..model import (
     TextObject,
     new_project,
 )
+from ..settings import ROUGH_OPACITY_DEFAULT
 from ..slant import flip_slant_pair, slide_slant_pair
 from ..stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION, read_sticker
 from ..storage import load_project, save_project, write_autosave
@@ -74,6 +81,12 @@ TOOL_BALLOON_RECT = "balloon_rect"
 TOOL_TEXT = "text"
 TOOL_STICKER_EXCLAIM = "sticker_exclaim"
 TOOL_STICKER_EXCLAIM_QUESTION = "sticker_exclaim_question"
+# ラフ（下敷き）の位置と大きさを直す道具（→ 要件定義 6.23）。
+#
+# **道具にしたのは、ラフが一番下にあるため。** コマの下に潜っているものを
+# 普段の選択で掴めるようにすると、「コマを選んだつもりでラフが動く」経路が
+# できる。持ち替えている間だけ掴める形なら、その取り違えが起こらない
+TOOL_ROUGH = "rough"
 
 # どの道具がどの種類の吹き出しを作るか
 BALLOON_TOOLS = {
@@ -143,6 +156,7 @@ TOOL_LABELS = {
         for tool, kind in STICKER_TOOLS.items()
     },
     TOOL_TEXT: "セリフを追加",
+    TOOL_ROUGH: "ラフを調整",
 }
 
 # クリックだけでセリフを置いたときの大きさ（px）。
@@ -210,6 +224,14 @@ class EditorState(QObject):
         # 保存先が決まる前に貼り付けた画像の預かり所。保存時に書き出す
         self.pending_assets = PendingAssets()
         self.image_cache = ImageCache()
+        # ラフ用の入れ物（→ 6.23）。**画像と混ぜない。** `ImageCache` は
+        # 「同じ入れ物に別の作り方のものを入れてはいけない」決まりで動いて
+        # おり、青く染めた1枚を混ぜると、引く側がどちらか判断できなくなる
+        self.rough_cache = ImageCache(make=rough_preview_from_bytes)
+        # ラフの濃さ（→ `settings.rough_opacity`）。作品ではなく好みなので
+        # `project.json` ではなく `settings.json` から来る。窓が起動時と
+        # ラフを読み込む直前に入れ直す（→ `MainWindow.load_rough`）
+        self.rough_opacity = ROUGH_OPACITY_DEFAULT
 
     # -- 参照 --------------------------------------------------------------
 
@@ -349,9 +371,20 @@ class EditorState(QObject):
         """
         self._page_index = max(0, min(index, self.page_count - 1))
         self._selected_id = None
+        self._leave_rough_tool_if_gone()
         self.page_changed.emit()
         self.selection_changed.emit()
         self.changed.emit()
+
+    def _leave_rough_tool_if_gone(self) -> None:
+        """ラフの無いページへ移ったら、調整の道具から選択へ戻す（→ 6.23）。
+
+        掴めるものが1つも無い道具を持ったまま残ると、押しても何も起きず、
+        しかもメニューの項目まで押せなくなって戻る手段が分かりにくくなる。
+        ページを移ったときと、Undo でラフが消えたときの両方から呼ぶ。
+        """
+        if self._tool == TOOL_ROUGH and self.page.rough is None:
+            self.set_tool(TOOL_SELECT)
 
     # -- 編集 --------------------------------------------------------------
 
@@ -393,6 +426,8 @@ class EditorState(QObject):
     def _after_history_move(self, message: str) -> None:
         # ページが減っていた場合に備えて番号を丸める
         self._page_index = max(0, min(self._page_index, self.page_count - 1))
+        # ラフが消えていることがある（→ `_leave_rough_tool_if_gone`）
+        self._leave_rough_tool_if_gone()
         self.changed.emit()
         self.selection_changed.emit()
         self.page_changed.emit()
@@ -627,6 +662,53 @@ class EditorState(QObject):
             target.children = [c for c in target.children if c.id != image_id]
         self.select(image.id)
         return image
+
+    # -- ラフ（下敷き） ----------------------------------------------------
+
+    def rough_preview(self, ref: str, faded: bool) -> Preview | None:
+        """ラフを描くための1枚。無い・壊れているときは None。
+
+        **青く染めるかどうかで入れ物を分ける。** 染めていないほうは普通の
+        画像と同じものなので、画像用の入れ物をそのまま使い回せる。
+        """
+        cache = self.rough_cache if faded else self.image_cache
+        return cache.get(ref, lambda: self.read_asset(ref))
+
+    def place_rough(self, data: bytes) -> PageRough:
+        """表示中のページにラフを敷く（→ 要件定義 6.23）。
+
+        最初は**ページに収まる大きさ**（全体が見える）で置く。写真の縦横比が
+        用紙と違っても切れないので、まず全体を見てから調整できる。
+        既に敷いてあれば置き換える（1ページに1枚）。
+        """
+        ref, px = self.import_bytes(data)
+        rect = contain_rect_in(Rect(0.0, 0.0, self.page.size.w, self.page.size.h), px)
+        rough = PageRough(asset=ref, rect=rect, src_px=px)
+        with self.edit_page("ラフの読み込み") as page:
+            page.rough = rough
+        return rough
+
+    def remove_rough(self) -> None:
+        """表示中のページのラフを外す。**実体（assets/）は消さない。**
+
+        Undo で戻せる操作なので、ここで実体まで消すと戻したときに×印だけが
+        残る。使われなくなった実体は「未使用ファイルを整理」が拾う（→ 5章）。
+        """
+        with self.edit_page("ラフを外す") as page:
+            page.rough = None
+
+    def set_rough_faded(self, faded: bool) -> None:
+        """ラフを青く淡くするか、元の絵のまま出すかを切り替える。"""
+        label = "ラフを青く淡く" if faded else "ラフを元の色に"
+        with self.edit_page(label) as page:
+            if page.rough is not None:
+                page.rough = dataclasses.replace(page.rough, faded=faded)
+
+    def set_rough_rect(self, rect: Rect, label: str) -> None:
+        """ラフの位置・大きさを差し替える。1回のドラッグで1手。"""
+        with self.edit_page(label) as page:
+            if page.rough is not None:
+                page.rough = dataclasses.replace(page.rough, rect=rect)
 
     # -- 斜めのコマ --------------------------------------------------------
 
@@ -1092,6 +1174,7 @@ class EditorState(QObject):
         # 前の作品の画像を抱えたままにしない。参照が同じでも中身は別物
         self.pending_assets = PendingAssets()
         self.image_cache.clear()
+        self.rough_cache.clear()
         self.changed.emit()
         self.selection_changed.emit()
         self.page_changed.emit()

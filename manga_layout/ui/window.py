@@ -53,6 +53,7 @@ from .state import (
     TOOL_BALLOON_WAVY,
     TOOL_LABELS,
     TOOL_PANEL,
+    TOOL_ROUGH,
     TOOL_SELECT,
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
@@ -128,6 +129,9 @@ class MainWindow(QMainWindow):
         self.settings_file = settings_path()
         ensure_settings_file(self.settings_file)
         self.settings = load_settings(self.settings_file)
+        # ラフの濃さは描く側（`PageRenderer`）が要るので、状態に渡しておく
+        # （→ 6.23）。ラフを読み込む直前にも入れ直す（→ `load_rough`）
+        self.state.rough_opacity = self.settings.rough_opacity
 
         # ファイル入出力の部品。メニューがスロットとして参照するので、
         # メニューの組み立てより先に作る
@@ -156,6 +160,7 @@ class MainWindow(QMainWindow):
         # 部品を足したらここにも足す。足し忘れると、その部品のメニューが
         # 選択に追従しなくなる
         self._menus = [
+            self.file_menu,  # ラフの項目のぶん（→ 6.23）
             self.edit_menu,
             self.panel_menu,  # 集中線（focus_menu）のぶんも面倒を見る
             self.image_menu,
@@ -268,6 +273,9 @@ class MainWindow(QMainWindow):
             (TOOL_STICKER_EXCLAIM, "M"),
             (TOOL_STICKER_EXCLAIM_QUESTION, None),
             (TOOL_TEXT, "T"),
+            # ラフの調整（→ 6.23）にもキーは割り当てない。敷いたあとに
+            # 何度も出入りするものではないので、メニューと右クリックで足りる
+            (TOOL_ROUGH, None),
         ):
             label = TOOL_LABELS[tool]
             action = QAction(f"{label} ({shortcut})" if shortcut else label, self)
@@ -358,7 +366,19 @@ class MainWindow(QMainWindow):
 
         コマと画像は見た目が似ているので、文字でも示さないと
         どちらを動かしているのか分からなくなる。
+
+        ラフの調整中は選択の話をしない（→ 6.23）。この道具では何も選べず、
+        掴めるのはラフだけなので、そちらの寸法を出す。
         """
+        if self.state.tool == TOOL_ROUGH:
+            rough = self.state.page.rough
+            if rough is None:
+                return "ラフ調整中: このページにはラフがありません"
+            tint = "青く淡く" if rough.faded else "元の色"
+            return (
+                f"ラフ調整中: {rough.rect.w:.0f} × {rough.rect.h:.0f} px / {tint}"
+            )
+
         image = self.state.selected_image
         if image is not None:
             r = image.rect
@@ -415,6 +435,9 @@ class MainWindow(QMainWindow):
 
     def _sync_tool_actions(self) -> None:
         self._tool_actions[self.state.tool].setChecked(True)
+        # 状態表示は道具でも変わる（ラフの調整中は選択の話をしない → 6.23）。
+        # `_refresh` は道具の切り替えでは呼ばれないので、ここで出し直す
+        self.hint_label.setText(self._hint())
 
     def _title(self) -> str:
         name = self.state.project_dir.name if self.state.project_dir else "無題"
@@ -925,6 +948,59 @@ class MainWindow(QMainWindow):
             page.remove_floating(text_id)
         self.state.select(None)
         self.state.message.emit("セリフを削除しました")
+
+    # -- ラフ（下敷き → 要件定義 6.23） ------------------------------------
+
+    def load_rough(self) -> None:
+        """紙に描いたラフを、表示中のページの一番下に敷く。
+
+        **画像を選ぶ窓は「画像を置く」と同じもの**（`_choose_image_file`）。
+        始まる場所も同じで、ラフは作品の隣に置かれることが多いので辿り直さずに済む。
+
+        **設定を読み直してから敷く。** 濃さ（`rough_opacity`）は手で書き換える
+        前提のファイルにあるので、起動したままでも効かせたい。読み込む瞬間は、
+        その値が初めて画面に出る瞬間でもある（→ `ProjectIO.default_parent`
+        と同じ扱い）。
+        """
+        chosen = self._choose_image_file()
+        if chosen is None:
+            return
+        data, name = chosen
+        self.settings = load_settings(self.settings_file)
+        self.state.rough_opacity = self.settings.rough_opacity
+        try:
+            self.state.place_rough(data)
+        except MangaLayoutError as e:
+            QMessageBox.warning(self, "ラフを敷けません", str(e))
+            return
+        self.state.message.emit(
+            f"ラフを敷きました（{name}）。位置と大きさは「ファイル → ラフ → "
+            f"{TOOL_LABELS[TOOL_ROUGH]}」から直せます"
+        )
+
+    def remove_rough(self) -> None:
+        """表示中のページのラフを外す。
+
+        **調整の道具を持っていたら選択へ戻す。** ラフが無いとこの道具は
+        何もできず、しかも項目が押せなくなるので、持ち替える手段が
+        メニューからしか残らない。
+        """
+        if self.state.page.rough is None:
+            return
+        self.state.remove_rough()
+        if self.state.tool == TOOL_ROUGH:
+            self.state.set_tool(TOOL_SELECT)
+        self.state.message.emit("ラフを外しました")
+
+    def toggle_rough_faded(self) -> None:
+        """ラフを青く淡くする／写真のままの色に戻す（1項目の文言を入れ替え）。"""
+        rough = self.state.page.rough
+        if rough is None:
+            return
+        self.state.set_rough_faded(not rough.faded)
+        self.state.message.emit(
+            "ラフを青く淡くしました" if not rough.faded else "ラフを元の色に戻しました"
+        )
 
     def prune_assets(self) -> None:
         """どこからも使われていない画像を assets/_unused/ へ移す。

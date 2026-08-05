@@ -64,6 +64,19 @@ JPG_QUALITY_DEFAULT = 90
 JPG_QUALITY_MIN = 1
 JPG_QUALITY_MAX = 100
 
+# ラフ（下敷き → 要件定義 6.23）の濃さ。0.0 で透明、1.0 でそのまま。
+#
+# **ここに出しているのは、作品ではなく紙の見え方の好みだから。** 濃いラフは
+# なぞる線がよく見える代わりにコマ枠と紛れ、薄いラフはその逆になる。どちらが
+# 良いかは元のラフの濃さ（鉛筆かペンか、写真かスキャンか）で変わるので、
+# 決め打ちにできない。既定の 40% は薄い鉛筆書きを写真で撮った場合に合わせてある
+ROUGH_OPACITY_DEFAULT = 0.4
+
+# 受け付ける範囲。0 は「敷いていないのと同じ」で、敷いたのに何も出ない状態を
+# 設定の打ち間違いで作れてしまうため下限を設ける
+ROUGH_OPACITY_MIN = 0.05
+ROUGH_OPACITY_MAX = 1.0
+
 
 def settings_dir() -> pathlib.Path:
     """設定を置くフォルダ。**このリポジトリの `data/`。**
@@ -104,6 +117,16 @@ def _jpg_quality(value: object) -> int:
     return quality
 
 
+def _rough_opacity(value: object) -> float:
+    """設定から読んだラフの濃さを返す。**受け付けられない値は既定に落とす。**"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return ROUGH_OPACITY_DEFAULT
+    opacity = float(value)
+    if not ROUGH_OPACITY_MIN <= opacity <= ROUGH_OPACITY_MAX:
+        return ROUGH_OPACITY_DEFAULT
+    return opacity
+
+
 @dataclass
 class AppSettings:
     """`settings.json` の中身。
@@ -121,11 +144,15 @@ class AppSettings:
 
     `jpg_quality` は**JPG 書き出しの品質**（→ 6.7）。0〜100 で既定は 90。
     ダイアログには出さないので、変えたい人はここを手で書き換える。
+
+    `rough_opacity` は**ラフ（下敷き）の濃さ**（→ 6.23）。0.05〜1.0 で
+    既定は 0.4。元のラフの濃さに合わせて手で書き換える。
     """
 
     default_parent_dir: str | None = None
     autosave_interval_sec: int = AUTOSAVE_INTERVAL_DEFAULT_SEC
     jpg_quality: int = JPG_QUALITY_DEFAULT
+    rough_opacity: float = ROUGH_OPACITY_DEFAULT
 
     def to_dict(self) -> dict:
         return {
@@ -133,6 +160,7 @@ class AppSettings:
             "default_parent_dir": self.default_parent_dir,
             "autosave_interval_sec": self.autosave_interval_sec,
             "jpg_quality": self.jpg_quality,
+            "rough_opacity": self.rough_opacity,
         }
 
     @classmethod
@@ -147,6 +175,7 @@ class AppSettings:
             default_parent_dir=value if isinstance(value, str) and value else None,
             autosave_interval_sec=_autosave_interval(data.get("autosave_interval_sec")),
             jpg_quality=_jpg_quality(data.get("jpg_quality")),
+            rough_opacity=_rough_opacity(data.get("rough_opacity")),
         )
 
 
