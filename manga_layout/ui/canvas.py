@@ -342,7 +342,9 @@ class PageScene(QGraphicsScene):
         if bounds is not None and self.preview_rect is None:
             painter.save()
             self._apply_rotation(painter, bounds, rotation)
-            self._draw_selection(painter, bounds, scale, self._accent())
+            self._draw_selection(
+                painter, bounds, scale, self._accent(), show_handles=not self.state.is_locked_selection
+            )
             if self.state.selected_image is not None:
                 self._draw_rotate_handle(painter, bounds, scale)
             painter.restore()
@@ -419,9 +421,14 @@ class PageScene(QGraphicsScene):
 
         描く側と掴む側で同じ答えが要るので、1箇所にまとめてある。
         ずらしている最中は下見の位置に付いてくる。
+
+        **どちらかがロックされていれば None。** 境界のドラッグも本体の
+        形を変える操作なので、移動・大きさ変更と同じ扱いで止める
+        （→ 要件定義 6.17）。ここで None を返せば、描画と掴む判定の
+        両方が一度に止まる。
         """
         pair = self.state.selected_slant_pair
-        if pair is None:
+        if pair is None or self.state.is_locked_selection:
             return None
         ratio = pair.ratio
         if self.slant_preview is not None and self.slant_preview[0] in pair.members():
@@ -513,11 +520,23 @@ class PageScene(QGraphicsScene):
         painter.drawRect(QRectF(hx - half, hy - half, size, size))
 
     def _draw_selection(
-        self, painter: QPainter, bounds: Rect, scale: float, color: QColor = ACCENT
+        self,
+        painter: QPainter,
+        bounds: Rect,
+        scale: float,
+        color: QColor = ACCENT,
+        *,
+        show_handles: bool = True,
     ) -> None:
         painter.setPen(cosmetic_pen(color, 1.5))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawRect(qrect(bounds))
+
+        # ロックしたコマではつまみを出さない（→ 要件定義 6.17）。
+        # 出したまま効かないのが一番たちが悪く、掴めないことは見た目で
+        # 先に分かるほうがよい
+        if not show_handles:
+            return
 
         size = HANDLE_PX / scale
         painter.setPen(cosmetic_pen(color, 1.2))
@@ -1087,7 +1106,13 @@ class PageView(QGraphicsView):
             return
 
         self.state.select(self._pick_at(x, y))
-        if self.state.selected_id is not None:
+        if self.state.selected_id is not None and self.state.is_locked_selection:
+            # ロックしたコマは選べるが動かせない（→ 要件定義 6.17）。
+            # 選択の入り口は塞がない——解除するにはメニューか右クリックが要る
+            self.state.message.emit(
+                "ロックされたコマです。動かすにはロックを解除してください"
+            )
+        elif self.state.selected_id is not None:
             self._mode = "move"
             # 掴む矩形は `selected_bounds` に任せる。斜めの組なら組の外側が
             # 返るので、片方だけ動く見た目にならない
@@ -1572,7 +1597,14 @@ class PageView(QGraphicsView):
         self.state.message.emit(f"集中線の内側: コマの短辺の {focus.hole * 100:.0f}%")
 
     def _handle_at_point(self, x: float, y: float) -> str | None:
-        """その位置にある、選択中のもののつまみ。無ければ None。"""
+        """その位置にある、選択中のもののつまみ。無ければ None。
+
+        **ロックしたコマでは常に None。** 大きさ変更は本体の形を変える
+        操作なので止める（→ 要件定義 6.17）。中の画像やフキダシは
+        コマではないので、この判定に引っかからず今まで通り動く。
+        """
+        if self.state.is_locked_selection:
+            return None
         bounds = self.state.selected_bounds
         if bounds is None:
             return None
@@ -1694,7 +1726,12 @@ class PageView(QGraphicsView):
         elif balloon_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif panel_at(self.state.page, x, y) is not None:
-            self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+            hovered = panel_at(self.state.page, x, y)
+            # ロックしたコマでは動かせる印を出さない（→ 要件定義 6.17）
+            if self.state.is_panel_locked(hovered.id):
+                self.viewport().unsetCursor()
+            else:
+                self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif self.state.tool == TOOL_PANEL:
             # ここを押せばコマが作られる、と分かるようにする
             self.viewport().setCursor(Qt.CursorShape.CrossCursor)
@@ -2053,6 +2090,11 @@ class PageView(QGraphicsView):
         panel = self._split_target(x, y)
         if panel is None:
             self.state.message.emit("コマの上でクリックしてください")
+            return
+        if self.state.is_panel_locked(panel.id):
+            self.state.message.emit(
+                "ロックされたコマです。割るにはロックを解除してください"
+            )
             return
 
         if tool is None:

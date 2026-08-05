@@ -240,6 +240,27 @@ class EditorState(QObject):
         panel = self.selected_panel
         return None if panel is None else self.page.slant_pair_of(panel.id)
 
+    def is_panel_locked(self, panel_id: str) -> bool:
+        """そのコマがロックされていて動かせないか。
+
+        斜めの組は片方でも動かせない（→ 要件定義 6.17）。組に属して
+        いなければ、そのコマ自身の `locked` だけを見る。
+        """
+        panel = self.page.panel(panel_id)
+        if panel.locked:
+            return True
+        pair = self.page.slant_pair_of(panel_id)
+        if pair is None:
+            return False
+        other_id = pair.right_id if pair.left_id == panel_id else pair.left_id
+        return self.page.panel(other_id).locked
+
+    @property
+    def is_locked_selection(self) -> bool:
+        """選択中のコマが動かせない状態か。コマ以外を選んでいれば False。"""
+        panel = self.selected_panel
+        return False if panel is None else self.is_panel_locked(panel.id)
+
     @property
     def selected_bounds(self) -> Rect | None:
         """選択枠とつまみを描く矩形。
@@ -488,6 +509,57 @@ class EditorState(QObject):
             pair = page.slant_pair_of(panel_id)
             if pair is not None:
                 slide_slant_pair(page, pair, ratio, self.settings)
+
+    # -- コマのロック --------------------------------------------------------
+    #
+    # 完成したコマを誤って動かさないためのもの（→ 要件定義 6.17）。
+    # 止めるのは移動・大きさ変更・分割・削除だけで、中の画像や紐づいた
+    # 吹き出し・セリフ・集中線には触らない。
+
+    def set_panel_locked(self, panel_id: str, locked: bool) -> None:
+        """1枚をロック／解除する。斜めの組なら**両方**に効かせる。
+
+        片方だけ解いても動かせないままでは意味が無い（→ `is_panel_locked`
+        が「片方でもロックなら組ごと動かせない」で見ているのと対）。
+        """
+        label = "コマをロック" if locked else "コマのロックを解除"
+        with self.edit(label) as project:
+            page = project.pages[self._page_index]
+            pair = page.slant_pair_of(panel_id)
+            targets = pair.members() if pair is not None else (panel_id,)
+            for target_id in targets:
+                page.panel(target_id).locked = locked
+
+    def toggle_panel_lock(self) -> bool:
+        """選択中のコマのロックを切り替える。変わったら True。"""
+        panel = self.selected_panel
+        if panel is None:
+            return False
+        self.set_panel_locked(panel.id, not self.is_locked_selection)
+        return True
+
+    def lock_all_panels(self) -> bool:
+        """このページのコマをすべてロックする。変わったら True。
+
+        既に全部ロック済みなら**何もしない**。押しても変化の無い操作で
+        Undo の一手を使わせない（→ `_step_focus` と同じ流儀）。
+        """
+        page = self.page
+        if not page.panels or all(p.locked for p in page.panels):
+            return False
+        with self.edit("このページのコマをすべてロック") as project:
+            for panel in project.pages[self._page_index].panels:
+                panel.locked = True
+        return True
+
+    def unlock_all_panels(self) -> bool:
+        """このページのコマのロックをすべて解除する。変わったら True。"""
+        if not any(p.locked for p in self.page.panels):
+            return False
+        with self.edit("このページのコマのロックをすべて解除") as project:
+            for panel in project.pages[self._page_index].panels:
+                panel.locked = False
+        return True
 
     # -- 集中線 ------------------------------------------------------------
     #

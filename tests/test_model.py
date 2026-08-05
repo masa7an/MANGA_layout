@@ -132,6 +132,42 @@ class TestRoundTrip:
         assert text.direction == "vertical"
 
 
+class TestPanelLock:
+    """コマの位置ロック（要件定義 6.17）の保存形式。
+
+    操作まわり（メニュー・つまみ・履歴）は tests/test_ui_lock.py。
+    """
+
+    def test_既定はロックなし(self):
+        project = new_project()
+        panel = project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+        assert panel.locked is False
+
+    def test_ロックなしでは項目ごと省く(self):
+        """使っていない作品の project.json が、この機能の追加前と同じ
+        内容のままになる（→ 集中線・斜めの組と同じ線引き）。
+        """
+        project = new_project()
+        project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+        assert "locked" not in project.to_dict()["pages"][0]["panels"][0]
+
+    def test_ロック中は往復しても保たれる(self):
+        project = new_project()
+        panel = project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+        panel.locked = True
+        restored = Project.from_dict(project.to_dict())
+        assert restored.pages[0].panels[0].locked is True
+
+    def test_項目の無いファイルはロックなしとして読む(self):
+        """`locked` が無い（この機能より前の）ファイルもそのまま開ける。"""
+        project = new_project()
+        project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+        data = project.to_dict()
+        assert "locked" not in data["pages"][0]["panels"][0]
+        restored = Project.from_dict(data)
+        assert restored.pages[0].panels[0].locked is False
+
+
 class TestPanelMove:
     def test_コマを動かすと中の画像も動く(self, sample_project):
         page = sample_project.pages[0]

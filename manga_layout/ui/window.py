@@ -517,6 +517,24 @@ class MainWindow(QMainWindow):
         )
         panel_menu.addAction(self.slant_flip_action)
         panel_menu.addSeparator()
+        # 「ロック」と「ロックを解除」は1項目の文言を入れ替える
+        # （しっぽの「消す／出す」と同じ → `_refresh`）
+        self.lock_toggle_action = self._act(
+            "ロック",
+            self.toggle_panel_lock,
+            None,
+            "選んだコマを動かせなくする。中の画像やフキダシは今まで通り触れる",
+        )
+        panel_menu.addAction(self.lock_toggle_action)
+        self.lock_all_action = self._act(
+            "このページのコマをすべてロック", self.lock_all_panels
+        )
+        panel_menu.addAction(self.lock_all_action)
+        self.unlock_all_action = self._act(
+            "このページのコマのロックをすべて解除", self.unlock_all_panels
+        )
+        panel_menu.addAction(self.unlock_all_action)
+        panel_menu.addSeparator()
         panel_menu.addMenu(self._build_focus_menu())
 
         image_menu = self.menuBar().addMenu("画像(&I)")
@@ -729,6 +747,7 @@ class MainWindow(QMainWindow):
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
             menu.addAction(self.slant_flip_action)
+            menu.addAction(self.lock_toggle_action)
             # **メニューバーと同じものを畳んで出す。** 並べるのは同じ
             # QAction なので、有効・無効と「入れる／消す」の文言は
             # `_refresh` が1か所で面倒を見たままになる（→ 6.12）。
@@ -987,6 +1006,19 @@ class MainWindow(QMainWindow):
         self.reset_rotation_action.setEnabled(image is not None and image.rotation != 0.0)
         self.slant_flip_action.setEnabled(self.state.selected_slant_pair is not None)
 
+        # ロック（→ 6.17）。「ロック／ロックを解除」は集中線の「入れる／消す」
+        # と同じく1項目の文言を入れ替える。一括の2項目は、押しても何も
+        # 変わらない側をグレーにする（→ `lock_all_panels` の無変化ガード）
+        self.lock_toggle_action.setEnabled(self.state.selected_panel is not None)
+        self.lock_toggle_action.setText(
+            "ロックを解除" if self.state.is_locked_selection else "ロック"
+        )
+        page_panels = self.state.page.panels
+        self.lock_all_action.setEnabled(
+            bool(page_panels) and not all(p.locked for p in page_panels)
+        )
+        self.unlock_all_action.setEnabled(any(p.locked for p in page_panels))
+
         # 集中線。入れる／消すはコマを選んでいれば押せ、調整の5項目は
         # 入っているときだけ（→ 6.16）
         panel = self.state.selected_panel
@@ -1080,7 +1112,10 @@ class MainWindow(QMainWindow):
                 if panel.focus_lines is not None
                 else ""
             )
-            return f"コマを選択中: {b.w:.0f} × {b.h:.0f} px{inside}{lines}"
+            # ロック中は見た目を変えないので、気づける手がかりはここだけ
+            # （つまみを出さないのと合わせて → 要件定義 6.17）
+            locked = " / ロック中" if self.state.is_locked_selection else ""
+            return f"コマを選択中: {b.w:.0f} × {b.h:.0f} px{inside}{lines}{locked}"
 
         return "コマ未選択"
 
@@ -1114,6 +1149,11 @@ class MainWindow(QMainWindow):
         if self.state.selected_balloon is not None:
             return "フキダシ", self.delete_balloon
         if self.state.selected_panel is not None:
+            # ロックしたコマは消せない（→ 要件定義 6.17）。ここで None にすると
+            # 「削除」がグレーになり、押す前に気づける（ロック中はステータス
+            # 表示にも出る → `_hint`）
+            if self.state.is_locked_selection:
+                return None
             return "コマ", self.delete_panel
         return None
 
@@ -1193,6 +1233,26 @@ class MainWindow(QMainWindow):
         """
         if self.state.flip_slant():
             self.state.message.emit("斜めの向きを反転しました")
+
+    def toggle_panel_lock(self) -> None:
+        """選んだコマのロックを付け外しする（要件定義 6.17）。
+
+        1項目の文言を入れ替える形にしてある（集中線の「入れる／消す」と
+        同じ）。斜めの組は `state.set_panel_locked` の側で両方に効かせる。
+        """
+        locked_before = self.state.is_locked_selection
+        if self.state.toggle_panel_lock():
+            self.state.message.emit(
+                "コマのロックを解除しました" if locked_before else "コマをロックしました"
+            )
+
+    def lock_all_panels(self) -> None:
+        if self.state.lock_all_panels():
+            self.state.message.emit("このページのコマをすべてロックしました")
+
+    def unlock_all_panels(self) -> None:
+        if self.state.unlock_all_panels():
+            self.state.message.emit("このページのコマのロックをすべて解除しました")
 
     def toggle_focus_lines(self) -> None:
         """選んだコマの集中線を入れる／消す（要件定義 6.16）。

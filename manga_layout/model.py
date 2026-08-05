@@ -393,6 +393,8 @@ class Panel(SceneObject):
     children: list[ImageObject] = field(default_factory=list)
     # 集中線（→ 6.16）。**コマに1つだけ。** 入れていなければ None
     focus_lines: FocusLines | None = None
+    # 位置ロック（→ 6.17）。誤って動かさないためのもの。既定は False
+    locked: bool = False
 
     TYPE = "panel"
 
@@ -412,6 +414,9 @@ class Panel(SceneObject):
         # project.json が、この機能の追加前と同じ内容のままになる
         if self.focus_lines is not None:
             data["focus_lines"] = self.focus_lines.to_dict()
+        # ロックしていない（False）コマでは項目ごと省く。理由は集中線と同じ
+        if self.locked:
+            data["locked"] = True
         return data
 
     @classmethod
@@ -436,6 +441,8 @@ class Panel(SceneObject):
                 if d.get("focus_lines") is not None
                 else None
             ),
+            # 項目が無い＝ロックなし。この機能より前の作品がそのまま開ける
+            locked=v.flag(d, "locked", where, False),
         )
 
 
