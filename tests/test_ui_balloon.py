@@ -147,7 +147,7 @@ def balloon_menu_items(window):
 
     ここで使う `action.menu()` は、その QMenu を呼び出し側の QAction に
     引き取らせる。使い捨ての QAction が片付いた時点でメニューの Python 側の
-    参照は無効になる（C++ の実体は生きたまま。→ `MainWindow._items_to_copy`）。
+    参照は無効になる（C++ の実体は生きたまま。→ `menus.items_to_copy`）。
     2026-08-04、`window.balloon_menu` を直に見る形にした6件がこれで落ちた。
     アプリ側は QMenu を持たない形に直したので、この書き方のままでよい。
 
@@ -160,7 +160,7 @@ def balloon_menu_items(window):
     消える。持ち帰ると、呼んだ側が触った瞬間に
     `Internal C++ object already deleted` になる（2026-08-05 に実測）。
     持ち帰ってよいのは、ウィンドウが親の QAction だけ
-    （→ `MainWindow._items_to_copy`）。
+    （→ `menus.items_to_copy`）。
     """
     marker = window.tail_action
     for action in window.menuBar().actions():

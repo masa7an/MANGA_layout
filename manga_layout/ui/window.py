@@ -33,13 +33,13 @@ from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import PROJECT_FILENAME, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .export import EXPORT_DIRNAME
+from .menus import FocusMenu, StickerMenu, items_to_copy
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .project_io import ProjectIO
 from .state import (
     BALLOON_STYLE_LABELS,
     BALLOON_TOOLS,
     STICKER_KIND_LABELS,
-    STICKER_TOOLS,
     TOOL_BALLOON,
     TOOL_BALLOON_CLOUD,
     TOOL_BALLOON_JAGGED,
@@ -208,6 +208,10 @@ class MainWindow(QMainWindow):
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
         self._build_menus()
+        # `refresh()` を配って回る部品の一覧（→ `_refresh`）。
+        # 部品を足したらここにも足す。足し忘れると、その部品のメニューが
+        # 選択に追従しなくなる
+        self._menus = [self.focus_menu, self.sticker_menu]
         self._build_toolbar()
         self._build_status_bar()
 
@@ -321,87 +325,6 @@ class MainWindow(QMainWindow):
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
 
-    def _build_sticker_menu(self) -> None:
-        """マークのメニュー（要件定義 6.14）。
-
-        アクセスキーは `&K`。`&M` はコマのメニューが使っている。
-
-        先頭に「作る」を置くのは、フキダシ・セリフと同じ理由（1つも
-        選んでいない間にメニュー全体がグレーにならないようにする）。
-        """
-        menu = self.menuBar().addMenu("マーク(&K)")
-        for tool in STICKER_TOOLS:
-            menu.addAction(self._tool_actions[tool])
-        menu.addSeparator()
-
-        # ここから下は選択中のマークに対する操作
-        self.sticker_actions: list[QAction] = []
-        self.sticker_attach_action = self._act(
-            "コマへの紐づけを解除", self.toggle_sticker_attachment
-        )
-        menu.addAction(self.sticker_attach_action)
-        self.sticker_actions.append(self.sticker_attach_action)
-
-        # 右クリックのメニューが写して使う（→ `_items_to_copy`）
-        self.sticker_copy_items = self._items_to_copy(menu)
-
-    def _build_focus_menu(self) -> QMenu:
-        """集中線のメニュー（要件定義 6.16）。**コマのメニューの下に畳む。**
-
-        7項目あるので、コマのメニューへ並べると縦に伸びて読む字数が増える。
-        入れていないコマでは「入れる」1つしか使えないので、畳んでおくほうが
-        目に入る量が少ない。
-
-        **キーは1つも割り当てない。** この道具はマウスで使うもので、キーを
-        足すこと自体に値打ちは無い（→ 要件定義 7章）。
-        """
-        menu = QMenu("集中線", self)
-        # 「入れる」と「消す」は1項目の文言を入れ替える（しっぽと同じ）。
-        # 2つ並べると、片方は必ず押せない状態で場所だけ取る
-        self.focus_toggle_action = self._act(
-            "入れる",
-            self.toggle_focus_lines,
-            None,
-            "選んだコマに放射状の線を引く。中心はあとから動かせる",
-        )
-        menu.addAction(self.focus_toggle_action)
-        menu.addSeparator()
-
-        # ここから下は集中線の入ったコマにだけ効く
-        self.focus_actions: list[QAction] = []
-
-        def add(label: str, slot, tip: str = "") -> QAction:
-            action = self._act(label, slot, None, tip)
-            menu.addAction(action)
-            self.focus_actions.append(action)
-            return action
-
-        add("線を増やす", lambda: self.state.step_focus_count(1))
-        add("線を減らす", lambda: self.state.step_focus_count(-1))
-        menu.addSeparator()
-        add("線を太く", lambda: self.state.step_focus_width(1))
-        add("線を細く", lambda: self.state.step_focus_width(-1))
-        menu.addSeparator()
-        # 「白にする／黒に戻す」も入れる／消すと同じく1項目の文言を入れ替える
-        # （要件定義 6.19。単純な色違いなので、色を選ぶメニューにはしない）
-        self.focus_color_action = add(
-            "白にする",
-            self.toggle_focus_color,
-            "線の色を黒と白で切り替える。暗いコマの上で使う",
-        )
-        menu.addSeparator()
-        add(
-            "形を振り直す",
-            self.state.reseed_focus,
-            "中心・本数・太さはそのままで、線のばらつきだけを作り直す",
-        )
-
-        # 右クリックのメニューが写して使う（→ `_items_to_copy`）。
-        # **このメソッドは1度しか呼ばない。** 呼ぶたびに QAction を作り直す
-        # ので、2度呼ぶとメニューバー側が古い項目を持ったまま取り残される
-        self.focus_copy_items = self._items_to_copy(menu)
-        return menu
-
     def _build_balloon_style_menu(self) -> QMenu:
         """種類を変えるメニュー（要件定義 10.1）。**フキダシのメニューに畳む。**
 
@@ -424,8 +347,8 @@ class MainWindow(QMainWindow):
             menu.addAction(action)
             self.balloon_actions.append(action)
 
-        # 右クリックのメニューが写して使う（→ `_items_to_copy`）
-        self.balloon_style_copy_items = self._items_to_copy(menu)
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）
+        self.balloon_style_copy_items = items_to_copy(menu, self._tool_actions.values())
         return menu
 
     def _build_text_menu(self) -> None:
@@ -465,8 +388,8 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         add("フォントを選ぶ...", self.choose_font)
 
-        # 右クリックのメニューが写して使う（→ `_items_to_copy`）
-        self.text_copy_items = self._items_to_copy(menu)
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）
+        self.text_copy_items = items_to_copy(menu, self._tool_actions.values())
 
     def _build_menus(self) -> None:
         self._build_tool_actions()
@@ -566,7 +489,7 @@ class MainWindow(QMainWindow):
         )
         panel_menu.addAction(self.unlock_all_action)
         panel_menu.addSeparator()
-        panel_menu.addMenu(self._build_focus_menu())
+        self.focus_menu = FocusMenu(self, panel_menu)
 
         image_menu = self.menuBar().addMenu("画像(&I)")
         self.paste_action = self._act(
@@ -646,16 +569,16 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.attach_action)
         self.balloon_actions.append(self.attach_action)
 
-        # 右クリックのメニューが写して使う（→ `_items_to_copy`）。
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）。
         # **畳んだ「種類を変える」は写せない**（QMenu を持ち帰れないため）。
         # 右クリック側では同じ控え（`balloon_style_copy_items`）から
         # 組み直す（→ `_context_menu`、集中線と同じ形）
-        self.balloon_copy_items = self._items_to_copy(
+        self.balloon_copy_items = items_to_copy(
             balloon_menu,
-            extra_exclude=(style_menu_action, *tail_turn_actions),
+            (*self._tool_actions.values(), style_menu_action, *tail_turn_actions),
         )
 
-        self._build_sticker_menu()
+        self.sticker_menu = StickerMenu(self)
         self._build_text_menu()
 
         tool_menu = self.menuBar().addMenu("道具(&T)")
@@ -775,7 +698,7 @@ class MainWindow(QMainWindow):
             self._copy_actions(menu, self.text_copy_items)
 
         elif state.selected_sticker is not None:
-            self._copy_actions(menu, self.sticker_copy_items)
+            self._copy_actions(menu, self.sticker_menu.copy_items)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("text",))
 
@@ -816,7 +739,7 @@ class MainWindow(QMainWindow):
             # QAction なので、有効・無効と「入れる／消す」の文言は
             # `_refresh` が1か所で面倒を見たままになる（→ 6.12）。
             # ここで作り直すと、メニューバー側が古い項目を持ったまま残る
-            self._copy_actions(menu.addMenu("集中線"), self.focus_copy_items)
+            self._copy_actions(menu.addMenu("集中線"), self.focus_menu.copy_items)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()
@@ -857,45 +780,6 @@ class MainWindow(QMainWindow):
         """
         menu.hovered.connect(lambda action: action.showStatusText(self))
         menu.aboutToHide.connect(self.statusBar().clearMessage)
-
-    def _items_to_copy(
-        self, source: QMenu, extra_exclude: tuple[QAction, ...] = ()
-    ) -> list[QAction | None]:
-        """メニューバーのメニューから、右クリック側へ写す項目を控えておく。
-
-        **QMenu も、そのメニューが持つ区切り線も持ち帰らない。**
-        持てるのは `_act` で作った QAction（親がこのウィンドウ）だけで、
-        区切り線は `None` に置き換える。
-
-        PySide6 では `QAction.menu()` を呼ぶと、その QMenu が呼び出し側の
-        QAction に引き取られる。QAction を使い捨てにする書き方
-        （`menuBar().actions()[0].menu()` のような1行）だと、それが
-        片付いた時点で QMenu の Python 側の参照が無効になり、以後
-        `RuntimeError: Internal C++ object already deleted` になる。
-        C++ の実体はメニューバーの下で生きたままなので、画面のメニューは
-        普通に開ける。**壊れるのは Python 側の参照だけ**で、区切り線の
-        QAction（このメニューが親）も道連れになる。
-
-        2026-08-04、テストがメニューバーを辿った直後に右クリックの
-        メニューが RuntimeError で組めなくなることを実機で確認した。
-        アプリ側は `QAction.menu()` を呼んでいないため表には出ていない。
-        呼ばないという申し合わせで守るのは無理があるので、
-        壊れようのないものだけを持つ形にした。
-
-        **道具の切り替え（「フキダシを追加」など）は外す。** 右クリック側は
-        押した場所が分かっているので「ここに〜」を別に出しており、道具に
-        持ち替える項目まで並べると、同じことが2通り並ぶ。
-
-        `extra_exclude` は道具以外で個別に外したい項目（→ しっぽの
-        付け根を細かく選ぶ3項目、`_build_menus`）。
-        """
-        tools = set(self._tool_actions.values()) | set(extra_exclude)
-        items: list[QAction | None] = []
-        for action in source.actions():
-            if action in tools:
-                continue
-            items.append(None if action.isSeparator() else action)
-        return items
 
     def _copy_actions(self, menu: QMenu, items: list[QAction | None]) -> None:
         """控えておいた項目を右クリックのメニューへ並べる。
@@ -1114,17 +998,6 @@ class MainWindow(QMainWindow):
         )
         self.unlock_all_action.setEnabled(any(p.locked for p in page_panels))
 
-        # 集中線。入れる／消すはコマを選んでいれば押せ、調整の5項目は
-        # 入っているときだけ（→ 6.16）
-        panel = self.state.selected_panel
-        focus = self.state.selected_focus
-        self.focus_toggle_action.setEnabled(panel is not None)
-        self.focus_toggle_action.setText("消す" if focus is not None else "入れる")
-        for action in self.focus_actions:
-            action.setEnabled(focus is not None)
-        if focus is not None:
-            self.focus_color_action.setText("黒に戻す" if focus.white else "白にする")
-
         text = self.state.selected_text
         for action in self.text_actions:
             action.setEnabled(text is not None)
@@ -1154,15 +1027,9 @@ class MainWindow(QMainWindow):
                 else "重なっているコマに紐づける"
             )
 
-        sticker = self.state.selected_sticker
-        for action in self.sticker_actions:
-            action.setEnabled(sticker is not None)
-        if sticker is not None:
-            self.sticker_attach_action.setText(
-                "コマへの紐づけを解除"
-                if sticker.attached_panel_id
-                else "重なっているコマに紐づける"
-            )
+        # ここから下の分は、部品が自分のぶんを面倒見る（→ `menus.py`）
+        for menu in self._menus:
+            menu.refresh()
 
     def _hint(self) -> str:
         """いま何を選んでいるかを状態表示に出す。

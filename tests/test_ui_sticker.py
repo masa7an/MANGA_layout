@@ -275,7 +275,7 @@ def sticker_menu_items(window):
     目印には「紐づけ」の項目を使う。道具の項目は道具メニューにも並ぶので
     目印にならない。
     """
-    marker = window.sticker_actions[0]
+    marker = window.sticker_menu.actions[0]
     for action in window.menuBar().actions():
         menu = action.menu()
         if menu is not None and marker in menu.actions():
@@ -305,7 +305,7 @@ class Testメニュー:
 
     def test_選択を外すと編集の項目は戻る(self, window_with_sticker):
         window_with_sticker.state.select(None)
-        assert not window_with_sticker.sticker_attach_action.isEnabled()
+        assert not window_with_sticker.sticker_menu.attach_action.isEnabled()
 
     def test_ショートカットはMだけ(self, window):
         """1文字キーを全部の道具に割り当てない（→ 6.14）。"""
@@ -342,7 +342,7 @@ class Test右クリックのメニュー:
 
     def test_マークを選んでいるときは編集の項目が出る(self, window_with_sticker):
         menu = window_with_sticker._context_menu(*CENTER)
-        assert window_with_sticker.sticker_attach_action in menu.actions()
+        assert window_with_sticker.sticker_menu.attach_action in menu.actions()
         menu.deleteLater()
 
 

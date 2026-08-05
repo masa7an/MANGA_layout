@@ -95,18 +95,18 @@ def test_コマを消せば一緒に消える(window_with_focus):
 
 def test_メニューの文言が入れる_消すで入れ替わる(window_with_panel):
     window = window_with_panel
-    assert window.focus_toggle_action.text() == "入れる"
+    assert window.focus_menu.toggle_action.text() == "入れる"
     window.toggle_focus_lines()
-    assert window.focus_toggle_action.text() == "消す"
+    assert window.focus_menu.toggle_action.text() == "消す"
     window.toggle_focus_lines()
     assert panel(window).focus_lines is None
 
 
 def test_調整の項目は入っているときだけ押せる(window_with_panel):
     window = window_with_panel
-    assert all(not action.isEnabled() for action in window.focus_actions)
+    assert all(not action.isEnabled() for action in window.focus_menu.actions)
     window.toggle_focus_lines()
-    assert all(action.isEnabled() for action in window.focus_actions)
+    assert all(action.isEnabled() for action in window.focus_menu.actions)
 
 
 # -- 本数・太さ・振り直し ----------------------------------------------------
@@ -211,11 +211,11 @@ def test_色の切り替えは1手で戻る(window_with_focus):
 
 def test_メニューの文言が白にする_黒に戻すで入れ替わる(window_with_focus):
     window = window_with_focus
-    assert window.focus_color_action.text() == "白にする"
+    assert window.focus_menu.color_action.text() == "白にする"
     window.toggle_focus_color()
-    assert window.focus_color_action.text() == "黒に戻す"
+    assert window.focus_menu.color_action.text() == "黒に戻す"
     window.toggle_focus_color()
-    assert window.focus_color_action.text() == "白にする"
+    assert window.focus_menu.color_action.text() == "白にする"
 
 
 # -- つまみ ------------------------------------------------------------------
@@ -329,8 +329,8 @@ def test_右クリックにも同じ項目が畳んで出る(window_with_focus):
     """
     window = window_with_focus
     items = focus_submenu(window)
-    assert window.focus_toggle_action in items
-    assert all(action in items for action in window.focus_actions)
+    assert window.focus_menu.toggle_action in items
+    assert all(action in items for action in window.focus_menu.actions)
 
 
 def test_右クリックを何度出しても項目が入れ替わらない(window_with_focus):
@@ -340,7 +340,7 @@ def test_右クリックを何度出しても項目が入れ替わらない(wind
     window = window_with_focus
     first = focus_submenu(window)
     assert focus_submenu(window) == first
-    assert window.focus_toggle_action in first
+    assert window.focus_menu.toggle_action in first
 
 
 def test_文言の書き換えが右クリック側にも出る(window_with_panel):

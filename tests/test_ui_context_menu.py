@@ -121,7 +121,7 @@ def _open_folded(menu: QMenu, label: str):
     """畳んだメニューを名前で開き、**見出しの QAction ごと**返す。
 
     `QAction.menu()` はその QMenu を呼び出し側の QAction に引き取らせる
-    （→ `MainWindow._items_to_copy`）。**見出しを使い捨てにすると、返って
+    （→ `menus.items_to_copy`）。**見出しを使い捨てにすると、返って
     きた QMenu はその場で消える。** `find(menu, label).menu()` と1行で書いて
     実際に `Internal C++ object already deleted` になった（2026-08-05）。
 
@@ -420,7 +420,7 @@ class TestSharedActions:
 
         PySide6 では `QAction.menu()` がその QMenu を呼び出し側の QAction に
         引き取らせる。QAction を使い捨てにすると、片付いた時点で QMenu の
-        Python 側の参照が無効になる（→ `MainWindow._items_to_copy`）。
+        Python 側の参照が無効になる（→ `menus.items_to_copy`）。
         以前は写す元として QMenu そのものを持っていたため、これで
         `RuntimeError: Internal C++ object already deleted` になった。
         """
