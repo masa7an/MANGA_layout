@@ -620,14 +620,36 @@ def wavy_points(
     )
 
 
+def rect_points(rect: Rect) -> tuple[tuple[float, float], ...]:
+    """四角（ナレーション・地の文）の輪郭。
+
+    矩形の4隅そのまま。**角は丸めない。** 丸めると半径の設定項目が増える
+    うえ、ナレーションの枠は尖っているほうが普通（要件定義 10.1）。
+
+    他の3種と違って `settings` を見ない。分割数も谷の深さも効く余地が無い。
+    """
+    return (
+        (rect.x, rect.y),
+        (rect.right, rect.y),
+        (rect.right, rect.bottom),
+        (rect.x, rect.bottom),
+    )
+
+
 def balloon_outline(
     balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
 ) -> tuple[tuple[float, float], ...]:
-    """吹き出し本体の輪郭。種類で切り替える。"""
+    """吹き出し本体の輪郭。種類で切り替える。
+
+    **画面・サムネイル・PNG 書き出しの3つがここを通る。** 種類を足すときは
+    この分岐にだけ形を足せば、3つとも同時に新しい形になる（→ 6.13）。
+    """
     if balloon.style == "jagged":
         return jagged_points(balloon.rect, settings)
     if balloon.style == "wavy":
         return wavy_points(balloon.rect, settings)
+    if balloon.style == "rect":
+        return rect_points(balloon.rect)
     return ellipse_points(balloon.rect, settings)
 
 
@@ -636,6 +658,11 @@ def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float
 
     輪郭より必ず内側に置く。外側だと、輪郭が凹んでいる箇所（ギザギザの谷、
     波形の谷）で本体と三角形が離れ、継ぎ目に隙間が空く。
+
+    **四角も 0.95 のまま**でよい。四角に内接する楕円はどの向きでも箱の
+    内側にあるので、付け根はいつも本体に隠れ、三角形は辺を突き抜けて出る。
+    辺に沿った厳密な付け根は作らない——四角はしっぽを消して置くもので、
+    出したときに破綻しなければ足りる（要件定義 10.1）。
     """
     if balloon.style == "jagged":
         return 1.0 - min(max(settings.jagged_depth, 0.0), 0.9)
@@ -821,14 +848,20 @@ def default_balloon_rect(
 
 
 def balloon_contains(balloon: BalloonObject, x: float, y: float) -> bool:
-    """吹き出しの本体（楕円）の内側か。
+    """吹き出しの本体の内側か。
 
-    外接矩形ではなく楕円で判定する。矩形だと四隅の何もない場所で
-    掴めてしまい、下のコマが選べなくなる。
+    **丸い種類は外接矩形ではなく楕円で判定する。** 矩形だと四隅の何もない
+    場所で掴めてしまい、下のコマが選べなくなる（要件定義 6.4）。
+
+    **四角だけは矩形で判定する。** 同じ理屈がそのまま裏返り、楕円のままだと
+    見えている箱の四隅が判定から漏れて、押しても下のものが選ばれる。
+    形が矩形なので、ここでは四隅も「何かある場所」になる。
     """
     rect = balloon.rect
     if rect.w <= 0.0 or rect.h <= 0.0:
         return False
+    if balloon.style == "rect":
+        return rect.contains(x, y)
     cx, cy = rect.center
     nx = (x - cx) / (rect.w / 2.0)
     ny = (y - cy) / (rect.h / 2.0)

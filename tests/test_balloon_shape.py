@@ -463,6 +463,49 @@ class TestHitTest:
         assert balloon_at(project.pages[0], 5.0, 5.0) is None
 
 
+class TestRect:
+    """四角_フキダシ（ナレーション・地の文 → 要件定義 10.1）。"""
+
+    @pytest.fixture
+    def boxed(self, balloon):
+        balloon.style = "rect"
+        return balloon
+
+    def test_輪郭は矩形の4隅(self, boxed):
+        assert balloon_outline(boxed, SETTINGS) == (
+            (RECT.x, RECT.y),
+            (RECT.right, RECT.y),
+            (RECT.right, RECT.bottom),
+            (RECT.x, RECT.bottom),
+        )
+
+    def test_四隅も当たる(self, boxed):
+        """**丸い3種とは逆になる**（→ `TestHitTest.test_四隅は当たらない`）。
+
+        楕円のまま判定すると、見えている箱の隅を押しても判定から漏れ、
+        下のものが選ばれる。押しても掴めない形で出るので気づきにくい。
+        """
+        for x, y in balloon_outline(boxed, SETTINGS):
+            assert balloon_contains(boxed, x, y)
+
+    def test_外は当たらない(self, boxed):
+        assert not balloon_contains(boxed, RECT.x - 0.1, RECT.y)
+        assert not balloon_contains(boxed, RECT.right + 0.1, RECT.bottom)
+
+    def test_種類を変えると判定も入れ替わる(self, boxed):
+        """判定は保存された `style` だけで決まる（形と食い違わない）。"""
+        assert balloon_contains(boxed, RECT.x, RECT.y)
+        boxed.style = "ellipse"
+        assert not balloon_contains(boxed, RECT.x, RECT.y)
+
+    def test_しっぽの付け根は箱の内側に入る(self, boxed):
+        """出したときに破綻しないこと。三角形は辺を突き抜けて出る。"""
+        boxed.tail.tip = (RECT.center[0], RECT.bottom + 40.0)
+        root = tail_root_point(boxed, SETTINGS)
+        assert root is not None
+        assert RECT.contains(*root)
+
+
 class TestAttach:
     def test_中心が乗っているコマに紐づく(self):
         project = new_project()

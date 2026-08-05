@@ -71,8 +71,20 @@ ID_PREFIX_STICKER = "stk"
 _ID_RE = re.compile(r"^[a-z]+_(\d+)$")
 
 # 吹き出しの種類。`wavy`（波形）は**不安・動揺・弱った声**を表す。
-# ギザギザで代用すると叫びに読めてしまい、意味が逆になる
-BALLOON_STYLES = ("ellipse", "jagged", "wavy")
+# ギザギザで代用すると叫びに読めてしまい、意味が逆になる。
+#
+# `rect`（四角）は**ナレーション・地の文**で、誰かのセリフではない。
+# 他の3種と違って輪郭が楕円から作れず、当たり判定も矩形で行う
+# （要件定義 10.1）
+BALLOON_STYLES = ("ellipse", "jagged", "wavy", "rect")
+
+# 作った時点でしっぽを消しておく種類。四角はナレーションに使うもので、
+# 指す相手がいない（要件定義 10.1）。
+#
+# **禁止ではなく、置いたときの既定の話。** あとから「しっぽを出す」で
+# 出せる。種類を変えたときにも触らない——既にあるフキダシのしっぽを
+# 黙って消すことになるため
+BALLOON_STYLES_WITHOUT_TAIL = ("rect",)
 TEXT_ALIGNS = ("left", "center", "right")
 TEXT_DIRECTIONS = ("horizontal", "vertical")
 

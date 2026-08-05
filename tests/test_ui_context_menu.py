@@ -22,6 +22,8 @@ from manga_layout.model import BalloonObject, Panel, TextObject
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import BALLOON_STYLE_LABELS, TOOL_SELECT
 from manga_layout.ui.window import (
+    BALLOON_PLACE_HERE_NAME,
+    BALLOON_STYLE_MENU_LABEL,
     PLACE_HERE_PREFIX,
     REPLACE_IMAGE_LABEL,
     SPLIT_HERE_PREFIX,
@@ -113,6 +115,38 @@ def find(menu: QMenu, label: str):
         if action.text() == label:
             return action
     raise AssertionError(f"{label} がメニューに無い: {labels(menu)}")
+
+
+def _open_folded(menu: QMenu, label: str):
+    """畳んだメニューを名前で開き、**見出しの QAction ごと**返す。
+
+    `QAction.menu()` はその QMenu を呼び出し側の QAction に引き取らせる
+    （→ `MainWindow._items_to_copy`）。**見出しを使い捨てにすると、返って
+    きた QMenu はその場で消える。** `find(menu, label).menu()` と1行で書いて
+    実際に `Internal C++ object already deleted` になった（2026-08-05）。
+
+    そのため見出しを呼び出し側へ一緒に返し、中身を読み終わるまで
+    生かしておく。**畳んだメニューを覗くのはこの関数を通してだけにする。**
+    """
+    action = find(menu, label)
+    sub = action.menu()
+    assert sub is not None, f"{label} は畳んだメニューではない: {labels(menu)}"
+    return action, sub
+
+
+def folded_labels(menu: QMenu, label: str) -> list[str]:
+    """畳んだメニューの中身（項目名）。"""
+    action, sub = _open_folded(menu, label)
+    found = labels(sub)
+    del action  # 読み終わるまで生かしておくためだけに持っていた
+    return found
+
+
+def trigger_folded(menu: QMenu, label: str, item: str) -> None:
+    """畳んだメニューの中の項目を押す。"""
+    action, sub = _open_folded(menu, label)
+    find(sub, item).trigger()
+    del action
 
 
 def only(page, kind):
@@ -210,8 +244,11 @@ class TestContents:
         assert split_first("横に割る") in found
         for name in ("縦に割る", "斜めに割る"):
             assert split_rest(name) in found
-        # コマを選ぶと「コマ」が外れるので、フキダシが並びの1つめになる
-        assert place_first(BALLOON_STYLE_LABELS["ellipse"]) in found
+        # コマを選ぶと「コマ」が外れるので、フキダシが並びの1つめになる。
+        # 種類は畳んだ下にある（→ 要件定義 10.1）
+        assert place_first(BALLOON_PLACE_HERE_NAME) in found
+        styles = folded_labels(menu, place_first(BALLOON_PLACE_HERE_NAME))
+        assert BALLOON_STYLE_LABELS["ellipse"] in styles
         assert "貼り付け" in found
         # 何が消えるかを名前に出す（→ MainWindow.delete_target）
         assert "コマを削除" in found
@@ -224,7 +261,8 @@ class TestContents:
 
         menu = right_click(window_with_panel, 300.0, 300.0)
         found = labels(menu)
-        assert f"{JAGGED}にする" in found
+        # 種類を変える項目は畳んだ下にある（→ 要件定義 10.1）
+        assert f"{JAGGED}にする" in folded_labels(menu, BALLOON_STYLE_MENU_LABEL)
         assert "しっぽを消す" in found
         # フキダシを選ぶとマークが1つめになるので、セリフは前置きが落ちる
         assert place_rest("セリフ") in found
@@ -283,8 +321,9 @@ class TestContents:
         found = labels(right_click(window_with_panel, 400.0, 300.0))
 
         indented = [label for label in found if label.startswith("　")]
-        # 割る2つ（縦・斜め）と、置く5つ（フキダシ2・マーク2・セリフ）
-        assert len(indented) == 7
+        # 割る2つ（縦・斜め）と、置く3つ（マーク2・セリフ）。フキダシは
+        # 畳んで1行になり、それが置く組の1つめなので前置きが付く
+        assert len(indented) == 5
         # 空白の数が1種類なら、どちらの組も同じ列から名前が始まる
         assert len({len(label) - len(label.lstrip("　")) for label in indented}) == 1
 
@@ -395,9 +434,12 @@ class TestSharedActions:
             action.menu()
         gc.collect()
 
-        found = labels(right_click(window_with_panel, 300.0, 300.0))
-        assert "しっぽを消す" in found
-        assert f"{JAGGED}にする" in found
+        menu = right_click(window_with_panel, 300.0, 300.0)
+        assert "しっぽを消す" in labels(menu)
+        # 畳んだ側も同じように組み直せること。**ここが本題。**
+        # 種類の項目は畳んだ QMenu に並ぶので、辿られて実体が消えていると
+        # ここで空になる（→ `MainWindow._build_balloon_style_menu`）
+        assert f"{JAGGED}にする" in folded_labels(menu, BALLOON_STYLE_MENU_LABEL)
 
 
 class TestActions:
@@ -416,7 +458,7 @@ class TestActions:
 
     def test_ここに吹き出しを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, place_rest(JAGGED)).trigger()
+        trigger_folded(menu, place_first(BALLOON_PLACE_HERE_NAME), JAGGED)
 
         balloon = only(window_with_panel.state.page, BalloonObject)
         assert balloon.style == "jagged"

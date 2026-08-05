@@ -28,10 +28,13 @@ import pytest
 from manga_layout import Rect
 from manga_layout.model import BalloonObject
 from manga_layout.ui import EditorState, MainWindow
+from manga_layout.ui.window import BALLOON_STYLE_MENU_LABEL
 from manga_layout.ui.state import (
     BALLOON_STYLE_LABELS,
+    BALLOON_TOOLS,
     TOOL_BALLOON,
     TOOL_BALLOON_JAGGED,
+    TOOL_BALLOON_RECT,
     TOOL_BALLOON_WAVY,
     TOOL_PANEL,
     TOOL_SELECT,
@@ -138,7 +141,7 @@ def balloon_menu_items(window):
     """フキダシメニューの項目（区切り線を除く）。
 
     **名前で探さない。中身で探す。**
-    メニューバーを辿り、「種類を変える項目」を含むメニューを見つける。
+    メニューバーを辿り、しっぽの項目を含むメニューを見つける。
     呼び名を変えるたびに「見つかりません」で落ちると、**呼び名の変更なのか
     メニューが消えたのか区別できない**ため。
 
@@ -148,15 +151,37 @@ def balloon_menu_items(window):
     2026-08-04、`window.balloon_menu` を直に見る形にした6件がこれで落ちた。
     アプリ側は QMenu を持たない形に直したので、この書き方のままでよい。
 
-    目印に「種類を変える項目」を使うのは、道具の項目だと**道具メニューにも
-    同じものが並んでいる**ため。こちらはフキダシメニューにしか無い。
+    目印にしっぽの項目を使うのは、道具の項目だと**道具メニューにも同じものが
+    並んでいる**ため。こちらはフキダシメニューにしか無い。種類を変える項目は
+    畳んだので目印に使えない（このメニューには居ない → `balloon_style_items`）。
+
+    **畳んだメニューの見出しは持ち帰らない。** 見出しの QAction は下位の
+    QMenu が持っているもので、ここで辿ったメニューを手放した時点で実体ごと
+    消える。持ち帰ると、呼んだ側が触った瞬間に
+    `Internal C++ object already deleted` になる（2026-08-05 に実測）。
+    持ち帰ってよいのは、ウィンドウが親の QAction だけ
+    （→ `MainWindow._items_to_copy`）。
     """
-    marker = window.balloon_actions[0]
+    marker = window.tail_action
     for action in window.menuBar().actions():
         menu = action.menu()
         if menu is not None and marker in menu.actions():
-            return [a for a in menu.actions() if not a.isSeparator()]
+            return [
+                a
+                for a in menu.actions()
+                if not a.isSeparator() and a.text() != BALLOON_STYLE_MENU_LABEL
+            ]
     raise AssertionError("フキダシメニューが見つかりません")
+
+
+def balloon_style_items(window):
+    """畳んだ「種類を変える」の中身（→ `MainWindow._build_balloon_style_menu`）。
+
+    **メニューを辿らず、控えてある QAction を見る。** 畳んだ QMenu を取るには
+    `QAction.menu()` を呼ぶことになり、アプリ側が持っている項目の実体まで
+    巻き込んで消してしまう（→ `balloon_menu_items` の但し書き）。
+    """
+    return [a for a in window.balloon_actions if a.text().endswith("にする")]
 
 
 class TestBalloonMenu:
@@ -172,35 +197,45 @@ class TestBalloonMenu:
         assert usable, "吹き出しメニューが全部グレーになっている"
 
     def test_追加の項目が先頭にある(self, window):
+        """**種類の数は数えない。** 足すたびにここを直すことになる。"""
         items = balloon_menu_items(window)
-        assert all(a.isEnabled() for a in items[:3])
-        assert all("追加" in a.text() for a in items[:3])
+        head = items[: len(BALLOON_TOOLS)]
+        assert all(a.isEnabled() for a in head)
+        assert all("追加" in a.text() for a in head)
 
     def test_追加の項目から道具に切り替わる(self, window):
         items = balloon_menu_items(window)
-        items[0].trigger()
-        assert window.state.tool == TOOL_BALLOON
-        items[1].trigger()
-        assert window.state.tool == TOOL_BALLOON_JAGGED
-        items[2].trigger()
-        assert window.state.tool == TOOL_BALLOON_WAVY
+        for item, tool in zip(items, BALLOON_TOOLS):
+            item.trigger()
+            assert window.state.tool == tool
 
     def test_道具バーと同じ項目を指す(self, window):
         """別々の項目にすると、選ばれている印が片方にしか付かない。"""
         items = balloon_menu_items(window)
-        assert items[0] is window._tool_actions[TOOL_BALLOON]
-        assert items[1] is window._tool_actions[TOOL_BALLOON_JAGGED]
-        assert items[2] is window._tool_actions[TOOL_BALLOON_WAVY]
+        for item, tool in zip(items, BALLOON_TOOLS):
+            assert item is window._tool_actions[tool]
 
     def test_選択中だけ使える項目もある(self, window_with_balloon):
         items = balloon_menu_items(window_with_balloon)
         assert all(a.isEnabled() for a in items)
+        assert all(a.isEnabled() for a in balloon_style_items(window_with_balloon))
 
     def test_選択を外すと編集の項目は戻る(self, window_with_balloon):
         window_with_balloon.state.select(None)
         labels = {a.text(): a.isEnabled() for a in balloon_menu_items(window_with_balloon)}
-        assert labels[f"{BALLOON_STYLE_LABELS['ellipse']}にする"] is False
         assert labels["しっぽを消す"] is False
+        # 畳んだ側も一緒に戻る（→ `balloon_style_items`）
+        styles = {a.text(): a.isEnabled() for a in balloon_style_items(window_with_balloon)}
+        assert styles[f"{BALLOON_STYLE_LABELS['ellipse']}にする"] is False
+
+    def test_種類を変える項目は畳んだ側に全部ある(self, window_with_balloon):
+        """**畳んでも、変えられる種類が減っていないこと**（要件定義 10.1）。
+
+        メニューバーの並びから外したので、うっかり落ちても平らな並びの
+        検証では気づけない。数ではなく呼び名の集合で見る。
+        """
+        found = {a.text() for a in balloon_style_items(window_with_balloon)}
+        assert found == {f"{name}にする" for name in BALLOON_STYLE_LABELS.values()}
 
 
 class TestAdd:
@@ -244,6 +279,39 @@ class TestAdd:
         window_with_panel.state.set_tool(TOOL_BALLOON_WAVY)
         click(window_with_panel.view, 360.0, 300.0)
         assert window_with_panel.state.page.floating[0].style == "wavy"
+
+    def test_四角の道具で種類が変わる(self, window_with_panel):
+        window_with_panel.state.set_tool(TOOL_BALLOON_RECT)
+        click(window_with_panel.view, 360.0, 300.0)
+        assert window_with_panel.state.page.floating[0].style == "rect"
+
+    def test_四角はしっぽを消した状態で置かれる(self, window_with_panel):
+        """ナレーション・地の文なので、指す相手がいない（要件定義 10.1）。"""
+        window_with_panel.state.set_tool(TOOL_BALLOON_RECT)
+        click(window_with_panel.view, 360.0, 300.0)
+
+        tail = window_with_panel.state.page.floating[0].tail
+        assert tail.enabled is False
+        # 先端は入れておく。あとで「しっぽを出す」を選んだときに、
+        # 向きの決まらないしっぽが出ないようにするため
+        assert tail.tip != (0.0, 0.0)
+
+    def test_四角以外はしっぽが付いたまま(self, window_with_panel):
+        """消すのは四角だけ。他の種類を巻き添えにしない。"""
+        window_with_panel.state.set_tool(TOOL_BALLOON)
+        click(window_with_panel.view, 360.0, 300.0)
+        assert window_with_panel.state.page.floating[0].tail.enabled is True
+
+    def test_四角にしてもしっぽは黙って消えない(self, window_with_balloon):
+        """**消すのは置いたときだけ。** 種類を変える操作で消すと、
+        既にあるフキダシのしっぽが黙って失われる（要件定義 10.1）。
+        """
+        balloon = window_with_balloon.state.selected_balloon
+        window_with_balloon.state.set_balloon_style(balloon.id, "rect")
+
+        changed = window_with_balloon.state.selected_balloon
+        assert changed.style == "rect"
+        assert changed.tail.enabled is True
 
     def test_コマの上でも作れる(self, window_with_panel):
         """吹き出しはコマの上に置くもの。空白限定にすると置き場所が無い。"""

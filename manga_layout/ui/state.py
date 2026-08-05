@@ -38,6 +38,7 @@ from ..layout import (
 )
 from ..slant import flip_slant_pair, slide_slant_pair
 from ..model import (
+    BALLOON_STYLES_WITHOUT_TAIL,
     NOTE_COLORS,
     BalloonObject,
     FocusLines,
@@ -65,6 +66,7 @@ TOOL_SPLIT_SLANT = "split_slant"
 TOOL_BALLOON = "balloon"
 TOOL_BALLOON_JAGGED = "balloon_jagged"
 TOOL_BALLOON_WAVY = "balloon_wavy"
+TOOL_BALLOON_RECT = "balloon_rect"
 TOOL_TEXT = "text"
 TOOL_STICKER_EXCLAIM = "sticker_exclaim"
 TOOL_STICKER_EXCLAIM_QUESTION = "sticker_exclaim_question"
@@ -74,6 +76,7 @@ BALLOON_TOOLS = {
     TOOL_BALLOON: "ellipse",
     TOOL_BALLOON_JAGGED: "jagged",
     TOOL_BALLOON_WAVY: "wavy",
+    TOOL_BALLOON_RECT: "rect",
 }
 
 # どの道具がどの種類のマークを置くか（要件定義 6.14）
@@ -113,6 +116,7 @@ BALLOON_STYLE_LABELS = {
     "ellipse": "丸い_フキダシ",
     "jagged": "ギザギザ_フキダシ",
     "wavy": "ふわふわ_フキダシ",
+    "rect": "四角_フキダシ",
 }
 
 TOOL_LABELS = {
@@ -840,6 +844,11 @@ class EditorState(QObject):
         重なっているコマに自動で紐づける（要件定義 6.4）。紐づけておくと、
         あとでコマを動かしたときに吹き出しが付いて回る。外したいときは
         あとから解除できる。
+
+        **四角はしっぽを消した状態で置く**（`BALLOON_STYLES_WITHOUT_TAIL`）。
+        ナレーション・地の文に使うもので、指す相手がいない。先端の位置は
+        他の種類と同じに入れておく——あとで「しっぽを出す」を選んだときに、
+        向きの決まらないしっぽが出ないようにするため。
         """
         page = self.page
         attached = attach_target(page, rect)
@@ -850,7 +859,9 @@ class EditorState(QObject):
                 project.pages[self._page_index], rect, style, attached
             )
             balloon.tail = Tail(
-                enabled=True, tip=tip, width=self.balloon_settings.tail_width
+                enabled=style not in BALLOON_STYLES_WITHOUT_TAIL,
+                tip=tip,
+                width=self.balloon_settings.tail_width,
             )
         self.select(balloon.id)
         return balloon

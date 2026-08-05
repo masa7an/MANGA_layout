@@ -1810,9 +1810,15 @@ class PageView(QGraphicsView):
         self.state.set_tool(TOOL_SELECT)
 
         where = "コマに紐づけました" if balloon.attached_panel_id else "コマの外です"
-        self.state.message.emit(
-            f"フキダシを追加しました（{where}）。丸い印を引くとしっぽの向きが変わります"
+        # **しっぽの案内は、しっぽがあるときだけ出す。** 四角はしっぽを
+        # 消して置くので（要件定義 10.1）、そのまま出すと画面に無い印を
+        # 引けと言うことになる
+        how = (
+            "丸い印を引くとしっぽの向きが変わります"
+            if balloon.tail.enabled
+            else "しっぽはメニューの「しっぽを出す」から足せます"
         )
+        self.state.message.emit(f"フキダシを追加しました（{where}）。{how}")
 
     def _apply_create_sticker(
         self, rect: Rect, press: tuple[float, float], kind: str | None = None

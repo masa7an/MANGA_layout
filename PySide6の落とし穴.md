@@ -115,9 +115,44 @@ self.balloon_copy_items = self._items_to_copy(balloon_menu)
 | `action.menu()` で取ったメニューを、その場で読んで捨てる | 可。テストはこれ |
 | `action.menu()` で取ったメニューを保持する | 不可。取り出し元の `QAction` も一緒に持たないと壊れる |
 | `QAction` を控えて後で使う | **可**。ウィンドウを親にして作れば（`QAction(text, self)`）安全 |
+| `menu.addMenu(sub)` の**戻り値の QAction** を控える | **不可**。これは `sub` が持っている QAction で、上と同じに壊れる（→ 下） |
 
 「呼ばないようにする」という申し合わせでは守れない。
 **呼ばれても壊れないものを持つ**のが唯一の対処。
+
+### 続き: 畳んだメニューの「見出し」も同じ穴に落ちる（2026-08-05 に追記）
+
+四角_フキダシを足すとき（要件定義 10.1）、種類を変える項目を下位のメニューへ
+畳んだ。そのとき**見出しの QAction を有効・無効の一覧に入れた**。
+
+```python
+style_menu_action = balloon_menu.addMenu(self._build_balloon_style_menu())
+self.balloon_actions.append(style_menu_action)   # ← これが壊れる
+```
+
+見た目は `_act` で作った項目を控えるのと同じだが、**この QAction の持ち主は
+ウィンドウではなく下位の QMenu**。メニューバーを `QAction.menu()` で辿られると
+一緒に引き取られ、以後 `_refresh` が毎回
+
+```
+RuntimeError: libshiboken: Internal C++ object (PySide6.QtGui.QAction) already deleted.
+```
+
+で落ちるようになった。**`addMenu()` の戻り値は「控えてよい QAction」に見えるが
+違う**、というのがこの追記の要点。
+
+対処は、見出しを控えないこと。畳んだ中身（`_act` で作った項目）だけを控え、
+見出しは使えるままにする。中身がグレーになるので、押せない状態は伝わる。
+集中線のメニューが最初からこの形だったため、**同じ形にすれば済んだ**。
+
+同じことがテスト側でも起きる。メニューを辿って項目を持ち帰る書き方
+（`tests/test_ui_balloon.py::balloon_menu_items`）は、**見出しを混ぜて返した
+時点で呼んだ側が壊れる**。持ち帰る前に落とす。
+
+`find(menu, label).menu()` の1行も同じ穴。**取り出し元の QAction を
+使い捨てにすると、返ってきた QMenu がその場で消える**（上の表の3行目そのもの）。
+中身を読み終わるまで QAction を生かしておく形にした
+（`tests/test_ui_context_menu.py::_open_folded`）。
 
 ### 歯止め
 
