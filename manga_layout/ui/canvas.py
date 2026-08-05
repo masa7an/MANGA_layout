@@ -252,6 +252,29 @@ _HANDLE_CURSORS = {
     "w": Qt.CursorShape.SizeHorCursor,
 }
 
+# 移動・大きさ変更で「矩形をそのまま差し替えるだけ」で済む型。
+# `PageView._apply_move` / `_apply_resize` が使う（→ そちらのコメントに詳細）。
+#
+# `getter` は `EditorState` を受けて選択中のその型のオブジェクトを返す関数。
+# 型自身を渡さず呼び出し可能にしてあるのは、選ばれているかどうかの判定と
+# 取り出しを1回で済ませるため。
+#
+# コマはどちらにも乗らない（斜めの組・最小サイズなど、大きさ変更・移動
+# 特有の制約を持つため）
+_MOVE_TARGETS = (
+    (lambda s: s.selected_image, ImageObject, "画像"),
+    (lambda s: s.selected_text, TextObject, "セリフ"),
+    (lambda s: s.selected_sticker, StickerObject, "マーク"),
+)
+# 大きさ変更は、フキダシも矩形を差し替えるだけで済む
+# （しっぽの先端は動かさないままでよい）ので、こちらにだけ足す。
+# **移動には足さない。** 動かすときはしっぽの先端も一緒にずらす必要があり
+# （`Page.move_balloon`）、単純な `rect = rect.translated(...)` では済まない
+_RESIZE_TARGETS = (
+    *_MOVE_TARGETS,
+    (lambda s: s.selected_balloon, BalloonObject, "フキダシ"),
+)
+
 
 class PageScene(QGraphicsScene):
     """1ページぶんの描画。部品を持たず、その場で描く。"""
@@ -1928,25 +1951,13 @@ class PageView(QGraphicsView):
         if object_id is None:
             return
 
-        if self.state.selected_image is not None:
-            with self.state.edit("画像の移動") as project:
-                image = project.pages[self.state.page_index].find(object_id)
-                if isinstance(image, ImageObject):
-                    image.rect = image.rect.translated(dx, dy)
-            return
-
-        if self.state.selected_text is not None:
-            with self.state.edit("セリフの移動") as project:
-                text = project.pages[self.state.page_index].find(object_id)
-                if isinstance(text, TextObject):
-                    text.rect = text.rect.translated(dx, dy)
-            return
-
-        if self.state.selected_sticker is not None:
-            with self.state.edit("マークの移動") as project:
-                sticker = project.pages[self.state.page_index].find(object_id)
-                if isinstance(sticker, StickerObject):
-                    sticker.rect = sticker.rect.translated(dx, dy)
+        for getter, cls, name in _MOVE_TARGETS:
+            if getter(self.state) is None:
+                continue
+            with self.state.edit_page(f"{name}の移動") as page:
+                obj = page.find(object_id)
+                if isinstance(obj, cls):
+                    obj.rect = obj.rect.translated(dx, dy)
             return
 
         if self.state.selected_balloon is not None:
@@ -1954,12 +1965,12 @@ class PageView(QGraphicsView):
             # 指すページ座標なので、吹き出しの置き場所を変えても
             # 指す相手は変わらない（要件定義 4章）。
             # 上に乗ったセリフは一緒に動く
-            with self.state.edit("フキダシの移動") as project:
-                project.pages[self.state.page_index].move_balloon(object_id, dx, dy)
+            with self.state.edit_page("フキダシの移動") as page:
+                page.move_balloon(object_id, dx, dy)
             return
 
-        with self.state.edit("コマの移動") as project:
-            project.pages[self.state.page_index].move_panel(object_id, dx, dy)
+        with self.state.edit_page("コマの移動") as page:
+            page.move_panel(object_id, dx, dy)
 
     def _apply_rotate(self, image_id: str, angle: float) -> None:
         """回した結果を確定する。
@@ -1970,57 +1981,23 @@ class PageView(QGraphicsView):
         image = self.state.selected_image
         if image is None or image.id != image_id or image.rotation == angle:
             return
-        with self.state.edit("画像の回転") as project:
-            target = project.pages[self.state.page_index].find(image_id)
+        with self.state.edit_page("画像の回転") as page:
+            target = page.find(image_id)
             if isinstance(target, ImageObject):
                 target.rotation = angle
         self.state.message.emit(f"{angle:.0f}° 傾けました")
 
     def _apply_resize(self, rect: Rect) -> None:
-        image = self.state.selected_image
-        if image is not None:
-            if image.rect == rect:
+        for getter, cls, name in _RESIZE_TARGETS:
+            obj = getter(self.state)
+            if obj is None:
+                continue
+            if obj.rect == rect:
                 return
-            image_id = image.id
-            with self.state.edit("画像の大きさ変更") as project:
-                target = project.pages[self.state.page_index].find(image_id)
-                if isinstance(target, ImageObject):
-                    target.rect = rect
-            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
-            return
-
-        text = self.state.selected_text
-        if text is not None:
-            if text.rect == rect:
-                return
-            text_id = text.id
-            with self.state.edit("セリフの大きさ変更") as project:
-                target = project.pages[self.state.page_index].find(text_id)
-                if isinstance(target, TextObject):
-                    target.rect = rect
-            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
-            return
-
-        sticker = self.state.selected_sticker
-        if sticker is not None:
-            if sticker.rect == rect:
-                return
-            sticker_id = sticker.id
-            with self.state.edit("マークの大きさ変更") as project:
-                target = project.pages[self.state.page_index].find(sticker_id)
-                if isinstance(target, StickerObject):
-                    target.rect = rect
-            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
-            return
-
-        balloon = self.state.selected_balloon
-        if balloon is not None:
-            if balloon.rect == rect:
-                return
-            balloon_id = balloon.id
-            with self.state.edit("フキダシの大きさ変更") as project:
-                target = project.pages[self.state.page_index].find(balloon_id)
-                if isinstance(target, BalloonObject):
+            object_id = obj.id
+            with self.state.edit_page(f"{name}の大きさ変更") as page:
+                target = page.find(object_id)
+                if isinstance(target, cls):
                     target.rect = rect
             self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return
@@ -2036,8 +2013,7 @@ class PageView(QGraphicsView):
         if pair is not None:
             if self.state.page.slant_bounds(pair) == rect:
                 return
-            with self.state.edit("斜めのコマの大きさ変更") as project:
-                page = project.pages[self.state.page_index]
+            with self.state.edit_page("斜めのコマの大きさ変更") as page:
                 set_slant_pair_rect(
                     page, page.slant_pair_of(panel_id), rect, self.state.settings
                 )
@@ -2046,8 +2022,8 @@ class PageView(QGraphicsView):
 
         if panel.shape.bounds() == rect:
             return
-        with self.state.edit("コマの大きさ変更") as project:
-            set_panel_rect(project.pages[self.state.page_index].panel(panel_id), rect)
+        with self.state.edit_page("コマの大きさ変更") as page:
+            set_panel_rect(page.panel(panel_id), rect)
         self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
 
     # -- 分割 --------------------------------------------------------------

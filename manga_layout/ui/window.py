@@ -1324,8 +1324,8 @@ class MainWindow(QMainWindow):
         if balloon is None:
             return
         balloon_id = balloon.id
-        with self.state.edit("フキダシの削除") as project:
-            project.pages[self.state.page_index].remove_floating(balloon_id)
+        with self.state.edit_page("フキダシの削除") as page:
+            page.remove_floating(balloon_id)
         self.state.select(None)
         self.state.message.emit("フキダシを削除しました")
 
@@ -1336,8 +1336,8 @@ class MainWindow(QMainWindow):
             return
         label = object_label(sticker)
         sticker_id = sticker.id
-        with self.state.edit(f"{label}の削除") as project:
-            project.pages[self.state.page_index].remove_floating(sticker_id)
+        with self.state.edit_page(f"{label}の削除") as page:
+            page.remove_floating(sticker_id)
         self.state.select(None)
         self.state.message.emit(f"{label}を削除しました")
 
@@ -1367,8 +1367,8 @@ class MainWindow(QMainWindow):
         if panel is None:
             return
         panel_id = panel.id
-        with self.state.edit("コマの削除") as project:
-            project.pages[self.state.page_index].remove_panel(panel_id)
+        with self.state.edit_page("コマの削除") as page:
+            page.remove_panel(panel_id)
         self.state.select(None)
         self.state.message.emit("コマを削除しました")
 
@@ -1437,8 +1437,8 @@ class MainWindow(QMainWindow):
         panel = self.state.page.panel_of_image(image_id)
         panel_id = panel.id if panel is not None else None
 
-        with self.state.edit("画像の削除") as project:
-            target = project.pages[self.state.page_index].panel_of_image(image_id)
+        with self.state.edit_page("画像の削除") as page:
+            target = page.panel_of_image(image_id)
             if target is not None:
                 target.children = [c for c in target.children if c.id != image_id]
 
@@ -1574,8 +1574,8 @@ class MainWindow(QMainWindow):
         if rect == image.rect:
             return
         image_id = image.id
-        with self.state.edit("コマにフィット") as project:
-            target = project.pages[self.state.page_index].find(image_id)
+        with self.state.edit_page("コマにフィット") as page:
+            target = page.find(image_id)
             if isinstance(target, ImageObject):
                 target.rect = rect
         self.state.message.emit(f"コマを埋めました（{rect.w:.0f} × {rect.h:.0f} px）")
@@ -1590,8 +1590,8 @@ class MainWindow(QMainWindow):
         if image is None or image.rotation == 0.0:
             return
         image_id = image.id
-        with self.state.edit("回転をリセット") as project:
-            target = project.pages[self.state.page_index].find(image_id)
+        with self.state.edit_page("回転をリセット") as page:
+            target = page.find(image_id)
             if isinstance(target, ImageObject):
                 target.rotation = 0.0
         self.state.message.emit("傾きを戻しました")
@@ -1782,8 +1782,8 @@ class MainWindow(QMainWindow):
         if text is None:
             return
         text_id = text.id
-        with self.state.edit("セリフの削除") as project:
-            project.pages[self.state.page_index].remove_floating(text_id)
+        with self.state.edit_page("セリフの削除") as page:
+            page.remove_floating(text_id)
         self.state.select(None)
         self.state.message.emit("セリフを削除しました")
 

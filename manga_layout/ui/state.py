@@ -362,6 +362,20 @@ class EditorState(QObject):
             yield project
         self.changed.emit()
 
+    @contextlib.contextmanager
+    def edit_page(self, label: str, *, merge_key: str | None = None) -> Iterator[Page]:
+        """1手ぶんの編集。表示中のページを直接返す。
+
+        `edit()` に続けて `project.pages[self._page_index]` と書く形が
+        呼び出し側の大半を占めていたための省略形（型は違うが `page`
+        プロパティと対になる書き方）。
+
+        **`Project` そのものが要る操作には使えない。** `project.add_balloon`
+        のように `Project` のメソッドを呼ぶ側は、今まで通り `edit()` を使うこと
+        """
+        with self.edit(label, merge_key=merge_key) as project:
+            yield project.pages[self._page_index]
+
     def undo(self) -> None:
         label = self.history.undo()
         if label is None:
@@ -628,8 +642,7 @@ class EditorState(QObject):
             return False
 
         panel_id = panel.id
-        with self.edit("斜めの向きを反転") as project:
-            page = project.pages[self._page_index]
+        with self.edit_page("斜めの向きを反転") as page:
             flip_slant_pair(page, page.slant_pair_of(panel_id), self.settings)
         return True
 
@@ -639,8 +652,7 @@ class EditorState(QObject):
         1回のドラッグで1手。ドラッグ中は画面側が下見を描くだけで、
         ここへは離した時点で1度だけ来る（しっぽの付け根と同じ流儀）。
         """
-        with self.edit("斜めの境界を移動") as project:
-            page = project.pages[self._page_index]
+        with self.edit_page("斜めの境界を移動") as page:
             pair = page.slant_pair_of(panel_id)
             if pair is not None:
                 slide_slant_pair(page, pair, ratio, self.settings)
@@ -658,8 +670,7 @@ class EditorState(QObject):
         が「片方でもロックなら組ごと動かせない」で見ているのと対）。
         """
         label = "コマをロック" if locked else "コマのロックを解除"
-        with self.edit(label) as project:
-            page = project.pages[self._page_index]
+        with self.edit_page(label) as page:
             pair = page.slant_pair_of(panel_id)
             targets = pair.members() if pair is not None else (panel_id,)
             for target_id in targets:
@@ -682,8 +693,8 @@ class EditorState(QObject):
         page = self.page
         if not page.panels or all(p.locked for p in page.panels):
             return False
-        with self.edit("このページのコマをすべてロック") as project:
-            for panel in project.pages[self._page_index].panels:
+        with self.edit_page("このページのコマをすべてロック") as page:
+            for panel in page.panels:
                 panel.locked = True
         return True
 
@@ -691,8 +702,8 @@ class EditorState(QObject):
         """このページのコマのロックをすべて解除する。変わったら True。"""
         if not any(p.locked for p in self.page.panels):
             return False
-        with self.edit("このページのコマのロックをすべて解除") as project:
-            for panel in project.pages[self._page_index].panels:
+        with self.edit_page("このページのコマのロックをすべて解除") as page:
+            for panel in page.panels:
                 panel.locked = False
         return True
 
@@ -716,8 +727,8 @@ class EditorState(QObject):
 
         @contextlib.contextmanager
         def scope():
-            with self.edit(label) as project:
-                target = project.pages[self._page_index].find(panel_id)
+            with self.edit_page(label) as page:
+                target = page.find(panel_id)
                 if not isinstance(target, Panel) or target.focus_lines is None:
                     raise KeyError(f"集中線の入ったコマが見つかりません: {panel_id}")
                 yield target
@@ -738,9 +749,8 @@ class EditorState(QObject):
             return False
 
         panel_id = panel.id
-        with self.edit("集中線を入れる") as project:
-            target = project.pages[self._page_index].panel(panel_id)
-            target.focus_lines = default_focus(self.focus_settings)
+        with self.edit_page("集中線を入れる") as page:
+            page.panel(panel_id).focus_lines = default_focus(self.focus_settings)
         self.message.emit(
             "集中線を入れました。十字のつまみで中心、四角のつまみで内側の空きを変えられます"
         )
@@ -753,8 +763,8 @@ class EditorState(QObject):
             return False
 
         panel_id = panel.id
-        with self.edit("集中線を消す") as project:
-            project.pages[self._page_index].panel(panel_id).focus_lines = None
+        with self.edit_page("集中線を消す") as page:
+            page.panel(panel_id).focus_lines = None
         return True
 
     def set_focus_shape(
@@ -919,8 +929,8 @@ class EditorState(QObject):
     def set_sticker_attachment(self, sticker_id: str, panel_id: str | None) -> None:
         """コマへの紐づけを付け替える。None で解除。"""
         label = "コマへの紐づけ" if panel_id else "紐づけの解除"
-        with self.edit(label) as project:
-            target = project.pages[self._page_index].find(sticker_id)
+        with self.edit_page(label) as page:
+            target = page.find(sticker_id)
             if not isinstance(target, StickerObject):
                 raise KeyError(f"マークが見つかりません: {sticker_id}")
             target.attached_panel_id = panel_id
@@ -949,8 +959,8 @@ class EditorState(QObject):
     def _edit_text(self, text_id: str, label: str):
         @contextlib.contextmanager
         def scope():
-            with self.edit(label) as project:
-                target = project.pages[self._page_index].find(text_id)
+            with self.edit_page(label) as page:
+                target = page.find(text_id)
                 if not isinstance(target, TextObject):
                     raise KeyError(f"セリフが見つかりません: {text_id}")
                 yield target
@@ -1006,8 +1016,8 @@ class EditorState(QObject):
 
         @contextlib.contextmanager
         def scope():
-            with self.edit(label) as project:
-                target = project.pages[self._page_index].find(balloon_id)
+            with self.edit_page(label) as page:
+                target = page.find(balloon_id)
                 if not isinstance(target, BalloonObject):
                     raise KeyError(f"吹き出しが見つかりません: {balloon_id}")
                 yield target
