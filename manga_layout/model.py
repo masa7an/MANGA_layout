@@ -85,6 +85,17 @@ BALLOON_STYLES = ("ellipse", "jagged", "wavy", "rect")
 # 出せる。種類を変えたときにも触らない——既にあるフキダシのしっぽを
 # 黙って消すことになるため
 BALLOON_STYLES_WITHOUT_TAIL = ("rect",)
+
+# しっぽの形。`bubbles`（丸い飛びしっぽ）は**心の声・独り言**を表す。
+#
+# **フキダシの種類とは別に持つ。** 種類の側に焼き込むと、丸い・ふわふわ・雲の
+# それぞれに「飛びしっぽ版」が要って種類が倍に増える（要件定義 10.1）。
+#
+# 組み合わせは制限しない。意味の薄い組み合わせ（ギザギザや四角）は選ばない
+# 限り出てこないので、禁じてメニューの分岐と読み込みの検証を増やすより軽い
+TAIL_SHAPE_TRIANGLE = "triangle"
+TAIL_SHAPE_BUBBLES = "bubbles"
+TAIL_SHAPES = (TAIL_SHAPE_TRIANGLE, TAIL_SHAPE_BUBBLES)
 TEXT_ALIGNS = ("left", "center", "right")
 TEXT_DIRECTIONS = ("horizontal", "vertical")
 
@@ -209,12 +220,20 @@ class Tail:
     （-1.0 が上端、0.0 が中央、+1.0 が下端）。**長さではなく割合**なのは、
     吹き出しの大きさを変えても付け根が同じ場所に残るようにするため。
     `None` は自動＝先端の向きに合わせる。
+
+    `shape` は三角か飛びしっぽか（→ `TAIL_SHAPES`）。
+
+    **`width` は三角のときだけ効く。** 飛びしっぽの円の大きさは、付け根から
+    先端までの長さから決める。決め打ちにすると、長いしっぽで隙間だけが
+    広がって点が散らばった絵になり、先端を引いても引いた量が絵に出ない
+    （→ `layout.tail_bubbles`）。
     """
 
     enabled: bool = True
     tip: tuple[float, float] = (0.0, 0.0)
     width: float = 35.0
     root_y: float | None = None
+    shape: str = TAIL_SHAPE_TRIANGLE
 
     def translated(self, dx: float, dy: float) -> "Tail":
         return Tail(
@@ -222,15 +241,22 @@ class Tail:
             (self.tip[0] + dx, self.tip[1] + dy),
             self.width,
             self.root_y,
+            self.shape,
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "enabled": self.enabled,
             "tip": [self.tip[0], self.tip[1]],
             "width": self.width,
             "root_y": self.root_y,
         }
+        # 三角のときは項目ごと省く。**飛びしっぽを足す前に保存した作品と、
+        # 三角のままの作品の project.json が一字一句同じになる**
+        # （`locked` → 6.17、`white` → 6.19 と同じ形）
+        if self.shape != TAIL_SHAPE_TRIANGLE:
+            data["shape"] = self.shape
+        return data
 
     @classmethod
     def from_dict(cls, data: Any, where: str) -> "Tail":
@@ -243,6 +269,7 @@ class Tail:
             # 項目が無い作品は自動として読む。root_y を足す前に保存した
             # ファイルでも、それまでと同じ形で開ける
             root_y=v.opt_ratio(d, "root_y", where),
+            shape=v.choice(d, "shape", where, TAIL_SHAPES, TAIL_SHAPE_TRIANGLE),
         )
 
 

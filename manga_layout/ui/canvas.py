@@ -45,7 +45,6 @@ from ..focus import (
     hole_point as focus_hole_point,
 )
 from ..geometry import (
-    Polygon,
     Rect,
     normalize_angle,
     rotate_point,
@@ -72,8 +71,8 @@ from ..layout import (
     split_panel,
     sticker_at,
     tail_base_angle,
+    tail_body_contains,
     tail_root_point,
-    tail_triangle,
     text_at,
 )
 from ..slant import (
@@ -1254,20 +1253,20 @@ class PageView(QGraphicsView):
         return abs(x - tx) <= half and abs(y - ty) <= half
 
     def _tail_body_at(self, x: float, y: float) -> bool:
-        """選択中の吹き出しの、しっぽの三角形の内側を押しているか。
+        """選択中の吹き出しの、**見えているしっぽ**の内側を押しているか。
 
         先端の丸・付け根のひし形は小さく、そこだけしか掴めないと
         「しっぽの絵は見えているのに反応しない」というズレになる
-        （本人談 2026-08-05）。見えている三角形の内側ならどこでも
+        （本人談 2026-08-05）。見えている形の内側ならどこでも
         先端をつまんだのと同じ扱いにする。
+
+        三角と飛びしっぽの違いは `tail_body_contains` が吸収する。
+        ここで形ごとに分けると、片方を直し忘れて挙動が食い違う。
         """
         balloon = self.state.selected_balloon
         if balloon is None or not balloon.tail.enabled:
             return False
-        triangle = tail_triangle(balloon, self.state.balloon_settings)
-        if triangle is None:
-            return False
-        return Polygon(triangle).contains(x, y)
+        return tail_body_contains(balloon, x, y, self.state.balloon_settings)
 
     def _begin_tail_drag(self, x: float, y: float) -> None:
         """しっぽの先端ドラッグを始める。

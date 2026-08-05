@@ -21,7 +21,15 @@ from manga_layout import (
     new_project,
 )
 from manga_layout.errors import ProjectFormatError, UnsupportedVersionError
-from manga_layout.model import DEFAULT_FONT_FAMILY, NOTE_COLORS, PT_TO_PX, PageNote
+from manga_layout.model import (
+    DEFAULT_FONT_FAMILY,
+    NOTE_COLORS,
+    PT_TO_PX,
+    TAIL_SHAPE_BUBBLES,
+    TAIL_SHAPE_TRIANGLE,
+    PageNote,
+    Tail,
+)
 
 
 class TestIds:
@@ -86,6 +94,39 @@ class TestRoundTrip:
         restored = Project.from_dict(sample_project.to_dict())
         balloon = next(f for f in restored.pages[0].floating if isinstance(f, BalloonObject))
         assert balloon.tail.tip == (55.0, 45.0)
+
+    def test_三角のしっぽは形の項目を書かない(self, sample_project):
+        """**飛びしっぽを足す前に保存した作品と一字一句同じになること**
+        （要件定義 10.1。`locked` → 6.17、`white` → 6.19 と同じ形）。
+        """
+        balloon = next(
+            f for f in sample_project.pages[0].floating if isinstance(f, BalloonObject)
+        )
+        assert "shape" not in balloon.tail.to_dict()
+
+    def test_飛びしっぽは形の項目を書いて往復する(self, sample_project):
+        page = sample_project.pages[0]
+        balloon = next(f for f in page.floating if isinstance(f, BalloonObject))
+        balloon.tail.shape = TAIL_SHAPE_BUBBLES
+        assert balloon.tail.to_dict()["shape"] == TAIL_SHAPE_BUBBLES
+
+        restored = Project.from_dict(sample_project.to_dict())
+        back = next(
+            f for f in restored.pages[0].floating if isinstance(f, BalloonObject)
+        )
+        assert back.tail.shape == TAIL_SHAPE_BUBBLES
+
+    def test_形の項目が無い作品は三角として読む(self):
+        """飛びしっぽより前に保存した作品が、それまでと同じ形で開ける。"""
+        tail = Tail.from_dict({"enabled": True, "tip": [1.0, 2.0]}, "tail")
+        assert tail.shape == TAIL_SHAPE_TRIANGLE
+
+    def test_コマを動かしてもしっぽの形は変わらない(self, sample_project):
+        page = sample_project.pages[0]
+        balloon = next(f for f in page.floating if isinstance(f, BalloonObject))
+        balloon.tail.shape = TAIL_SHAPE_BUBBLES
+        page.move_panel(page.panels[0].id, 10.0, 10.0)
+        assert balloon.tail.shape == TAIL_SHAPE_BUBBLES
 
     def _text_entry(self, **overrides) -> dict:
         entry = {

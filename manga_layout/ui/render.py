@@ -28,7 +28,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, Q
 from .. import vertical
 from ..focus import focus_triangles
 from ..geometry import Rect
-from ..layout import balloon_outline, tail_triangle
+from ..layout import balloon_outline, tail_bubbles, tail_triangle
 from ..slant import slant_polygons
 from ..model import (
     BalloonObject,
@@ -510,11 +510,19 @@ class PageRenderer:
         別々に描くと継ぎ目に枠線が残り、しっぽが貼り付けた三角形に見える。
         塗りを重ねて線を隠す手もあるが、半透明や色付きの塗りで破綻する。
         図形を合成してから一度だけ縁取るほうが、どの配色でも正しい。
+
+        **飛びしっぽだけは合成しない。** 離れていることが意味そのものなので、
+        本体とくっつけては困る（→ 要件定義 10.1）。ただし QPainterPath は
+        離れた図形を1つのパスに持てるので、**塗り1回・線1回という描き方は
+        変えなくてよい**。円を足すだけで済む。
         """
         settings = self.state.balloon_settings
         path = QPainterPath()
         path.addPolygon(polygon_of(balloon_outline(balloon, settings)))
         path.closeSubpath()
+
+        for cx, cy, radius in tail_bubbles(balloon, settings):
+            path.addEllipse(QPointF(cx, cy), radius, radius)
 
         triangle = tail_triangle(balloon, settings)
         if triangle is None:

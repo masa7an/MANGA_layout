@@ -1041,6 +1041,15 @@ class EditorState(QObject):
         with self._edit_balloon(balloon_id, label) as balloon:
             balloon.tail = dataclasses.replace(balloon.tail, enabled=enabled)
 
+    def set_tail_shape(self, balloon_id: str, shape: str) -> None:
+        """しっぽを三角にするか、丸い飛びしっぽにするか（→ 要件定義 10.1）。
+
+        **先端も付け根も動かさない。** 形だけを差し替えるので、指している
+        相手と生え際はそのまま残る。
+        """
+        with self._edit_balloon(balloon_id, "しっぽの形") as balloon:
+            balloon.tail = dataclasses.replace(balloon.tail, shape=shape)
+
     def set_attachment(self, balloon_id: str, panel_id: str | None) -> None:
         """コマへの紐づけを付け替える。None で解除。"""
         label = "コマへの紐づけ" if panel_id else "紐づけの解除"

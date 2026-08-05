@@ -22,7 +22,13 @@ from ..autosave_log import AutosaveLog
 from ..errors import MangaLayoutError
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect, image_at
-from ..model import PT_TO_PX, ImageObject, Panel
+from ..model import (
+    PT_TO_PX,
+    TAIL_SHAPE_BUBBLES,
+    TAIL_SHAPE_TRIANGLE,
+    ImageObject,
+    Panel,
+)
 from ..recent_project import load_recent_project, save_recent_project
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import (
@@ -103,6 +109,13 @@ TAIL_TURN_LABELS = {direction: where for where, direction in TAIL_TURN_ITEMS}
 # 畳んだメニューの見出し。メニューバーと右クリックの2か所が同じ名前を出す
 # ので、書き分けないよう1箇所に持つ（→ `_build_balloon_style_menu`）
 BALLOON_STYLE_MENU_LABEL = "種類を変える"
+
+# しっぽの形を切り替える項目の文言。**「どちらに変わるか」を名前に出す。**
+# 今の形を書いても、押した結果が分からない（「入れる／消す」と同じ形 → 6.19）
+TAIL_SHAPE_LABELS = {
+    TAIL_SHAPE_TRIANGLE: "しっぽを三角にする",
+    TAIL_SHAPE_BUBBLES: "しっぽを丸くする",
+}
 
 # 右クリックの「ここに フキダシ を追加」で、種類を下に畳むときの名前。
 # **表に出る「フキダシ」はここと `BALLOON_STYLE_LABELS` だけ**
@@ -652,6 +665,16 @@ class MainWindow(QMainWindow):
         balloon_menu.addAction(self.tail_action)
         self.balloon_actions.append(self.tail_action)
 
+        # 「入れる／消す」と同じく1項目の文言を入れ替える。2つ並べると、
+        # 片方は必ず押しても何も変わらない状態で場所だけ取る
+        self.tail_shape_action = self._act(
+            TAIL_SHAPE_LABELS[TAIL_SHAPE_BUBBLES],
+            self.toggle_tail_shape,
+            tip="心の声・独り言に使う、円が並んだしっぽに変える",
+        )
+        balloon_menu.addAction(self.tail_shape_action)
+        self.balloon_actions.append(self.tail_shape_action)
+
         # しっぽの向きを変える4つは右クリックには出さない。選択中の
         # フキダシだけでも右クリックのメニューは項目数が多く（実測13、
         # 外して10）、これ以上増やすと選びにくくなる（相談 2026-08-05）
@@ -1164,6 +1187,14 @@ class MainWindow(QMainWindow):
             self.tail_action.setText(
                 "しっぽを消す" if balloon.tail.enabled else "しっぽを出す"
             )
+            # 押した先の形を名前に出す（→ `TAIL_SHAPE_LABELS`）
+            self.tail_shape_action.setText(
+                TAIL_SHAPE_LABELS[
+                    TAIL_SHAPE_TRIANGLE
+                    if balloon.tail.shape == TAIL_SHAPE_BUBBLES
+                    else TAIL_SHAPE_BUBBLES
+                ]
+            )
             self.attach_action.setText(
                 "コマへの紐づけを解除"
                 if balloon.attached_panel_id
@@ -1578,6 +1609,23 @@ class MainWindow(QMainWindow):
         enabled = not balloon.tail.enabled
         self.state.set_tail_enabled(balloon.id, enabled)
         self.state.message.emit("しっぽを出しました" if enabled else "しっぽを消しました")
+
+    def toggle_tail_shape(self) -> None:
+        """三角のしっぽ ⇄ 丸い飛びしっぽ（→ 要件定義 10.1）。"""
+        balloon = self.state.selected_balloon
+        if balloon is None:
+            return
+        shape = (
+            TAIL_SHAPE_TRIANGLE
+            if balloon.tail.shape == TAIL_SHAPE_BUBBLES
+            else TAIL_SHAPE_BUBBLES
+        )
+        self.state.set_tail_shape(balloon.id, shape)
+        self.state.message.emit(
+            "しっぽを丸くしました（心の声・独り言）"
+            if shape == TAIL_SHAPE_BUBBLES
+            else "しっぽを三角に戻しました"
+        )
 
     def turn_tail(self, direction: str) -> None:
         """しっぽの向きを変える。**先端も一緒に回る**（→ 6.4）。

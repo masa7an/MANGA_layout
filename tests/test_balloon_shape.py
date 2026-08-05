@@ -13,6 +13,7 @@ import math
 import pytest
 
 from manga_layout import Rect, new_project
+from manga_layout.model import TAIL_SHAPE_BUBBLES
 from manga_layout.layout import (
     BalloonSettings,
     WAVY_MIN_SEGMENTS_PER_WAVE,
@@ -21,10 +22,14 @@ from manga_layout.layout import (
     balloon_contains,
     balloon_outline,
     default_balloon_rect,
+    TAIL_BUBBLE_COUNT,
+    TAIL_BUBBLE_MAX_RATIO,
     TAIL_LENGTH_MIN_PX,
     TAIL_LENGTH_RATIO,
     TAIL_ROOT_MAX_GAP,
     default_tail_tip,
+    tail_body_contains,
+    tail_bubbles,
     ellipse_points,
     jagged_points,
     root_y_at,
@@ -461,6 +466,93 @@ class TestHitTest:
     def test_何も無ければ返さない(self):
         project = new_project()
         assert balloon_at(project.pages[0], 5.0, 5.0) is None
+
+
+class TestBubbleTail:
+    """丸い飛びしっぽ（心の声・独り言 → 要件定義 10.1）。"""
+
+    @pytest.fixture
+    def thinking(self, balloon):
+        balloon.tail.shape = TAIL_SHAPE_BUBBLES
+        balloon.tail.tip = default_tail_tip(RECT)
+        return balloon
+
+    def test_三角のしっぽでは円を作らない(self, balloon):
+        assert tail_bubbles(balloon, SETTINGS) == ()
+
+    def test_しっぽを消していれば円も出ない(self, thinking):
+        thinking.tail.enabled = False
+        assert tail_bubbles(thinking, SETTINGS) == ()
+
+    def test_飛びしっぽでは三角を作らない(self, thinking):
+        """呼ぶ側が「三角が無い」と「しっぽが無い」を区別せずに済む。"""
+        assert tail_triangle(thinking, SETTINGS) is None
+
+    def test_数は長さによらず変わらない(self, thinking):
+        """**先端を引いている最中に円が生えない**（要件定義 10.1）。"""
+        for extra in (5.0, 50.0, 500.0):
+            thinking.tail.tip = (RECT.center[0], RECT.bottom + extra)
+            assert len(tail_bubbles(thinking, SETTINGS)) == TAIL_BUBBLE_COUNT
+
+    def test_先端へ向かって小さくなる(self, thinking):
+        radii = [r for _, _, r in tail_bubbles(thinking, SETTINGS)]
+        assert radii == sorted(radii, reverse=True)
+        assert radii[-1] > 0.0
+
+    def test_伸ばすと円も大きくなる(self, thinking):
+        """引いた量が絵に出ること。**大きさを決め打ちにすると出ない。**"""
+        thinking.tail.tip = (RECT.center[0], RECT.bottom + 20.0)
+        small = tail_bubbles(thinking, SETTINGS)[0][2]
+        thinking.tail.tip = (RECT.center[0], RECT.bottom + 60.0)
+        assert tail_bubbles(thinking, SETTINGS)[0][2] > small
+
+    def test_本体に食い込まない(self, thinking):
+        """離れていること自体がこの形の意味（→ 6.4 とは逆向きの決め）。"""
+        for cx, cy, r in tail_bubbles(thinking, SETTINGS):
+            # 中心から円の手前側の縁までが、輪郭より外にある
+            assert distance_ratio(RECT, (cx, cy)) * (1.0 - 1e-9) > 0.0
+            near = distance_ratio(
+                RECT, (cx, cy - r) if cy > RECT.center[1] else (cx, cy + r)
+            )
+            assert near > 1.0
+
+    def test_円どうしも離れている(self, thinking):
+        found = tail_bubbles(thinking, SETTINGS)
+        for (x1, y1, r1), (x2, y2, r2) in zip(found, found[1:]):
+            assert math.hypot(x2 - x1, y2 - y1) > r1 + r2
+
+    def test_先端が輪郭に重なっていれば作らない(self, thinking):
+        thinking.tail.tip = (RECT.center[0], RECT.bottom)
+        assert tail_bubbles(thinking, SETTINGS) == ()
+
+    def test_長く引いても円は際限なく大きくならない(self, thinking):
+        thinking.tail.tip = (RECT.center[0], RECT.bottom + 5000.0)
+        capped = tail_bubbles(thinking, SETTINGS)[0][2]
+        assert capped <= min(RECT.w, RECT.h) * TAIL_BUBBLE_MAX_RATIO + 1e-9
+
+    def test_円の内側を押すと掴める(self, thinking):
+        """先端の丸だけしか掴めないと「見えているのに反応しない」になる。"""
+        for cx, cy, _ in tail_bubbles(thinking, SETTINGS):
+            assert tail_body_contains(thinking, cx, cy, SETTINGS)
+
+    def test_円と円の隙間では掴めない(self, thinking):
+        found = tail_bubbles(thinking, SETTINGS)
+        (x1, y1, r1), (x2, y2, _) = found[0], found[1]
+        # 1つめの縁のすぐ外側。2つめには届かない
+        t = (r1 + 1e-6) / math.hypot(x2 - x1, y2 - y1)
+        gap = (x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+        assert not tail_body_contains(thinking, *gap, SETTINGS)
+
+    def test_三角でも同じ掴み方が効く(self, balloon):
+        """形の違いは `tail_body_contains` が吸収する。"""
+        balloon.tail.tip = default_tail_tip(RECT)
+        triangle = tail_triangle(balloon, SETTINGS)
+        assert triangle is not None
+        inside = (
+            sum(p[0] for p in triangle) / 3.0,
+            sum(p[1] for p in triangle) / 3.0,
+        )
+        assert tail_body_contains(balloon, *inside, SETTINGS)
 
 
 class TestRect:

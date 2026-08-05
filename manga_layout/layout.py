@@ -15,8 +15,16 @@ import math
 from dataclasses import dataclass
 
 from . import vertical
-from .geometry import EPS, Rect, rotate_point, rotated_rect_contains, unrotate_point
+from .geometry import (
+    EPS,
+    Polygon,
+    Rect,
+    rotate_point,
+    rotated_rect_contains,
+    unrotate_point,
+)
 from .model import (
+    TAIL_SHAPE_TRIANGLE,
     BalloonObject,
     ImageObject,
     Page,
@@ -125,6 +133,28 @@ TAIL_DIRECTIONS = {
     "left": math.pi,
     "down": math.pi / 2.0,
 }
+
+# 丸い飛びしっぽ（心の声・独り言 → 要件定義 10.1）の形。
+#
+# **円の数は固定する。** 長さで増減させると、先端を引いている最中に円が
+# 生えて形が跳ねる。数が変わらなければ、引いた量がそのまま間隔の広がりとして
+# 目に見える
+TAIL_BUBBLE_COUNT = 3
+
+# 1つ先の円を、手前の円の何倍にするか。先端へ向かって小さくなるのが
+# この形の意味そのもの。1.0 に近づけると数珠つなぎに見えて意味が消え、
+# 小さくしすぎると3つめが点になって数えられなくなる
+TAIL_BUBBLE_SHRINK = 0.72
+
+# 円と円（および本体と先頭の円）の隙間。**手前の円の半径に対する割合。**
+# **離れていること自体がこの形の意味**なので、くっつけない
+# （三角のしっぽを本体と合成する 6.4 とは逆向きの決め）
+TAIL_BUBBLE_GAP_RATIO = 0.45
+
+# 先頭の円の半径の上限。**フキダシの短辺に対する割合。**
+# しっぽを遠くまで引くと円がそのぶん大きくなるので、頭を押さえる。
+# 上限に当たった分だけ鎖は先端まで届かなくなるが、向きは変わらない
+TAIL_BUBBLE_MAX_RATIO = 0.25
 
 
 # --------------------------------------------------------------------------
@@ -805,8 +835,11 @@ def tail_triangle(
     """しっぽの三角形（付け根の2点と先端）。しっぽ無しなら None。
 
     付け根の幅は `Tail.width`、縦位置は `Tail.root_y`。
+
+    **飛びしっぽでは None を返す**（形が三角ではないため → `tail_bubbles`）。
+    呼ぶ側は「三角が無い」と「しっぽが無い」を区別しなくてよい。
     """
-    if not balloon.tail.enabled:
+    if not balloon.tail.enabled or balloon.tail.shape != TAIL_SHAPE_TRIANGLE:
         return None
 
     angle = tail_base_angle(balloon)
@@ -823,6 +856,95 @@ def tail_triangle(
         _on_ellipse(rect, angle - half, ratio),
         tip,
         _on_ellipse(rect, angle + half, ratio),
+    )
+
+
+def tail_bubbles(
+    balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float, float], ...]:
+    """丸い飛びしっぽの円（中心x, 中心y, 半径）。三角のしっぽなら空。
+
+    付け根から先端へ向かって、**数を変えずに小さくなる円**を並べる
+    （要件定義 10.1）。
+
+    **本体とはくっつけない。** 三角のしっぽは合成して継ぎ目を消すが
+    （→ 6.4）、飛びしっぽは離れていること自体が「口に出していない」という
+    意味なので、円と円の間にも隙間を空ける。
+
+    起点は**輪郭のいちばん外側**（割合 1.0）。ギザギザや波形は谷で内へ
+    へこむが、外側から測っておけば隙間はその分だけ広がるので、
+    どの種類でも本体に食い込まない。
+
+    **大きさは、しっぽの長さから決める。** 円の大きさを決め打ちにすると、
+    長いしっぽでは隙間だけが広がって鎖に見えず、点が散らばった絵になる。
+    さらに、先端を引いて伸ばしても円が動くだけで**引いた量が絵に出ない**。
+    隙間を半径に対する割合で持ち、鎖の全長が起点から先端までにちょうど
+    収まるよう半径を逆算する（2026-08-05 に描いて決めた → 要件定義 10.1）。
+
+    向きと付け根の高さは三角と同じ計算を通す（`tail_base_angle`）。
+    先端のつまみ・付け根のひし形・40度の上限がそのまま効く。
+    """
+    if not balloon.tail.enabled or balloon.tail.shape == TAIL_SHAPE_TRIANGLE:
+        return ()
+
+    angle = tail_base_angle(balloon)
+    if angle is None:
+        return ()
+
+    start = _on_ellipse(balloon.rect, angle, 1.0)
+    dx = balloon.tail.tip[0] - start[0]
+    dy = balloon.tail.tip[1] - start[1]
+    length = math.hypot(dx, dy)
+    if length < EPS:
+        return ()  # 先端が輪郭に重なっている。並べる向きが決まらない
+
+    weights, offsets = _tail_bubble_layout()
+    radius = length / offsets[-1]
+    # 大きくなりすぎないよう頭を押さえる。当たった分だけ鎖は先端に届かない
+    radius = min(radius, min(balloon.rect.w, balloon.rect.h) * TAIL_BUBBLE_MAX_RATIO)
+
+    ux, uy = dx / length, dy / length
+    return tuple(
+        (
+            start[0] + ux * offsets[i] * radius,
+            start[1] + uy * offsets[i] * radius,
+            weights[i] * radius,
+        )
+        for i in range(TAIL_BUBBLE_COUNT)
+    )
+
+
+def _tail_bubble_layout() -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """半径が 1 のときの、各円の大きさと「起点から中心まで」の距離。
+
+    実際の半径を掛ければそのまま使える形にしてある。最後の距離が
+    鎖の全長にあたるので、長さをそれで割れば半径が出る（→ `tail_bubbles`）。
+    """
+    weights = tuple(TAIL_BUBBLE_SHRINK**i for i in range(TAIL_BUBBLE_COUNT))
+    gap = 1.0 + TAIL_BUBBLE_GAP_RATIO
+    offsets = [weights[0] * gap]
+    for i in range(1, TAIL_BUBBLE_COUNT):
+        offsets.append(offsets[-1] + weights[i - 1] * gap + weights[i])
+    return weights, tuple(offsets)
+
+
+def tail_body_contains(
+    balloon: BalloonObject,
+    x: float,
+    y: float,
+    settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS,
+) -> bool:
+    """**見えているしっぽ**の内側を押しているか。形の違いはここで吸収する。
+
+    先端の丸・付け根のひし形は小さく、そこだけしか掴めないと「しっぽの絵は
+    見えているのに反応しない」というズレになる（→ `PageView._tail_body_at`）。
+    三角と飛びしっぽで2通り書くと、片方を直し忘れて挙動が食い違う。
+    """
+    triangle = tail_triangle(balloon, settings)
+    if triangle is not None:
+        return Polygon(triangle).contains(x, y)
+    return any(
+        math.hypot(x - cx, y - cy) <= r for cx, cy, r in tail_bubbles(balloon, settings)
     )
 
 

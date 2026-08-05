@@ -27,8 +27,9 @@ import pytest
 
 from manga_layout import Rect
 from manga_layout.model import BalloonObject
+from manga_layout.model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.window import BALLOON_STYLE_MENU_LABEL
+from manga_layout.ui.window import BALLOON_STYLE_MENU_LABEL, TAIL_SHAPE_LABELS
 from manga_layout.ui.state import (
     BALLOON_STYLE_LABELS,
     BALLOON_TOOLS,
@@ -301,6 +302,42 @@ class TestAdd:
         window_with_panel.state.set_tool(TOOL_BALLOON)
         click(window_with_panel.view, 360.0, 300.0)
         assert window_with_panel.state.page.floating[0].tail.enabled is True
+
+    def test_しっぽを丸くできる(self, window_with_balloon):
+        """三角 ⇄ 丸い飛びしっぽ（心の声・独り言 → 要件定義 10.1）。"""
+        window = window_with_balloon
+        assert window.state.selected_balloon.tail.shape == TAIL_SHAPE_TRIANGLE
+
+        window.toggle_tail_shape()
+        assert window.state.selected_balloon.tail.shape == TAIL_SHAPE_BUBBLES
+
+        window.toggle_tail_shape()
+        assert window.state.selected_balloon.tail.shape == TAIL_SHAPE_TRIANGLE
+
+    def test_しっぽの形を変えても先端と付け根は動かない(self, window_with_balloon):
+        """形だけを差し替える。指している相手と生え際はそのまま残る。"""
+        window = window_with_balloon
+        before = window.state.selected_balloon.tail
+        window.state.set_tail_root(window.state.selected_balloon.id, 0.4)
+        window.toggle_tail_shape()
+
+        after = window.state.selected_balloon.tail
+        assert after.tip == before.tip
+        assert after.root_y == pytest.approx(0.4)
+
+    def test_しっぽの形は履歴に積まれる(self, window_with_balloon):
+        window = window_with_balloon
+        window.toggle_tail_shape()
+        assert window.state.history.undo_label == "しっぽの形"
+        window.state.undo()
+        assert window.state.selected_balloon.tail.shape == TAIL_SHAPE_TRIANGLE
+
+    def test_項目名は押した先の形を出す(self, window_with_balloon):
+        """今の形を書くと、押した結果が分からない（「入れる／消す」と同じ）。"""
+        window = window_with_balloon
+        assert window.tail_shape_action.text() == TAIL_SHAPE_LABELS[TAIL_SHAPE_BUBBLES]
+        window.toggle_tail_shape()
+        assert window.tail_shape_action.text() == TAIL_SHAPE_LABELS[TAIL_SHAPE_TRIANGLE]
 
     def test_四角にしてもしっぽは黙って消えない(self, window_with_balloon):
         """**消すのは置いたときだけ。** 種類を変える操作で消すと、
