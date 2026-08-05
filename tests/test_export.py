@@ -1,6 +1,6 @@
-"""PNG 書き出し（要件定義 6.7）の検証。
+"""PNG / JPG 書き出し（要件定義 6.7）の検証。
 
-ここで押さえたいのは4つ。
+ここで押さえたいのは5つ。
 
 1. **原寸が使われること。** 画面用の縮小版のまま書き出すと、画面で確かめても
    気づけず、クリスタで開いて初めてぼやけに気づく
@@ -9,6 +9,8 @@
 3. **画像サイズが指定どおりになること。** 座標系が px なので、100% は
    ページの寸法そのもの
 4. **上書きの前に必ず止まること。** 書き出しは既存ファイルを潰す操作
+5. **JPG も選べ、品質は設定から取ること。** ダイアログには出さない
+   （`AppSettings.jpg_quality`、既定90）
 """
 
 from __future__ import annotations
@@ -19,10 +21,13 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 
 from manga_layout import ExportError, Rect, Size
 from manga_layout.images import PREVIEW_MAX_PX
+from manga_layout.settings import AppSettings, save_settings
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.export import (
+    DEFAULT_FORMAT,
     DEFAULT_SCALE,
     EXPORT_DIRNAME,
+    EXPORT_FORMATS,
     HIGH_DPI,
     HIGH_SCALE,
     MAX_SIDE_PX,
@@ -41,7 +46,7 @@ from manga_layout.ui.export import (
     planned_paths,
     render_page,
     scale_label,
-    write_png,
+    write_image,
 )
 from manga_layout.ui.render import PAGE_BG, PANEL_FILL, PageRenderer
 
@@ -182,6 +187,13 @@ class Testファイル名:
         names = [page_filename(i, 12) for i in range(12)]
         assert len({len(n) for n in names}) == 1
         assert names == sorted(names)
+
+    def test_JPGは拡張子が変わる(self):
+        assert page_filename(0, 9, "JPG") == "p01.jpg"
+
+    def test_既定はPNG(self):
+        assert DEFAULT_FORMAT == "PNG"
+        assert EXPORT_FORMATS == ("PNG", "JPG")
 
 
 class Test書き出し先:
@@ -376,7 +388,50 @@ class Test書き出しの実行:
         blocked = tmp_path / "ふさがっている"
         (blocked / "p01.png").mkdir(parents=True)
         with pytest.raises(ExportError):
-            write_png(render_page(saved_state, saved_state.page, 0.5), blocked / "p01.png")
+            write_image(render_page(saved_state, saved_state.page, 0.5), blocked / "p01.png")
+
+
+class TestJPG書き出し:
+    """PNG に加えて JPG も選べること（要件定義 6.7）。
+
+    品質はここでは引数で直に渡す。実際の出どころ（設定ファイルから読む
+    こと）は `Test画面からの書き出し` の側で確かめる。
+    """
+
+    def test_拡張子がjpgになる(self, saved_state):
+        dest = export_dir_of(saved_state)
+        written = export_pages(saved_state, [0], dest, 0.5, "JPG")
+        assert [p.name for p in written] == ["p01.jpg"]
+
+    def test_書き出したJPGを読み直せる(self, saved_state):
+        dest = export_dir_of(saved_state)
+        path = export_pages(saved_state, [0], dest, 0.5, "JPG", 90)[0]
+
+        loaded = QImage(str(path))
+        assert not loaded.isNull()
+        assert (loaded.width(), loaded.height()) == page_px(saved_state.page.size, 0.5)
+
+    def test_品質が高いほどファイルが大きい(self, saved_state, large_png):
+        """横縞の画像で圧縮の効き方に差が出ることを確かめる。"""
+        ref, _ = saved_state.import_bytes(large_png)
+        with saved_state.edit("画像") as project:
+            page = project.pages[0]
+            panel = project.add_panel(page, Rect(60.0, 60.0, 540.0, 360.0))
+            project.add_image(panel, ref, Rect(60.0, 60.0, 540.0, 360.0), (2000, 1500))
+        dest = export_dir_of(saved_state)
+
+        low = export_pages(saved_state, [0], dest, 0.5, "JPG", 1)[0]
+        low_size = low.stat().st_size
+        high = export_pages(saved_state, [0], dest, 0.5, "JPG", 100)[0]
+
+        assert high.stat().st_size > low_size
+
+    def test_PNGとJPGは共存できる(self, saved_state):
+        """別形式で書き出しても、もう片方は消さない（放置でよい方針）。"""
+        dest = export_dir_of(saved_state)
+        export_pages(saved_state, [0], dest, 0.5, "PNG")
+        export_pages(saved_state, [0], dest, 0.5, "JPG")
+        assert sorted(p.name for p in dest.iterdir()) == ["p01.jpg", "p01.png"]
 
 
 class Test上書きの検出:
@@ -385,6 +440,14 @@ class Test上書きの検出:
     def test_無ければ空(self, saved_state):
         dest = export_dir_of(saved_state)
         assert existing_paths(planned_paths(dest, [0], 1)) == []
+
+    def test_形式ごとに判定する(self, saved_state):
+        dest = export_dir_of(saved_state)
+        export_pages(saved_state, [0], dest, 0.5, "PNG")
+
+        assert existing_paths(planned_paths(dest, [0], 1, "JPG")) == []
+        found = existing_paths(planned_paths(dest, [0], 1, "PNG"))
+        assert [p.name for p in found] == ["p01.png"]
 
     def test_あれば挙げる(self, saved_state):
         saved_state.add_page()
@@ -402,6 +465,8 @@ class Test画面からの書き出し:
     @pytest.fixture
     def window(self, qapp, tmp_path):
         win = MainWindow(EditorState())
+        # 実物の data/settings.json を読み書きしないよう、テスト用の場所に差し替える
+        win.settings_file = tmp_path / "settings.json"
         win.state.save(tmp_path / "作品")
         yield win
         win.state.history.mark_saved()
@@ -410,11 +475,14 @@ class Test画面からの書き出し:
     def test_既定の倍率を覚えている(self, window):
         assert window.files.export_scale == DEFAULT_SCALE
 
+    def test_既定の形式を覚えている(self, window):
+        assert window.files.export_format == DEFAULT_FORMAT
+
     def test_このページだけ書き出す(self, window, monkeypatch):
         window.add_page()
         _accept_dialog(monkeypatch, all_pages=False)
 
-        assert window.files.export_png()
+        assert window.files.export_image()
 
         dest = export_dir_of(window.state)
         assert [p.name for p in dest.iterdir()] == ["p02.png"]
@@ -423,10 +491,35 @@ class Test画面からの書き出し:
         window.add_page()
         _accept_dialog(monkeypatch, all_pages=True)
 
-        assert window.files.export_png()
+        assert window.files.export_image()
 
         dest = export_dir_of(window.state)
         assert sorted(p.name for p in dest.iterdir()) == ["p01.png", "p02.png"]
+
+    def test_JPG形式を選べる(self, window, monkeypatch):
+        _accept_dialog(monkeypatch, all_pages=False, fmt="JPG")
+
+        assert window.files.export_image()
+
+        dest = export_dir_of(window.state)
+        assert [p.name for p in dest.iterdir()] == ["p01.jpg"]
+        assert window.files.export_format == "JPG"
+
+    def test_品質は設定ファイルから読む(self, window, monkeypatch):
+        """ダイアログには出さず、`data/settings.json` の `jpg_quality` を使う。"""
+        save_settings(AppSettings(jpg_quality=42), window.settings_file)
+        _accept_dialog(monkeypatch, all_pages=False, fmt="JPG")
+
+        captured: dict = {}
+
+        def fake_export_pages(state, indexes, dest, scale, fmt, quality):
+            captured["quality"] = quality
+            return [dest / page_filename(indexes[0], state.page_count, fmt)]
+
+        monkeypatch.setattr("manga_layout.ui.project_io.export_pages", fake_export_pages)
+
+        assert window.files.export_image()
+        assert captured["quality"] == 42
 
     def test_取り消せば何も書かない(self, window, monkeypatch):
         monkeypatch.setattr(
@@ -434,7 +527,7 @@ class Test画面からの書き出し:
             lambda self: QDialog.DialogCode.Rejected,
         )
 
-        assert not window.files.export_png()
+        assert not window.files.export_image()
         assert not export_dir_of(window.state).exists()
 
     def test_保存前は保存を促す(self, qapp, monkeypatch):
@@ -446,14 +539,14 @@ class Test画面からの書き出し:
             lambda *a, **k: (asked.append(a[1]), QMessageBox.StandardButton.Cancel)[1],
         )
 
-        assert not window.files.export_png()
+        assert not window.files.export_image()
         assert asked == ["先に保存が必要です"]
         window.state.history.mark_saved()
         window.close()
 
     def test_上書きを断れば書き換えない(self, window, monkeypatch):
         _accept_dialog(monkeypatch, all_pages=False)
-        window.files.export_png()
+        window.files.export_image()
         path = export_dir_of(window.state) / "p01.png"
         before = path.read_bytes()
 
@@ -463,12 +556,12 @@ class Test画面からの書き出し:
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Cancel
         )
 
-        assert not window.files.export_png()
+        assert not window.files.export_image()
         assert path.read_bytes() == before
 
     def test_上書きを承知すれば書き換える(self, window, monkeypatch):
         _accept_dialog(monkeypatch, all_pages=False, scale=0.5)
-        window.files.export_png()
+        window.files.export_image()
         path = export_dir_of(window.state) / "p01.png"
         before = path.read_bytes()
 
@@ -477,7 +570,7 @@ class Test画面からの書き出し:
             QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Ok
         )
 
-        assert window.files.export_png()
+        assert window.files.export_image()
         assert path.read_bytes() != before
 
     def test_欠けた画像があれば止めて聞く(self, window, monkeypatch):
@@ -490,11 +583,13 @@ class Test画面からの書き出し:
             QMessageBox, "warning", lambda *a, **k: QMessageBox.StandardButton.Cancel
         )
 
-        assert not window.files.export_png()
+        assert not window.files.export_image()
         assert not export_dir_of(window.state).exists()
 
 
-def _accept_dialog(monkeypatch, *, all_pages: bool, scale: float = 0.5) -> None:
+def _accept_dialog(
+    monkeypatch, *, all_pages: bool, scale: float = 0.5, fmt: str = DEFAULT_FORMAT
+) -> None:
     """設定の窓を出さずに、選んだことにして進める。"""
     monkeypatch.setattr(
         "manga_layout.ui.project_io.ExportDialog.exec",
@@ -505,4 +600,7 @@ def _accept_dialog(monkeypatch, *, all_pages: bool, scale: float = 0.5) -> None:
     )
     monkeypatch.setattr(
         "manga_layout.ui.project_io.ExportDialog.chosen_scale", lambda self: scale
+    )
+    monkeypatch.setattr(
+        "manga_layout.ui.project_io.ExportDialog.chosen_format", lambda self: fmt
     )

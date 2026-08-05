@@ -1,4 +1,8 @@
-"""PNG 書き出し（要件定義 6.7）。
+"""PNG / JPG 書き出し（要件定義 6.7）。
+
+形式は PNG（既定）・JPG から選ぶ。JPG の品質は書き出しダイアログには出さず、
+`AppSettings.jpg_quality`（既定 90）から取る（→ 10.2 の書き出し dpi と
+同じ位置づけ。ダイアログを増やさず、必要な人が設定ファイルを手で書き換える）。
 
 画面・サムネイルと**同じ `PageRenderer`** を通す。書き出し用に描き直すと
 「画面で見た通りに出ない」が起き、しかもクリスタで開くまで気づけない。
@@ -132,14 +136,22 @@ def dots_per_meter(dpi: float) -> int:
     return round(dpi / (MM_PER_INCH / 1000.0))
 
 
-def page_filename(index: int, total: int) -> str:
+#: 選べる書き出し形式。Qt の `QImage.save` に渡す形式名でもある
+EXPORT_FORMATS = ("PNG", "JPG")
+DEFAULT_FORMAT = "PNG"
+
+# 形式名 → 拡張子。JPG は Qt 側でも `.jpg` を使うので綴りをそのまま流用する
+_EXTENSIONS = {"PNG": "png", "JPG": "jpg"}
+
+
+def page_filename(index: int, total: int, fmt: str = DEFAULT_FORMAT) -> str:
     """0 始まりのページ番号からファイル名を作る。
 
     桁数は総ページ数に合わせて揃える。揃えないと、100 ページ以上の作品で
     `p100` が `p99` より前に並び、フォルダの並び順が読み順と食い違う。
     """
     width = max(2, len(str(max(total, 1))))
-    return f"p{index + 1:0{width}d}.png"
+    return f"p{index + 1:0{width}d}.{_EXTENSIONS[fmt]}"
 
 
 def export_dir(project_dir: pathlib.Path | str) -> pathlib.Path:
@@ -156,8 +168,10 @@ def export_dir_of(state) -> pathlib.Path:
     return export_dir(state.project_dir)
 
 
-def planned_paths(dest: pathlib.Path, indexes, total: int) -> list[pathlib.Path]:
-    return [dest / page_filename(i, total) for i in indexes]
+def planned_paths(
+    dest: pathlib.Path, indexes, total: int, fmt: str = DEFAULT_FORMAT
+) -> list[pathlib.Path]:
+    return [dest / page_filename(i, total, fmt) for i in indexes]
 
 
 def existing_paths(paths) -> list[pathlib.Path]:
@@ -258,15 +272,21 @@ def render_page(state, page: Page, scale: float = FULL_SCALE) -> QImage:
     return image
 
 
-def write_png(image: QImage, path: pathlib.Path) -> None:
-    """PNG を1枚書く。**別名で書き切ってから置き換える。**
+def write_image(
+    image: QImage, path: pathlib.Path, fmt: str = DEFAULT_FORMAT, quality: int = -1
+) -> None:
+    """1枚書く。**別名で書き切ってから置き換える。**
 
     上書きの途中で落ちても、前回の書き出しが壊れた状態で残らない。
     保存（`storage.atomic_write_text`）と同じ考え方。
+
+    `quality`（0〜100）は JPG のときだけ効く。PNG では無視される
+    （-1 は Qt の既定の圧縮）。既定値の出どころは `AppSettings.jpg_quality`
+    （→ 設定に外部化、要件定義 6.7）。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + TMP_SUFFIX)
-    if not image.save(str(tmp), "PNG"):
+    if not image.save(str(tmp), fmt, quality):
         tmp.unlink(missing_ok=True)
         raise ExportError(f"書き出せませんでした: {path}")
     try:
@@ -280,9 +300,14 @@ def write_png(image: QImage, path: pathlib.Path) -> None:
 
 
 def export_pages(
-    state, indexes, dest: pathlib.Path, scale: float = FULL_SCALE
+    state,
+    indexes,
+    dest: pathlib.Path,
+    scale: float = FULL_SCALE,
+    fmt: str = DEFAULT_FORMAT,
+    quality: int = -1,
 ) -> list[pathlib.Path]:
-    """指定したページを PNG にする。書いたファイルの一覧を返す。
+    """指定したページを画像にする。書いたファイルの一覧を返す。
 
     途中で失敗したらそこで止める。残りを飛ばして進めると、どこまでが
     今回の書き出しなのか分からないファイルの山になる。
@@ -291,8 +316,8 @@ def export_pages(
     written: list[pathlib.Path] = []
     for i in indexes:
         image = render_page(state, state.project.pages[i], scale)
-        path = dest / page_filename(i, total)
-        write_png(image, path)
+        path = dest / page_filename(i, total, fmt)
+        write_image(image, path, fmt, quality)
         written.append(path)
     return written
 
@@ -317,6 +342,9 @@ class ExportDialog(QDialog):
 
     紙に置き換えた大きさは**参考として1行出すだけ**。印刷しないので出力には
     関わらないが、「1240px と言われてもピンとこない」ときの手掛かりになる。
+
+    形式は PNG / JPG の2つ。既定は PNG（これまでどおりの動き）。JPG の品質は
+    ここでは選ばせず、`AppSettings.jpg_quality` から取る（→ 要件定義 6.7・10.2）。
     """
 
     def __init__(
@@ -327,14 +355,20 @@ class ExportDialog(QDialog):
         parent: QWidget | None = None,
         page_size: Size | None = None,
         scale: float = DEFAULT_SCALE,
+        fmt: str = DEFAULT_FORMAT,
     ):
         super().__init__(parent)
-        self.setWindowTitle("PNG で書き出し")
+        self.setWindowTitle("画像で書き出し")
         self.page_size = page_size or DEFAULT_PAGE_SIZE
 
         self.current_only = QRadioButton(f"このページ（{page_index + 1} ページ目）", self)
         self.all_pages = QRadioButton(f"全ページ（{page_count} 枚）", self)
         self.current_only.setChecked(True)
+
+        self.format = QComboBox(self)
+        for value in EXPORT_FORMATS:
+            self.format.addItem(value, value)
+        self.format.setCurrentIndex(max(0, self.format.findData(fmt)))
 
         self.scale = QComboBox(self)
         for value in SCALE_CHOICES:
@@ -345,6 +379,7 @@ class ExportDialog(QDialog):
         form = QFormLayout()
         form.addRow("範囲", self.current_only)
         form.addRow("", self.all_pages)
+        form.addRow("形式", self.format)
         form.addRow("画像サイズ", self.scale)
 
         self.note = QLabel(self)
@@ -389,6 +424,9 @@ class ExportDialog(QDialog):
 
     def chosen_scale(self) -> float:
         return float(self.scale.currentData())
+
+    def chosen_format(self) -> str:
+        return str(self.format.currentData())
 
     def wants_all_pages(self) -> bool:
         return self.all_pages.isChecked()

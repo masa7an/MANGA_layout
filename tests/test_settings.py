@@ -14,6 +14,7 @@ import pytest
 
 import manga_layout
 from manga_layout.settings import (
+    JPG_QUALITY_DEFAULT,
     SETTINGS_FILENAME,
     SETTINGS_VERSION,
     AppSettings,
@@ -122,6 +123,41 @@ class Test自動バックアップの間隔:
     def test_書いたものが読み戻せる(self, path):
         save_settings(AppSettings(autosave_interval_sec=60), path)
         assert load_settings(path).autosave_interval_sec == 60
+
+
+class TestJPG品質:
+    """既定は90。**打ち間違いで壊れないこと。**（→ 要件定義 6.7）"""
+
+    def _書く(self, path, value: str):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f'{{"jpg_quality": {value}}}', encoding="utf-8")
+
+    def test_既定は90(self, path):
+        assert load_settings(path).jpg_quality == JPG_QUALITY_DEFAULT
+
+    def test_変えられる(self, path):
+        self._書く(path, "70")
+        assert load_settings(path).jpg_quality == 70
+
+    def test_0以下は既定に落とす(self, path):
+        self._書く(path, "0")
+        assert load_settings(path).jpg_quality == JPG_QUALITY_DEFAULT
+
+    def test_100を超える値は既定に落とす(self, path):
+        self._書く(path, "101")
+        assert load_settings(path).jpg_quality == JPG_QUALITY_DEFAULT
+
+    def test_数でない値は既定に落とす(self, path):
+        self._書く(path, '"高画質"')
+        assert load_settings(path).jpg_quality == JPG_QUALITY_DEFAULT
+
+    def test_真偽値は数として通さない(self, path):
+        self._書く(path, "true")
+        assert load_settings(path).jpg_quality == JPG_QUALITY_DEFAULT
+
+    def test_書いたものが読み戻せる(self, path):
+        save_settings(AppSettings(jpg_quality=100), path)
+        assert load_settings(path).jpg_quality == 100
 
 
 class Test雛形の用意:

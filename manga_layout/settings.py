@@ -53,6 +53,17 @@ AUTOSAVE_INTERVAL_DEFAULT_SEC = 300
 AUTOSAVE_INTERVAL_MIN_SEC = 5
 AUTOSAVE_INTERVAL_MAX_SEC = 3600
 
+# JPG 書き出しの品質（要件定義 6.7）。Qt の `QImage.save` にそのまま渡す値
+# （0〜100、大きいほど高画質・大容量）。**書き出しダイアログには出さない。**
+# 書き出し dpi（→ 要件定義 10.2）と同じ位置づけで、必要な人が設定ファイルを
+# 手で書き換える前提にする。ダイアログに出すと選択肢がもう1つ増える
+JPG_QUALITY_DEFAULT = 90
+
+# 受け付ける範囲。0 は「ほぼ潰れた画像」になり書き出す意味が無いので下限を 1 に、
+# 上限は Qt の仕様上の最大値
+JPG_QUALITY_MIN = 1
+JPG_QUALITY_MAX = 100
+
 
 def settings_dir() -> pathlib.Path:
     """設定を置くフォルダ。**このリポジトリの `data/`。**
@@ -83,6 +94,16 @@ def _autosave_interval(value: object) -> int:
     return seconds
 
 
+def _jpg_quality(value: object) -> int:
+    """設定から読んだ JPG 品質を返す。**受け付けられない値は既定に落とす。**"""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return JPG_QUALITY_DEFAULT
+    quality = int(value)
+    if not JPG_QUALITY_MIN <= quality <= JPG_QUALITY_MAX:
+        return JPG_QUALITY_DEFAULT
+    return quality
+
+
 @dataclass
 class AppSettings:
     """`settings.json` の中身。
@@ -97,16 +118,21 @@ class AppSettings:
 
     `autosave_interval_sec` は**自動バックアップの間隔**（→ 6.6）。
     短くすれば動きを確かめられる。範囲外・数でない値は既定の5分に落とす。
+
+    `jpg_quality` は**JPG 書き出しの品質**（→ 6.7）。0〜100 で既定は 90。
+    ダイアログには出さないので、変えたい人はここを手で書き換える。
     """
 
     default_parent_dir: str | None = None
     autosave_interval_sec: int = AUTOSAVE_INTERVAL_DEFAULT_SEC
+    jpg_quality: int = JPG_QUALITY_DEFAULT
 
     def to_dict(self) -> dict:
         return {
             "format_version": SETTINGS_VERSION,
             "default_parent_dir": self.default_parent_dir,
             "autosave_interval_sec": self.autosave_interval_sec,
+            "jpg_quality": self.jpg_quality,
         }
 
     @classmethod
@@ -120,6 +146,7 @@ class AppSettings:
         return cls(
             default_parent_dir=value if isinstance(value, str) and value else None,
             autosave_interval_sec=_autosave_interval(data.get("autosave_interval_sec")),
+            jpg_quality=_jpg_quality(data.get("jpg_quality")),
         )
 
 

@@ -21,6 +21,7 @@ from ..settings import load_settings
 from ..storage import PROJECT_FILENAME, is_project_dir, project_dir_of
 from . import saving
 from .export import (
+    DEFAULT_FORMAT,
     DEFAULT_SCALE,
     ExportDialog,
     existing_paths,
@@ -66,9 +67,10 @@ class ProjectIO:
         self._window = window
         self._state = window.state
 
-        # 書き出す画像サイズは作品ではなく好みなので、project.json には
+        # 書き出す画像サイズ・形式は作品ではなく好みなので、project.json には
         # 入れない。ただし1回の作業中は同じ値を使い続けるのが普通なので覚えておく
         self.export_scale = DEFAULT_SCALE
+        self.export_format = DEFAULT_FORMAT
 
         # 一定間隔で作業中の内容を backup/ へ退避する（要件定義 6.6）。
         # 本体（project.json）は触らないので、保存の確認とは食い違わない。
@@ -267,8 +269,8 @@ class ProjectIO:
 
     # -- 書き出し ----------------------------------------------------------
 
-    def export_png(self) -> bool:
-        """PNG で書き出す（要件定義 6.7）。書き出したら True。
+    def export_image(self) -> bool:
+        """PNG / JPG で書き出す（要件定義 6.7）。書き出したら True。
 
         断る場所を3つ設けてある。**どれも書き始める前に出す。**
         書いたあとで知らせても、上書きしてしまったものは戻らない。
@@ -288,11 +290,13 @@ class ProjectIO:
             self._window,
             self._state.page.size,
             self.export_scale,
+            self.export_format,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return False
 
         self.export_scale = dialog.chosen_scale()
+        self.export_format = dialog.chosen_format()
         indexes = (
             list(range(self._state.page_count))
             if dialog.wants_all_pages()
@@ -351,7 +355,9 @@ class ProjectIO:
         名前を並べる件数を絞るのは、30 ページの作品で確認欄が画面を
         埋め尽くすのを避けるため。件数は必ず先に出す。
         """
-        found = existing_paths(planned_paths(dest, indexes, self._state.page_count))
+        found = existing_paths(
+            planned_paths(dest, indexes, self._state.page_count, self.export_format)
+        )
         if not found:
             return True
 
@@ -370,9 +376,14 @@ class ProjectIO:
         return answer == QMessageBox.StandardButton.Ok
 
     def _run_export(self, dest: pathlib.Path, indexes: list[int]) -> bool:
+        # JPG 品質は `default_parent` と同じく使う直前に読み直す。設定は
+        # 手で書き換える前提のファイルなので、起動したままでも効かせたい
+        quality = load_settings(self._window.settings_file).jpg_quality
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            written = export_pages(self._state, indexes, dest, self.export_scale)
+            written = export_pages(
+                self._state, indexes, dest, self.export_scale, self.export_format, quality
+            )
         except (MangaLayoutError, OSError) as e:
             QMessageBox.critical(self._window, "書き出せません", str(e))
             return False
@@ -383,7 +394,8 @@ class ProjectIO:
         px = page_px(self._state.page.size, self.export_scale)
         self._state.message.emit(
             f"{dest} に {where} を書き出しました"
-            f"（{scale_label(self.export_scale)}・{px[0]:,} × {px[1]:,} 画素）"
+            f"（{self.export_format}・{scale_label(self.export_scale)}・"
+            f"{px[0]:,} × {px[1]:,} 画素）"
         )
         return True
 

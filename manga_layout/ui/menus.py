@@ -136,8 +136,8 @@ class FileMenu:
         menu.addSeparator()
         menu.addAction(
             window._act(
-                "PNG で書き出し...",
-                window.files.export_png,
+                "画像で書き出し...",
+                window.files.export_image,
                 "Ctrl+E",
                 f"作品フォルダの {EXPORT_DIRNAME}/ に書き出す",
             )
