@@ -789,6 +789,76 @@ class EditorState(QObject):
                 panel.locked = False
         return True
 
+    # -- コマの重なり順 ------------------------------------------------------
+    #
+    # コマ同士が重なったとき、どちらを手前に描くかを `z` で決める。描く順
+    # （`render.draw_page`）とクリック判定（`layout.panel_at`）はどちらも
+    # 元から `z` を見ているので、ここで書き換えるだけで両方に効く。
+    #
+    # **「1つ手前へ」ではなく「最前面へ」にしてある。** 重なっていない
+    # コマを1つ跨いでも見た目が変わらず、押しても何も起きないように
+    # 見える。段階を数えさせないほうが確実に届く。
+
+    @staticmethod
+    def _panel_group(page: Page, panel_id: str) -> tuple[str, ...]:
+        """一緒に動かすコマ。斜めの組なら**両方**、でなければ自分だけ。
+
+        ロック（→ `set_panel_locked`）と同じ扱い。片割れだけ手前に出すと、
+        1枚を割って作ったはずの2枚の間に別のコマが挟まる。
+        """
+        pair = page.slant_pair_of(panel_id)
+        return pair.members() if pair is not None else (panel_id,)
+
+    def _panel_group_at_edge(self, panel_id: str, *, front: bool) -> bool:
+        """そのコマ（と相方）が既に一番手前／一番奥に居るか。"""
+        page = self.page
+        group = set(self._panel_group(page, panel_id))
+        others = [p.z for p in page.panels if p.id not in group]
+        if not others:
+            return True
+        mine = [page.panel(i).z for i in group]
+        return min(mine) > max(others) if front else max(mine) < min(others)
+
+    def can_raise_panel(self, panel_id: str) -> bool:
+        return not self._panel_group_at_edge(panel_id, front=True)
+
+    def can_lower_panel(self, panel_id: str) -> bool:
+        return not self._panel_group_at_edge(panel_id, front=False)
+
+    def raise_panel(self, panel_id: str) -> bool:
+        """コマを最前面へ。変わったら True。
+
+        既に一番手前なら**何もしない**。押しても変化の無い操作で Undo の
+        一手を使わせない（→ `lock_all_panels` と同じ流儀）。
+        """
+        if not self.can_raise_panel(panel_id):
+            return False
+        with self.edit_page("コマを手前へ") as page:
+            top = max(p.z for p in page.panels)
+            for offset, target_id in enumerate(self._ordered_group(page, panel_id), 1):
+                page.panel(target_id).z = top + offset
+        return True
+
+    def lower_panel(self, panel_id: str) -> bool:
+        """コマを最背面へ。変わったら True。"""
+        if not self.can_lower_panel(panel_id):
+            return False
+        with self.edit_page("コマを奥へ") as page:
+            bottom = min(p.z for p in page.panels)
+            group = self._ordered_group(page, panel_id)
+            for offset, target_id in enumerate(reversed(group), 1):
+                page.panel(target_id).z = bottom - offset
+        return True
+
+    @classmethod
+    def _ordered_group(cls, page: Page, panel_id: str) -> list[str]:
+        """一緒に動かすコマを、今の重なり順のまま並べたもの。
+
+        斜めの組は互いに重ならないので見た目には出ないが、順を崩さずに
+        運べば、あとで組に別の意味が付いたときに巻き込まれない。
+        """
+        return sorted(cls._panel_group(page, panel_id), key=lambda i: page.panel(i).z)
+
     # -- 集中線 ------------------------------------------------------------
     #
     # 独立したオブジェクトではなくコマの属性なので（→ 要件定義 6.16）、

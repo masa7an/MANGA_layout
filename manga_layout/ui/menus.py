@@ -321,6 +321,24 @@ class PanelMenu:
         )
         menu.addAction(self.slant_flip_action)
         menu.addSeparator()
+        # 重なり順（→ `state.raise_panel`）。「1つ手前へ」ではなく端まで
+        # 動かす2項目にしてある。重なっているコマは多くて2〜3枚なので、
+        # 段階を数えるより端へ寄せるほうが1回で済む
+        self.raise_action = window._act(
+            "手前へ",
+            window.raise_panel,
+            None,
+            "重なっているコマのいちばん手前に出す。斜めの組は2枚一緒に動く",
+        )
+        menu.addAction(self.raise_action)
+        self.lower_action = window._act(
+            "奥へ",
+            window.lower_panel,
+            None,
+            "重なっているコマのいちばん奥に送る。斜めの組は2枚一緒に動く",
+        )
+        menu.addAction(self.lower_action)
+        menu.addSeparator()
         # 「ロック」と「ロックを解除」は1項目の文言を入れ替える
         # （しっぽの「消す／出す」と同じ → `refresh`）
         self.lock_toggle_action = window._act(
@@ -343,6 +361,16 @@ class PanelMenu:
 
     def refresh(self) -> None:
         self.slant_flip_action.setEnabled(self._state.selected_slant_pair is not None)
+
+        # 重なり順。既に端に居るなら押しても何も起きないのでグレーにする
+        # （→ 6.12）。コマが1枚だけのページでは両方ともグレーになる
+        panel = self._state.selected_panel
+        self.raise_action.setEnabled(
+            panel is not None and self._state.can_raise_panel(panel.id)
+        )
+        self.lower_action.setEnabled(
+            panel is not None and self._state.can_lower_panel(panel.id)
+        )
 
         # ロック（→ 6.17）。「ロック／ロックを解除」は集中線の「入れる／消す」
         # と同じく1項目の文言を入れ替える。一括の2項目は、押しても何も

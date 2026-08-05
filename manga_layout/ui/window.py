@@ -562,6 +562,18 @@ class MainWindow(QMainWindow):
         if self.state.unlock_all_panels():
             self.state.message.emit("このページのコマのロックをすべて解除しました")
 
+    def raise_panel(self) -> None:
+        """選んだコマを最前面へ（重なっているコマの手前に出す）。"""
+        panel = self.state.selected_panel
+        if panel is not None and self.state.raise_panel(panel.id):
+            self.state.message.emit("コマを手前に出しました")
+
+    def lower_panel(self) -> None:
+        """選んだコマを最背面へ。"""
+        panel = self.state.selected_panel
+        if panel is not None and self.state.lower_panel(panel.id):
+            self.state.message.emit("コマを奥に送りました")
+
     def toggle_focus_lines(self) -> None:
         """選んだコマの集中線を入れる／消す（要件定義 6.16）。
 

@@ -179,6 +179,12 @@ class ContextMenu:
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
             menu.addAction(window.panel_menu.slant_flip_action)
+            # 重なり順。**押せるときだけ出す。** コマが重なっていないページ
+            # では常にグレーで、右クリックのたびに読み飛ばす2行になる
+            # （メニューバー側は場所が動かないほうがよいのでグレーで残す）
+            for action in (window.panel_menu.raise_action, window.panel_menu.lower_action):
+                if action.isEnabled():
+                    menu.addAction(action)
             menu.addAction(window.panel_menu.lock_toggle_action)
             # **メニューバーと同じものを畳んで出す。** 並べるのは同じ
             # QAction なので、有効・無効と「入れる／消す」の文言は
