@@ -176,33 +176,39 @@ class TestAddPanelMode:
 
         press(window.view, 160.0, 250.0)  # 何も無いところ
 
-        assert window.view._mode is None
+        assert window.view._drag is None
         assert len(window.state.page.panels) == 1
 
     def test_空白を押すと作成が始まる(self, window):
+        from manga_layout.ui.canvas import CreatePanelDrag
+
         window.state.set_tool(TOOL_PANEL)
         press(window.view, 160.0, 250.0)
-        assert window.view._mode == "create"
+        assert isinstance(window.view._drag, CreatePanelDrag)
 
     def test_コマの上を押すと移動になる(self, window):
+        from manga_layout.ui.canvas import MoveDrag
+
         # 追加の道具のままでも、既にあるコマは掴んで動かせる
         window.add_full_page_panel()
         window.state.set_tool(TOOL_PANEL)
 
         press(window.view, 105.0, 150.0)  # ページ中央＝コマの中
 
-        assert window.view._mode == "move"
+        assert isinstance(window.view._drag, MoveDrag)
         assert len(window.state.page.panels) == 1
 
     def test_つまみを押すと大きさ変更になる(self, window):
+        from manga_layout.ui.canvas import ResizeDrag
+
         window.add_full_page_panel()
         bounds = window.state.selected_panel.shape.bounds()
         window.state.set_tool(TOOL_PANEL)
 
         press(window.view, bounds.x, bounds.y)  # 左上のつまみ
 
-        assert window.view._mode == "resize"
-        assert window.view._handle == "nw"
+        assert isinstance(window.view._drag, ResizeDrag)
+        assert window.view._drag.handle == "nw"
 
 
 def double_click(view, x: float, y: float) -> None:
@@ -448,14 +454,16 @@ class TestImageSelection:
         assert window_with_image.state.selected_id == panel_id
 
     def test_選択中の画像を押すと画像が動く(self, window_with_image):
+        from manga_layout.ui.canvas import MoveDrag
+
         # ここでコマに持ち替わると、絵を動かしたつもりでコマが動く
         image = window_with_image.state.selected_image
         cx, cy = image.rect.center
 
         press(window_with_image.view, cx, cy)
 
-        assert window_with_image.view._mode == "move"
-        assert window_with_image.view._origin_rect == image.rect
+        assert isinstance(window_with_image.view._drag, MoveDrag)
+        assert window_with_image.view._drag.origin_rect == image.rect
 
 
 def press_at(view, x: float, y: float, shift: bool = False) -> None:
@@ -1188,7 +1196,7 @@ class TestSlantSlideUI:
         逆にすると、縮小したときや細いコマで左右のつまみが覆い隠され、
         大きさを変えられなくなる。
         """
-        from manga_layout.ui.canvas import SLANT_HANDLE_PX
+        from manga_layout.ui.canvas import SLANT_HANDLE_PX, ResizeDrag
 
         page = self._split(window)
         view = window.view
@@ -1208,8 +1216,8 @@ class TestSlantSlideUI:
         assert view._slant_handle_at(ex, ey)  # 範囲としては重なっている
 
         press(view, wx, wy)
-        assert view._mode == "resize"
-        assert view._handle == "w"
+        assert isinstance(view._drag, ResizeDrag)
+        assert view._drag.handle == "w"
 
     def test_斜めでないコマにはつまみが出ない(self, window):
         window.add_full_page_panel()
@@ -1236,9 +1244,11 @@ class TestSlantSlideUI:
 
     def test_下見は履歴を汚さない(self, window):
         """ドラッグ中はモデルに触らない（しっぽの付け根と同じ流儀）。"""
+        from manga_layout.ui.canvas import SlantDrag
+
         page = self._split(window)
         depth = len(window.state.history._undo)
-        window.view._scene.slant_preview = (page.panels[0].id, 0.3)
+        window.view._scene.active_drag = SlantDrag(page.panels[0].id, 0.3)
         assert window.state.page.slant_pairs[0].ratio == pytest.approx(
             page.slant_pairs[0].ratio
         )

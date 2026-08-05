@@ -453,6 +453,8 @@ class TestSelectAndMove:
 
     def test_コマより先に拾われる(self, window_with_balloon):
         """吹き出しはコマより手前。ここを間違えると下のコマが動く。"""
+        from manga_layout.ui.canvas import MoveDrag
+
         state = window_with_balloon.state
         balloon = state.page.floating[0]
         state.select(None)
@@ -460,7 +462,7 @@ class TestSelectAndMove:
         press(window_with_balloon.view, *balloon.rect.center)
 
         assert state.selected_balloon is not None
-        assert window_with_balloon.view._mode == "move"
+        assert isinstance(window_with_balloon.view._drag, MoveDrag)
 
     def test_楕円の外側では拾われない(self, window_with_balloon):
         """外接矩形で判定すると、四隅の何もない所で下のコマが選べなくなる。"""
@@ -539,13 +541,15 @@ class TestTail:
         assert window_with_balloon.state.selected_balloon.tail.enabled
 
     def test_しっぽが無ければ先端を掴めない(self, window_with_balloon):
+        from manga_layout.ui.canvas import TailDrag
+
         state = window_with_balloon.state
         tip = state.selected_balloon.tail.tip
         window_with_balloon.toggle_tail()
 
         press(window_with_balloon.view, tip[0], tip[1])
 
-        assert window_with_balloon.view._mode != "tail"
+        assert not isinstance(window_with_balloon.view._drag, TailDrag)
 
 
 def render_page(window):
@@ -706,13 +710,14 @@ class TestTailRoot:
 
     def test_付け根の印を掴める(self, window_with_balloon):
         from manga_layout.layout import tail_root_point
+        from manga_layout.ui.canvas import TailRootDrag
 
         state = window_with_balloon.state
         root = tail_root_point(state.selected_balloon, state.balloon_settings)
 
         press(window_with_balloon.view, root[0], root[1])
 
-        assert window_with_balloon.view._mode == "tail_root"
+        assert isinstance(window_with_balloon.view._drag, TailRootDrag)
 
     def test_上下にドラッグすると付け根が動く(self, window_with_balloon):
         from manga_layout.layout import tail_root_point
@@ -813,7 +818,7 @@ class TestTailRoot:
     def test_当たり判定はひし形より広い(self, window_with_balloon):
         """ひし形は同じ大きさの四角より面積が半分で、狙っても外れやすい。"""
         from manga_layout.layout import tail_root_point
-        from manga_layout.ui.canvas import HANDLE_PX, TAIL_ROOT_HANDLE_PX
+        from manga_layout.ui.canvas import HANDLE_PX, TAIL_ROOT_HANDLE_PX, TailRootDrag
 
         state = window_with_balloon.state
         root = tail_root_point(state.selected_balloon, state.balloon_settings)
@@ -824,15 +829,17 @@ class TestTailRoot:
 
         press(window_with_balloon.view, root[0] + off, root[1])
 
-        assert window_with_balloon.view._mode == "tail_root"
+        assert isinstance(window_with_balloon.view._drag, TailRootDrag)
 
     def test_角のつまみまでは奪わない(self, window_with_balloon):
         """付け根は角のつまみより先に判定される。広げすぎると覆い隠す。"""
+        from manga_layout.ui.canvas import ResizeDrag
+
         rect = window_with_balloon.state.selected_balloon.rect
 
         press(window_with_balloon.view, rect.right, rect.bottom)
 
-        assert window_with_balloon.view._mode == "resize"
+        assert isinstance(window_with_balloon.view._drag, ResizeDrag)
 
 
 class TestTailTurn:

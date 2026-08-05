@@ -303,10 +303,12 @@ class TestRotateHandle:
         assert window_with_image.view._rotate_handle_point() is None
 
     def test_つまみを掴むと回転が始まる(self, window_with_image):
+        from manga_layout.ui.canvas import RotateDrag
+
         view = window_with_image.view
         _mouse(view, "press", *view._rotate_handle_point())
 
-        assert view._mode == "rotate"
+        assert isinstance(view._drag, RotateDrag)
         assert view._scene.rotate_preview is not None
 
     def test_案内が出る(self, window_with_image):
@@ -394,22 +396,26 @@ class TestRotateDrag:
 
 class TestRotatedEditing:
     def test_傾いた絵の中を掴むと移動になる(self, window_with_image):
+        from manga_layout.ui.canvas import MoveDrag
+
         view = window_with_image.view
         image = window_with_image.state.selected_image
         image.rotation = 45.0
         _mouse(view, "press", *image.rect.center)
 
-        assert view._mode == "move"
+        assert isinstance(view._drag, MoveDrag)
 
     def test_傾いた角のつまみを掴むとリサイズになる(self, window_with_image):
+        from manga_layout.ui.canvas import ResizeDrag
+
         view = window_with_image.view
         image = window_with_image.state.selected_image
         image.rotation = 30.0
         x, y = handle_positions(image.rect, 30.0)["se"]
         _mouse(view, "press", x, y)
 
-        assert view._mode == "resize"
-        assert view._handle == "se"
+        assert isinstance(view._drag, ResizeDrag)
+        assert view._drag.handle == "se"
 
     def test_傾いていると吸着しない(self, window_with_image):
         view = window_with_image.view

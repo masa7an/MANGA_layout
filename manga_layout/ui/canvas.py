@@ -276,6 +276,329 @@ _RESIZE_TARGETS = (
 )
 
 
+class Drag:
+    """1つのドラッグ操作。`PageView` はこれ1つだけを覚えていればよい。
+
+    `mousePressEvent` が `begin()` で作り、ドラッグのあいだ `mouseMoveEvent`
+    が `update()` を、離した瞬間に `mouseReleaseEvent` が `commit()` を呼ぶ。
+    **新しいドラッグ操作を1つ足すときは、このクラスを1つ足せば済む。**
+    以前は press・move・release・下の6つの下見欄の4箇所を漏れなく揃える
+    必要があり、1箇所忘れると「掴めるが動かない」ようなテストを書かないと
+    気づけない壊れ方をした。
+
+    下の6つは `PageScene` が描画のために直読みする下見欄。**使う種類だけ
+    自分の値で上書きする。** ここが `PageScene` ではなく `Drag` にあるのは、
+    「今どのドラッグが進行中か」に応じて自動で1つに絞られるようにするため。
+    以前は6つとも `PageScene` 側のフィールドで、「同時に意味を持つのは
+    1つだけ」を `_reset_drag` でまとめて消す**運用**によって守っていた。
+    ここに置けば、`PageScene.active_drag` が1つしか持てない以上、
+    2つの下見が同時に生き残ることは構造的に起こらない。
+    """
+
+    preview_rect: Rect | None = None
+    tail_preview: tuple[str, tuple[float, float]] | None = None
+    root_preview: tuple[str, float] | None = None
+    slant_preview: tuple[str, float] | None = None
+    rotate_preview: tuple[str, float] | None = None
+    focus_preview: tuple[str, FocusLines] | None = None
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        raise NotImplementedError
+
+    def commit(self, view: PageView) -> None:
+        raise NotImplementedError
+
+
+class CreatePanelDrag(Drag):
+    """コマを1つ作る。**大きさは吸着する**（隣のコマの縦横の線に揃えやすく
+    するため）。ドラッグと呼べない小さな動きはクリック扱いにして、
+    既定の大きさで置く（→ `PageView._apply_create`）。
+    """
+
+    def __init__(self, press: tuple[float, float]):
+        self.press = press
+        self.preview_rect = Rect(press[0], press[1], 0.0, 0.0)
+
+    @classmethod
+    def begin(cls, view: PageView, x: float, y: float) -> CreatePanelDrag:
+        return cls((x, y))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        px, py = self.press
+        rect = Rect(px, py, x - px, y - py)
+        xs, ys = view._candidates(None)
+        self.preview_rect = snap_moved_rect(
+            rect.normalized(), xs, ys, view._snap_threshold()
+        )
+
+    def commit(self, view: PageView) -> None:
+        view._apply_create(self.preview_rect, self.press)
+
+
+class CreateFloatingDrag(Drag):
+    """フキダシ・マーク・セリフを1つ作る。ページ直下に置くので、
+    コマの上でもコマの外でも作れる（→ `mousePressEvent`）。
+
+    大きさの吸着は**しない**。`CreatePanelDrag` と違い、隣のコマの辺に
+    揃える意味が無い。
+    """
+
+    def __init__(self, kind: str, press: tuple[float, float]):
+        self.kind = kind  # "balloon" / "sticker" / "text"
+        self.press = press
+        self.preview_rect = Rect(press[0], press[1], 0.0, 0.0)
+
+    @classmethod
+    def begin(
+        cls, view: PageView, x: float, y: float, tool: str
+    ) -> CreateFloatingDrag:
+        if tool in BALLOON_TOOLS:
+            kind = "balloon"
+        elif tool in STICKER_TOOLS:
+            kind = "sticker"
+        else:
+            kind = "text"
+        return cls(kind, (x, y))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        px, py = self.press
+        self.preview_rect = Rect(px, py, x - px, y - py).normalized()
+
+    def commit(self, view: PageView) -> None:
+        if self.kind == "balloon":
+            view._apply_create_balloon(self.preview_rect, self.press)
+        elif self.kind == "sticker":
+            view._apply_create_sticker(self.preview_rect, self.press)
+        else:
+            view._apply_create_text(self.preview_rect, self.press)
+
+
+class MoveDrag(Drag):
+    """選んでいるものを動かす。型ごとの分かれ道は `PageView._apply_move`
+    （画像・セリフ・マークは矩形をそのまま、フキダシ・コマは専用の処理）。
+    """
+
+    def __init__(self, object_id: str, origin_rect: Rect, grab: tuple[float, float]):
+        self.object_id = object_id
+        self.origin_rect = origin_rect
+        self.grab = grab
+        self.preview_rect = origin_rect
+
+    @classmethod
+    def begin(cls, view: PageView, x: float, y: float) -> MoveDrag:
+        # 掴む矩形は `selected_bounds` に任せる。斜めの組なら組の外側が
+        # 返るので、片方だけ動く見た目にならない
+        return cls(view.state.selected_id, view.state.selected_bounds, (x, y))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        gx, gy = self.grab
+        moved = self.origin_rect.translated(x - gx, y - gy)
+        xs, ys = view._candidates(view.state.selected_id)
+        self.preview_rect = snap_moved_rect(
+            moved, xs, ys, view._rect_snap_threshold()
+        )
+
+    def commit(self, view: PageView) -> None:
+        view._apply_move(self.origin_rect, self.preview_rect)
+
+
+class ResizeDrag(Drag):
+    """8方向のつまみでの大きさ変更。傾き・等比ロック・斜めの組の制約を持つ。"""
+
+    def __init__(self, handle: str, origin_rect: Rect):
+        self.handle = handle
+        self.origin_rect = origin_rect
+        self.preview_rect = origin_rect
+
+    @classmethod
+    def begin(cls, view: PageView, handle: str, origin_rect: Rect) -> ResizeDrag:
+        return cls(handle, origin_rect)
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        rotation = view._selected_rotation()
+        xs, ys = view._candidates(view.state.selected_id)
+        # 傾いていたら、まずマウスを「傾いていなかったときの位置」に
+        # 戻す。こうすると以下のリサイズ計算は今までのままでよい
+        px, py = (
+            unrotate_point(x, y, self.origin_rect, rotation)
+            if rotation != 0.0
+            else (x, y)
+        )
+        sx, sy = snap_point(
+            self.handle, px, py, xs, ys, view._rect_snap_threshold()
+        )
+        minimum = view.state.settings.min_panel_size
+        aspect = view._locked_aspect(event)
+        # ドラッグ中も出し直す。案内は数秒で消えるため、
+        # ゆっくり合わせているうちに見えなくなってしまう
+        view._update_aspect_hint(self.handle, view._shift_held(event))
+        if aspect > 0.0:
+            resized = resize_rect_keep_aspect(
+                self.origin_rect, self.handle, sx, sy, minimum, aspect
+            )
+        else:
+            resized = resize_rect(self.origin_rect, self.handle, sx, sy, minimum)
+        # 傾いていると、幅を変えたぶんだけ中心が動く。掴んでいない側が
+        # 動いて見えないよう、ここで戻す
+        resized = keep_anchor(self.origin_rect, resized, self.handle, rotation)
+        # 斜めの組は、細いほうが最小幅を割る手前で止める。下見のうちに
+        # 押し戻しておけば、離した瞬間に形が飛ぶことがない
+        pair = view.state.selected_slant_pair
+        if pair is not None:
+            resized = clamp_slant_rect(pair, resized, view.state.settings)
+        self.preview_rect = resized
+
+    def commit(self, view: PageView) -> None:
+        view._apply_resize(self.preview_rect)
+
+
+class RotateDrag(Drag):
+    """画像の回転つまみ。Shift を押している間は15度刻み。"""
+
+    def __init__(
+        self, image_id: str, origin_rect: Rect, angle_offset: float, rotation: float
+    ):
+        self.image_id = image_id
+        self.origin_rect = origin_rect
+        # 掴んだ向きと今の傾きのずれ。つまみのどこを掴んでも押した瞬間に
+        # 絵が飛ばないよう、動かすときはここを引く
+        self.angle_offset = angle_offset
+        self.rotate_preview = (image_id, rotation)
+
+    @classmethod
+    def begin(cls, view: PageView, x: float, y: float) -> RotateDrag:
+        image = view.state.selected_image
+        offset = view._angle_at(image.rect, x, y) - image.rotation
+        return cls(image.id, image.rect, offset, image.rotation)
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        angle = view._angle_at(self.origin_rect, x, y) - self.angle_offset
+        if view._shift_held(event):
+            angle = round(angle / ROTATE_STEP_DEG) * ROTATE_STEP_DEG
+        self.rotate_preview = (self.image_id, normalize_angle(angle))
+
+    def commit(self, view: PageView) -> None:
+        _, angle = self.rotate_preview
+        view._apply_rotate(self.image_id, angle)
+
+
+class TailDrag(Drag):
+    """しっぽの先端をドラッグする。先端そのものでも、見えているしっぽの
+    内側のどこを掴んでも同じ扱い（→ `_tail_tip_at` / `_tail_body_at`）。
+
+    押した点と先端がずれていても（＝しっぽの本体を掴んだ場合）、差分を
+    覚えておいて先端がその分だけ付いてくるようにする。差分を覚えずに
+    先端をマウス位置へ直接合わせると、本体の途中を押しただけで先端が
+    瞬間移動して見える。
+    """
+
+    def __init__(
+        self, balloon_id: str, grab: tuple[float, float], tip: tuple[float, float]
+    ):
+        self.balloon_id = balloon_id
+        self.grab = grab
+        self.tail_preview = (balloon_id, tip)
+
+    @classmethod
+    def begin(cls, view: PageView, x: float, y: float) -> TailDrag:
+        balloon = view.state.selected_balloon
+        tip = balloon.tail.tip
+        return cls(balloon.id, (x - tip[0], y - tip[1]), tip)
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        gx, gy = self.grab
+        self.tail_preview = (self.balloon_id, (x - gx, y - gy))
+
+    def commit(self, view: PageView) -> None:
+        _, tip = self.tail_preview
+        view._apply_tail(self.balloon_id, tip)
+
+
+class TailRootDrag(Drag):
+    """しっぽの付け根を上下にドラッグする。付け根は輪郭の上を滑るので、
+    横位置は高さから決まる（→ `root_y_at`）。**縦だけ見る。**
+    """
+
+    def __init__(self, balloon_id: str, root_y: float):
+        self.balloon_id = balloon_id
+        self.root_preview = (balloon_id, root_y)
+
+    @classmethod
+    def begin(cls, view: PageView, x: float, y: float) -> TailRootDrag:
+        balloon = view.state.selected_balloon
+        return cls(balloon.id, root_y_at(balloon.rect, y))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        balloon = view.state.selected_balloon
+        if balloon is not None:
+            self.root_preview = (self.balloon_id, root_y_at(balloon.rect, y))
+
+    def commit(self, view: PageView) -> None:
+        _, root_y = self.root_preview
+        view._apply_tail_root(self.balloon_id, root_y)
+
+
+class SlantDrag(Drag):
+    """斜めに割ったコマの境界を左右にドラッグする。"""
+
+    def __init__(self, panel_id: str, ratio: float):
+        self.panel_id = panel_id
+        self.slant_preview = (panel_id, ratio)
+
+    @classmethod
+    def begin(cls, view: PageView) -> SlantDrag:
+        panel = view.state.selected_panel
+        pair = view.state.page.slant_pair_of(panel.id)
+        return cls(panel.id, pair.ratio)
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        pair = view.state.page.slant_pair_of(self.panel_id)
+        if pair is None:
+            return
+        rect = view.state.page.slant_bounds(pair)
+        ratio = clamp_slant_ratio(
+            rect, pair.angle, slant_ratio_at(rect, x), view.state.settings
+        )
+        self.slant_preview = (self.panel_id, ratio)
+
+    def commit(self, view: PageView) -> None:
+        _, ratio = self.slant_preview
+        view._apply_slant(self.panel_id, ratio)
+
+
+class FocusDrag(Drag):
+    """集中線の中心・内側の空きのつまみ。`kind` に `"focus_center"` /
+    `"focus_hole"` のどちらのつまみかを持つ（元の `_mode` の値をそのまま
+    引き継いでいる。呼び名としてそのまま通じるため）。
+    """
+
+    def __init__(self, kind: str, panel_id: str, focus: FocusLines):
+        self.kind = kind
+        self.panel_id = panel_id
+        self.focus_preview = (panel_id, focus)
+
+    @classmethod
+    def begin(cls, view: PageView, kind: str) -> FocusDrag:
+        panel, focus = view._scene.focus_of_selection()
+        return cls(kind, panel.id, dataclasses.replace(focus))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        panel = view.state.selected_panel
+        if panel is None:
+            return
+        bounds = panel.bounds()
+        _, focus = self.focus_preview
+        if self.kind == "focus_center":
+            focus = dataclasses.replace(focus, center=focus_center_at(bounds, x, y))
+        else:
+            focus = dataclasses.replace(focus, hole=focus_hole_at(focus, bounds, x))
+        self.focus_preview = (self.panel_id, focus)
+
+    def commit(self, view: PageView) -> None:
+        panel_id, focus = self.focus_preview
+        view._apply_focus(panel_id, focus, self.kind)
+
+
 class PageScene(QGraphicsScene):
     """1ページぶんの描画。部品を持たず、その場で描く。"""
 
@@ -283,23 +606,49 @@ class PageScene(QGraphicsScene):
         super().__init__()
         self.state = state
         self.renderer = PageRenderer(state)
-        # 操作中の下書き。確定するまでモデルには触らない
-        self.preview_rect: Rect | None = None
-        # 分割線の下見。両端の座標で持つ。斜め・横・縦を同じ描き方で扱える
+        # 操作中のドラッグ。下の6つのプロパティはここから読む（→ `Drag`）。
+        # `PageView` が press で作り、move のたびに書き換え、release で
+        # None に戻す
+        self.active_drag: Drag | None = None
+        # 分割線の下見。両端の座標で持つ。斜め・横・縦を同じ描き方で扱える。
+        # `_mode` を経由しない別系統の操作なので、`active_drag` には乗らない
         self.split_preview: tuple[tuple[float, float], tuple[float, float]] | None = None
-        # しっぽの先端をドラッグ中の (吹き出しの id, 先端の位置)
-        self.tail_preview: tuple[str, tuple[float, float]] | None = None
-        # しっぽの付け根を上下にずらしている最中の (吹き出しの id, 割合)
-        self.root_preview: tuple[str, float] | None = None
-        # 斜めの境界をずらしている最中の (組のどちらかのコマの id, 割合)
-        self.slant_preview: tuple[str, float] | None = None
-        # 回している最中の (画像の id, 角度)
-        self.rotate_preview: tuple[str, float] | None = None
-        # 集中線の中心・内側の空きを動かしている最中の (コマの id, その値)
-        self.focus_preview: tuple[str, FocusLines] | None = None
         # その場編集中のセリフ。編集中は下地を描かない
         self.editing_text_id: str | None = None
         self.update_scene_rect()
+
+    # -- ドラッグの下見 ------------------------------------------------------
+    #
+    # **どれも `active_drag` から読む薄い窓。** 実体を持たないので、
+    # ここへ書き込むことはできない（`PageView` は `active_drag` そのものを
+    # 差し替える）。使っていない種類のドラッグ中は必ず None になる
+    # ——以前は6つのフィールドを別々に持ち、`_reset_drag` でまとめて
+    # 消す**運用**で「同時に意味を持つのは1つだけ」を守っていたが、
+    # こちらは `active_drag` が1つしか持てない以上、構造上そうなる。
+
+    @property
+    def preview_rect(self) -> Rect | None:
+        return self.active_drag.preview_rect if self.active_drag else None
+
+    @property
+    def tail_preview(self) -> tuple[str, tuple[float, float]] | None:
+        return self.active_drag.tail_preview if self.active_drag else None
+
+    @property
+    def root_preview(self) -> tuple[str, float] | None:
+        return self.active_drag.root_preview if self.active_drag else None
+
+    @property
+    def slant_preview(self) -> tuple[str, float] | None:
+        return self.active_drag.slant_preview if self.active_drag else None
+
+    @property
+    def rotate_preview(self) -> tuple[str, float] | None:
+        return self.active_drag.rotate_preview if self.active_drag else None
+
+    @property
+    def focus_preview(self) -> tuple[str, FocusLines] | None:
+        return self.active_drag.focus_preview if self.active_drag else None
 
     def update_scene_rect(self) -> None:
         size = self.state.page.size
@@ -783,10 +1132,6 @@ class PageView(QGraphicsView):
         # 背景を塗って終わりにし、シーンの drawBackground を呼ばなくなる
         # （＝用紙もコマも描かれない）
 
-        self._mode: str | None = None
-        self._handle: str | None = None
-        self._origin_rect: Rect | None = None
-        self._grab: tuple[float, float] = (0.0, 0.0)
         self._space_held = False
         self._pan_from: QPointF | None = None
         # 状態表示に出している案内。同じ文を出し続けないための控え
@@ -800,6 +1145,20 @@ class PageView(QGraphicsView):
         self.scale(2.2, 2.2)  # A4 が画面に収まる程度の初期倍率
 
     # -- 便利 --------------------------------------------------------------
+
+    @property
+    def _drag(self) -> Drag | None:
+        """進行中のドラッグ。実体は `PageScene.active_drag` にある。
+
+        描画に要るのはシーン側なので実体はそちらに置き、こちらは
+        読み書きの窓だけを持つ。**2箇所に同じ値を持たせて食い違わせない**
+        ための形で、`self._drag = ...` と書けるのは今まで通り
+        """
+        return self._scene.active_drag
+
+    @_drag.setter
+    def _drag(self, value: Drag | None) -> None:
+        self._scene.active_drag = value
 
     @property
     def view_scale(self) -> float:
@@ -843,16 +1202,8 @@ class PageView(QGraphicsView):
         self.viewport().update()
 
     def _reset_drag(self) -> None:
-        self._mode = None
-        self._handle = None
-        self._origin_rect = None
+        self._drag = None
         self._hint_shown = None
-        self._scene.preview_rect = None
-        self._scene.tail_preview = None
-        self._scene.root_preview = None
-        self._scene.slant_preview = None
-        self._scene.rotate_preview = None
-        self._scene.focus_preview = None
 
     def fit_page(self) -> None:
         page = self.state.page
@@ -1004,14 +1355,7 @@ class PageView(QGraphicsView):
         # 作れる。コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で
         # 作れない
         if tool in BALLOON_TOOLS or tool in STICKER_TOOLS or tool == TOOL_TEXT:
-            if tool in BALLOON_TOOLS:
-                self._mode = "create_balloon"
-            elif tool in STICKER_TOOLS:
-                self._mode = "create_sticker"
-            else:
-                self._mode = "create_text"
-            self._grab = (x, y)
-            self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
+            self._drag = CreateFloatingDrag.begin(self, x, y, tool)
             event.accept()
             return
 
@@ -1033,26 +1377,19 @@ class PageView(QGraphicsView):
             and sticker is None
             and text is None
         ):
-            self._mode = "create"
-            self._grab = (x, y)
-            self._scene.preview_rect = Rect(x, y, 0.0, 0.0)
+            self._drag = CreatePanelDrag.begin(self, x, y)
             event.accept()
             return
 
         # しっぽの先端と付け根。つまみより先に見る。小さな吹き出しでは
         # これらと角のつまみが近づくため、狙って掴んだほうを優先する
         if self._tail_tip_at(x, y):
-            self._begin_tail_drag(x, y)
+            self._drag = TailDrag.begin(self, x, y)
             event.accept()
             return
 
         if self._tail_root_at(x, y):
-            selected = self.state.selected_balloon
-            self._mode = "tail_root"
-            self._scene.root_preview = (
-                selected.id,
-                root_y_at(selected.rect, y),
-            )
+            self._drag = TailRootDrag.begin(self, x, y)
             self.state.message.emit("上下にドラッグすると、しっぽの付け根が動きます")
             event.accept()
             return
@@ -1061,19 +1398,16 @@ class PageView(QGraphicsView):
         # （ひし形は三角形の付け根と重なるため、先に見ると付け根を
         # 動かせなくなる）
         if self._tail_body_at(x, y):
-            self._begin_tail_drag(x, y)
+            self._drag = TailDrag.begin(self, x, y)
             self.state.message.emit("ドラッグすると、しっぽの向きが変わります")
             event.accept()
             return
 
         selected_bounds = self.state.selected_bounds
         if handle is not None and selected_bounds is not None:
-            self._mode = "resize"
-            self._handle = handle
-            self._origin_rect = selected_bounds
-            self._scene.preview_rect = self._origin_rect
+            self._drag = ResizeDrag.begin(self, handle, selected_bounds)
             # 掴んだ時点で出す。動かし始めてからでは遅い
-            self._update_aspect_hint(self._shift_held(event))
+            self._update_aspect_hint(handle, self._shift_held(event))
             event.accept()
             return
 
@@ -1081,16 +1415,7 @@ class PageView(QGraphicsView):
         # 普段は重ならないが、重なったときは大きさを変えるほうを優先する
         # （回転はやり直しやすく、意図せず回っても気づける）
         if rotating:
-            image = self.state.selected_image
-            self._mode = "rotate"
-            self._origin_rect = image.rect
-            # 掴んだ向きと今の傾きのずれを覚えておく。つまみのどこを掴んでも
-            # 押した瞬間に絵が飛ばない
-            self._grab = (
-                self._angle_at(image.rect, x, y) - image.rotation,
-                0.0,
-            )
-            self._scene.rotate_preview = (image.id, image.rotation)
+            self._drag = RotateDrag.begin(self, x, y)
             self.state.message.emit(ROTATE_HINT)
             event.accept()
             return
@@ -1099,12 +1424,7 @@ class PageView(QGraphicsView):
         # こちらは掴む範囲が広いので、先に見ると縮小したときや細いコマで
         # 左右のつまみを覆い隠し、大きさを変えられなくなる
         if self._slant_handle_at(x, y):
-            panel = self.state.selected_panel
-            self._mode = "slant"
-            self._scene.slant_preview = (
-                panel.id,
-                self.state.page.slant_pair_of(panel.id).ratio,
-            )
+            self._drag = SlantDrag.begin(self)
             self.state.message.emit("左右にドラッグすると、斜めの境界が動きます")
             event.accept()
             return
@@ -1116,13 +1436,13 @@ class PageView(QGraphicsView):
         # するのは、中心のつまみがコマの真ん中あたりに出るためで、
         # 後にすると掴んだつもりがコマの移動になる（→ 要件定義 6.16）
         if self._focus_hole_at(x, y):
-            self._begin_focus_drag("focus_hole")
+            self._drag = FocusDrag.begin(self, "focus_hole")
             self.state.message.emit("左右にドラッグすると、集中線の内側の空きが変わります")
             event.accept()
             return
 
         if self._focus_center_at(x, y):
-            self._begin_focus_drag("focus_center")
+            self._drag = FocusDrag.begin(self, "focus_center")
             self.state.message.emit("ドラッグすると、集中線の中心が動きます")
             event.accept()
             return
@@ -1135,12 +1455,7 @@ class PageView(QGraphicsView):
                 "ロックされたコマです。動かすにはロックを解除してください"
             )
         elif self.state.selected_id is not None:
-            self._mode = "move"
-            # 掴む矩形は `selected_bounds` に任せる。斜めの組なら組の外側が
-            # 返るので、片方だけ動く見た目にならない
-            self._origin_rect = self.state.selected_bounds
-            self._grab = (x, y)
-            self._scene.preview_rect = self._origin_rect
+            self._drag = MoveDrag.begin(self, x, y)
             if self.state.selected_slant_pair is not None:
                 self.state.message.emit("斜めに割った2枚は、まとめて動きます")
         event.accept()
@@ -1291,20 +1606,6 @@ class PageView(QGraphicsView):
             return False
         return tail_body_contains(balloon, x, y, self.state.balloon_settings)
 
-    def _begin_tail_drag(self, x: float, y: float) -> None:
-        """しっぽの先端ドラッグを始める。
-
-        押した点と先端がずれていても（=しっぽの本体を掴んだ場合)、
-        差分を覚えておいて先端がその分だけ付いてくるようにする。
-        差分を覚えずに先端をマウス位置へ直接合わせると、本体の
-        途中を押しただけで先端が瞬間移動して見える。
-        """
-        balloon = self.state.selected_balloon
-        tip = balloon.tail.tip
-        self._mode = "tail"
-        self._grab = (x - tip[0], y - tip[1])
-        self._scene.tail_preview = (balloon.id, tip)
-
     def _slant_handle_at(self, x: float, y: float) -> bool:
         """斜めの境界のつまみを掴んでいるか。
 
@@ -1341,19 +1642,6 @@ class PageView(QGraphicsView):
             return False
         half = size_px / self.view_scale / 2.0
         return abs(x - point[0]) <= half and abs(y - point[1]) <= half
-
-    def _begin_focus_drag(self, mode: str) -> None:
-        """集中線のつまみを掴んだ。下見を今の値で始める。
-
-        モデルには触らない。離した時点で1手として積む（斜めの境界と
-        同じ流儀 → 要件定義 6.10）。
-        """
-        found = self._scene.focus_of_selection()
-        if found is None:
-            return
-        panel, focus = found
-        self._mode = mode
-        self._scene.focus_preview = (panel.id, dataclasses.replace(focus))
 
     def _tail_root_at(self, x: float, y: float) -> bool:
         """選択中の吹き出しの、しっぽの付け根を掴んでいるか。
@@ -1421,110 +1709,12 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        if self._mode is None:
+        if self._drag is None:
             self._update_cursor(x, y)
             super().mouseMoveEvent(event)
             return
 
-        threshold = self._snap_threshold()
-
-        if self._mode == "tail":
-            # 先端は吸着させない。人物の口元を指すもので、
-            # コマの辺に吸い付いても意味がない
-            #
-            # `_grab` は掴んだ点と先端のずれ（本体を掴んだ場合に発生）。
-            # 引いたぶんだけ動かし、ずれ自体は保ったままにする
-            if self._scene.tail_preview is not None:
-                tip = (x - self._grab[0], y - self._grab[1])
-                self._scene.tail_preview = (self._scene.tail_preview[0], tip)
-
-        elif self._mode == "tail_root":
-            # **縦だけ見る。** 付け根は輪郭の上を滑るので、横位置は
-            # 高さから決まる。マウスの左右を拾うと形が飛ぶ
-            balloon = self.state.selected_balloon
-            if balloon is not None and self._scene.root_preview is not None:
-                self._scene.root_preview = (
-                    self._scene.root_preview[0],
-                    root_y_at(balloon.rect, y),
-                )
-
-        elif self._mode == "create":
-            rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
-            xs, ys = self._candidates(None)
-            self._scene.preview_rect = snap_moved_rect(rect.normalized(), xs, ys, threshold)
-
-        elif self._mode in ("create_balloon", "create_sticker", "create_text"):
-            rect = Rect(self._grab[0], self._grab[1], x - self._grab[0], y - self._grab[1])
-            self._scene.preview_rect = rect.normalized()
-
-        elif self._mode == "slant" and self._scene.slant_preview is not None:
-            held_id = self._scene.slant_preview[0]
-            pair = self.state.page.slant_pair_of(held_id)
-            if pair is not None:
-                rect = self.state.page.slant_bounds(pair)
-                ratio = clamp_slant_ratio(
-                    rect, pair.angle, slant_ratio_at(rect, x), self.state.settings
-                )
-                self._scene.slant_preview = (held_id, ratio)
-
-        elif self._mode in ("focus_center", "focus_hole"):
-            self._update_focus_preview(x, y)
-
-        elif self._mode == "rotate" and self._origin_rect is not None:
-            if self._scene.rotate_preview is not None:
-                # 掴んだときのずれを引くと、つまみを持ったまま円を描いた
-                # ぶんだけ回る。Shift のときだけ刻む（→ 要件定義 6.3）
-                angle = self._angle_at(self._origin_rect, x, y) - self._grab[0]
-                if self._shift_held(event):
-                    angle = round(angle / ROTATE_STEP_DEG) * ROTATE_STEP_DEG
-                self._scene.rotate_preview = (
-                    self._scene.rotate_preview[0],
-                    normalize_angle(angle),
-                )
-
-        elif self._mode == "move" and self._origin_rect is not None:
-            moved = self._origin_rect.translated(x - self._grab[0], y - self._grab[1])
-            xs, ys = self._candidates(self.state.selected_id)
-            self._scene.preview_rect = snap_moved_rect(
-                moved, xs, ys, self._rect_snap_threshold()
-            )
-
-        elif self._mode == "resize" and self._origin_rect is not None and self._handle:
-            rotation = self._selected_rotation()
-            xs, ys = self._candidates(self.state.selected_id)
-            # 傾いていたら、まずマウスを「傾いていなかったときの位置」に
-            # 戻す。こうすると以下のリサイズ計算は今までのままでよい
-            px, py = (
-                unrotate_point(x, y, self._origin_rect, rotation)
-                if rotation != 0.0
-                else (x, y)
-            )
-            sx, sy = snap_point(
-                self._handle, px, py, xs, ys, self._rect_snap_threshold()
-            )
-            minimum = self.state.settings.min_panel_size
-            aspect = self._locked_aspect(event)
-            # ドラッグ中も出し直す。案内は数秒で消えるため、
-            # ゆっくり合わせているうちに見えなくなってしまう
-            self._update_aspect_hint(self._shift_held(event))
-            if aspect > 0.0:
-                resized = resize_rect_keep_aspect(
-                    self._origin_rect, self._handle, sx, sy, minimum, aspect
-                )
-            else:
-                resized = resize_rect(
-                    self._origin_rect, self._handle, sx, sy, minimum
-                )
-            # 傾いていると、幅を変えたぶんだけ中心が動く。掴んでいない側が
-            # 動いて見えないよう、ここで戻す
-            resized = keep_anchor(self._origin_rect, resized, self._handle, rotation)
-            # 斜めの組は、細いほうが最小幅を割る手前で止める。下見のうちに
-            # 押し戻しておけば、離した瞬間に形が飛ぶことがない
-            pair = self.state.selected_slant_pair
-            if pair is not None:
-                resized = clamp_slant_rect(pair, resized, self.state.settings)
-            self._scene.preview_rect = resized
-
+        self._drag.update(self, x, y, event)
         self.viewport().update()
         event.accept()
 
@@ -1539,69 +1729,16 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
-        if self._mode is None:
+        if self._drag is None:
             super().mouseReleaseEvent(event)
             return
 
-        preview = self._scene.preview_rect
-        tail = self._scene.tail_preview
-        root = self._scene.root_preview
-        slant = self._scene.slant_preview
-        rotate = self._scene.rotate_preview
-        focus = self._scene.focus_preview
-        mode, origin, press = self._mode, self._origin_rect, self._grab
+        drag = self._drag
         self._reset_drag()
-
-        if mode in ("focus_center", "focus_hole"):
-            if focus is not None:
-                self._apply_focus(focus[0], focus[1], mode)
-        elif mode == "rotate":
-            if rotate is not None:
-                self._apply_rotate(rotate[0], rotate[1])
-        elif mode == "tail":
-            if tail is not None:
-                self._apply_tail(tail[0], tail[1])
-        elif mode == "tail_root":
-            if root is not None:
-                self._apply_tail_root(root[0], root[1])
-        elif mode == "slant":
-            if slant is not None:
-                self._apply_slant(slant[0], slant[1])
-        elif preview is not None:
-            if mode == "create":
-                self._apply_create(preview, press)
-            elif mode == "create_balloon":
-                self._apply_create_balloon(preview, press)
-            elif mode == "create_sticker":
-                self._apply_create_sticker(preview, press)
-            elif mode == "create_text":
-                self._apply_create_text(preview, press)
-            elif mode == "move" and origin is not None:
-                self._apply_move(origin, preview)
-            elif mode == "resize":
-                self._apply_resize(preview)
+        drag.commit(self)
 
         self.viewport().update()
         event.accept()
-
-    def _update_focus_preview(self, x: float, y: float) -> None:
-        """集中線の下見を、マウスの位置に合わせて作り直す。
-
-        中心は**縦横とも**追う（画面の中の好きな場所に置くもの）。空きは
-        **横だけ**追う。印は中心の右にあり左右にしか動かないので、縦を
-        拾うと掴んだ瞬間に値が飛ぶ。
-        """
-        preview = self._scene.focus_preview
-        panel = self.state.selected_panel
-        if preview is None or panel is None:
-            return
-        bounds = panel.bounds()
-        focus = preview[1]
-        if self._mode == "focus_center":
-            focus = dataclasses.replace(focus, center=focus_center_at(bounds, x, y))
-        else:
-            focus = dataclasses.replace(focus, hole=focus_hole_at(focus, bounds, x))
-        self._scene.focus_preview = (preview[0], focus)
 
     def _apply_focus(self, panel_id: str, focus: FocusLines, mode: str) -> None:
         """離した時点で1手として積む。**変わっていなければ積まない。**"""
@@ -1665,7 +1802,7 @@ class PageView(QGraphicsView):
         half = ROTATE_HANDLE_HIT_PX / self.view_scale / 2.0
         return abs(x - point[0]) <= half and abs(y - point[1]) <= half
 
-    def _update_aspect_hint(self, shift_held: bool) -> None:
+    def _update_aspect_hint(self, handle: str, shift_held: bool) -> None:
         """斜めのつまみで画像を伸縮しているあいだ、Shift の案内を出す。
 
         角のつまみは縦と横が同時に変わるので、ここでだけ等比かどうかが
@@ -1675,7 +1812,7 @@ class PageView(QGraphicsView):
         押している最中は文面を変える。効いているかどうかが分からないと、
         Shift を押したつもりで歪んだまま確定してしまう。
         """
-        if self.state.selected_image is None or self._handle not in CORNER_HANDLES:
+        if self.state.selected_image is None or handle not in CORNER_HANDLES:
             return
         text = ASPECT_HINT_HELD if shift_held else ASPECT_HINT
         if text == self._hint_shown:
