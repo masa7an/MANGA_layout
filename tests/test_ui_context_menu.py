@@ -630,7 +630,7 @@ class TestReplaceImageHere:
         found = labels(right_click(window_with_image, *corner))
         assert REPLACE_IMAGE_LABEL not in found
         # 絵から外れていても、コマへ読み込む道は開いている
-        assert "ファイルから読み込み..." in found
+        assert "ファイル画像 読み込み..." in found
 
     def test_絵があっても読み込みは出る(self, window_with_image):
         """背景の上にキャラを重ねる使い方があるので、塞がない。"""
@@ -639,7 +639,7 @@ class TestReplaceImageHere:
 
         found = labels(right_click(window_with_image, cx, cy))
 
-        assert "ファイルから読み込み..." in found
+        assert "ファイル画像 読み込み..." in found
         assert REPLACE_IMAGE_LABEL in found
 
     def test_画像を選んでいるときも両方出る(self, window_with_image):
@@ -653,6 +653,6 @@ class TestReplaceImageHere:
 
         assert state.selected_image is not None
         assert REPLACE_IMAGE_LABEL in found
-        assert "ファイルから読み込み..." in found
+        assert "ファイル画像 読み込み..." in found
         # 消す側は「画像を削除」1つで足りる（選んでいるものに効く）
         assert "画像を削除" in found

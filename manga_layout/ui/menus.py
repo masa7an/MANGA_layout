@@ -440,7 +440,7 @@ class ImageMenu:
             "貼り付け", window.paste_image, "Ctrl+V", "クリップボードの画像を置く"
         )
         self.open_image_action = window._act(
-            "ファイルから読み込み...", window.open_image_file
+            "ファイル画像 読み込み...", window.open_image_file
         )
         menu.addAction(self.paste_action)
         menu.addAction(self.open_image_action)
