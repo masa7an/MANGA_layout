@@ -729,6 +729,21 @@ class EditorState(QObject):
             target.focus_lines.seed = new_seed()
         return True
 
+    def toggle_focus_color(self) -> bool:
+        """線の色を黒⇄白で切り替える。**単純な色違い**（要件定義 6.19）。
+
+        形（本数・太さ・空き・中心）には触らない。押すたびに必ず変わる
+        操作なので、`_step_focus` の端で止まるガードは要らない。
+        """
+        panel = self.selected_panel
+        if panel is None or panel.focus_lines is None:
+            return False
+
+        panel_id = panel.id
+        with self._edit_focus(panel_id, "集中線の色") as target:
+            target.focus_lines.white = not target.focus_lines.white
+        return True
+
     # -- 吹き出し ----------------------------------------------------------
 
     def add_balloon(self, rect: Rect, style: str = "ellipse") -> BalloonObject:

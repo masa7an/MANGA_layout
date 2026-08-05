@@ -275,3 +275,31 @@ def test_範囲外は切り詰めずに弾く(key, value):
     data[key] = value
     with pytest.raises(ProjectFormatError):
         FocusLines.from_dict(data, "focus")
+
+
+# -- 色（単純な色違い → 6.19） -----------------------------------------------
+
+
+def test_既定は黒():
+    assert make().white is False
+
+
+def test_白は項目として保存され往復する():
+    focus = make(white=True)
+    data = focus.to_dict()
+    assert data["white"] is True
+    assert FocusLines.from_dict(data, "focus").white is True
+
+
+def test_黒では項目ごと省く():
+    """使っていない作品の project.json が、この機能の追加前と同じ内容の
+    ままになる（→ `locked` と同じ線引き → 5章）。
+    """
+    assert "white" not in make(white=False).to_dict()
+
+
+def test_項目の無い集中線は黒として読める():
+    """この機能より前の作品がそのまま開ける。"""
+    data = make().to_dict()
+    assert "white" not in data
+    assert FocusLines.from_dict(data, "focus").white is False

@@ -51,8 +51,9 @@ MARGIN_GUIDE = QColor("#B7CEE8")
 PANEL_FILL = QColor("#F4F4F4")
 PLACEHOLDER = QColor("#9FB2BF")
 MISSING_IMAGE = QColor("#D9534F")
-# 集中線の色。**黒のみ**（要件定義 6.16）。白集中線は要求が立ってから
+# 集中線の色。既定は黒。`FocusLines.white` が立っていれば白（要件定義 6.19）
 FOCUS_INK = QColor("#000000")
+FOCUS_INK_WHITE = QColor("#FFFFFF")
 
 TEXT_ALIGN_FLAGS = {
     "left": Qt.AlignmentFlag.AlignLeft,
@@ -332,9 +333,12 @@ class PageRenderer:
 
         線はコマの外まで伸びているが、切り抜きの中で描いているので端は
         自動で落ちる。形を作る側は `manga_layout.focus`。
+
+        色は `focus.white` だけで決まる**単純な色違い**（要件定義 6.19）。
+        暗いコマの上で使う想定で、形の計算には影響しない。
         """
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(FOCUS_INK))
+        painter.setBrush(QBrush(FOCUS_INK_WHITE if focus.white else FOCUS_INK))
         for triangle in focus_triangles(focus, bounds):
             painter.drawPolygon(polygon_of(triangle))
 

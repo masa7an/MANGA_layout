@@ -394,6 +394,14 @@ class MainWindow(QMainWindow):
         add("線を太く", lambda: self.state.step_focus_width(1))
         add("線を細く", lambda: self.state.step_focus_width(-1))
         menu.addSeparator()
+        # 「白にする／黒に戻す」も入れる／消すと同じく1項目の文言を入れ替える
+        # （要件定義 6.19。単純な色違いなので、色を選ぶメニューにはしない）
+        self.focus_color_action = add(
+            "白にする",
+            self.toggle_focus_color,
+            "線の色を黒と白で切り替える。暗いコマの上で使う",
+        )
+        menu.addSeparator()
         add(
             "形を振り直す",
             self.state.reseed_focus,
@@ -1027,6 +1035,8 @@ class MainWindow(QMainWindow):
         self.focus_toggle_action.setText("消す" if focus is not None else "入れる")
         for action in self.focus_actions:
             action.setEnabled(focus is not None)
+        if focus is not None:
+            self.focus_color_action.setText("黒に戻す" if focus.white else "白にする")
 
         text = self.state.selected_text
         for action in self.text_actions:
@@ -1265,6 +1275,13 @@ class MainWindow(QMainWindow):
             self.state.add_focus_lines()
         elif self.state.remove_focus_lines():
             self.state.message.emit("集中線を消しました")
+
+    def toggle_focus_color(self) -> None:
+        """選んだコマの集中線の色を黒⇄白で切り替える（要件定義 6.19）。"""
+        if self.state.toggle_focus_color():
+            focus = self.state.selected_focus
+            color = "白" if focus is not None and focus.white else "黒"
+            self.state.message.emit(f"集中線の色: {color}")
 
     def delete_image(self, image_id: str | None = None) -> None:
         """画像だけ消す。入っていたコマは残り、そのコマを選び直す。

@@ -166,6 +166,58 @@ def test_集中線の入っていないコマでは何も起きない(window_wit
     assert state.step_focus_count(1) is False
     assert state.step_focus_width(1) is False
     assert state.reseed_focus() is False
+    assert state.toggle_focus_color() is False
+
+
+# -- 色（単純な色違い → 6.19） -----------------------------------------------
+
+
+def test_既定は黒(window_with_focus):
+    assert panel(window_with_focus).focus_lines.white is False
+
+
+def test_白に切り替えられる(window_with_focus):
+    state = window_with_focus.state
+    assert state.toggle_focus_color() is True
+    assert panel(window_with_focus).focus_lines.white is True
+    assert state.toggle_focus_color() is True
+    assert panel(window_with_focus).focus_lines.white is False
+
+
+def test_色の切り替えは形に触らない(window_with_focus):
+    before = panel(window_with_focus).focus_lines
+    center, count, width, hole, seed = (
+        before.center,
+        before.count,
+        before.width,
+        before.hole,
+        before.seed,
+    )
+    window_with_focus.state.toggle_focus_color()
+    after = panel(window_with_focus).focus_lines
+    assert (after.center, after.count, after.width, after.hole, after.seed) == (
+        center,
+        count,
+        width,
+        hole,
+        seed,
+    )
+
+
+def test_色の切り替えは1手で戻る(window_with_focus):
+    window = window_with_focus
+    window.state.toggle_focus_color()
+    window.state.undo()
+    assert panel(window).focus_lines.white is False
+
+
+def test_メニューの文言が白にする_黒に戻すで入れ替わる(window_with_focus):
+    window = window_with_focus
+    assert window.focus_color_action.text() == "白にする"
+    window.toggle_focus_color()
+    assert window.focus_color_action.text() == "黒に戻す"
+    window.toggle_focus_color()
+    assert window.focus_color_action.text() == "白にする"
 
 
 # -- つまみ ------------------------------------------------------------------

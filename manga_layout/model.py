@@ -262,6 +262,10 @@ class FocusLines:
 
     **既定値を持たせていない。** 出発点の値は `FocusSettings` にあり、
     2か所に持つと片方だけ古くなる。作るときは `focus.default_focus()` を通す。
+
+    `white` は線の色。**黒地に白い線にするだけの単純な色違い**（要件定義
+    6.19）。既定は False（黒）で、入れていない（False）作品では項目ごと
+    省く。`locked` と同じ線引き。
     """
 
     center: tuple[float, float]
@@ -269,15 +273,19 @@ class FocusLines:
     count: int
     width: float
     seed: int
+    white: bool = False
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "center": [self.center[0], self.center[1]],
             "hole": self.hole,
             "count": self.count,
             "width": self.width,
             "seed": self.seed,
         }
+        if self.white:
+            data["white"] = True
+        return data
 
     @classmethod
     def from_dict(cls, data: Any, where: str) -> "FocusLines":
@@ -313,6 +321,7 @@ class FocusLines:
             count=count,
             width=width,
             seed=seed,
+            white=v.flag(d, "white", where, False),
         )
 
 
