@@ -23,13 +23,10 @@ from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
-    QCursor,
     QFont,
     QFontMetricsF,
     QPainter,
-    QPainterPath,
     QPen,
-    QPixmap,
     QTextCursor,
     QTextOption,
 )
@@ -138,9 +135,9 @@ STICKER_ACCENT = QColor("#00897B")
 # 以前はここが漏れており、コマ（青）にフォールバックしていたため、
 # セリフを選んでいるのかコマを選んでいるのか枠の色では区別できなかった
 TEXT_ACCENT = QColor("#E53935")
-# ラフを調整しているときの枠とカーソルの色（→ 要件定義 6.23）。
-# 鉛筆の軸の色に寄せてある。**ラフの青（`images.ROUGH_BLUE`）は使わない。**
-# 下敷きそのものと同じ色で枠を描くと、絵の中の線と枠の区別が付かない
+# ラフを調整しているときの枠の色（→ 要件定義 6.23）。
+# **ラフの青（`images.ROUGH_BLUE`）は使わない。** 下敷きそのものと同じ色で
+# 枠を描くと、絵の中の線と枠の区別が付かない
 ROUGH_ACCENT = QColor("#B08968")
 
 # 画面上での大きさ（画面ピクセル）。表示倍率で割ってシーンの px に直して使う
@@ -282,60 +279,6 @@ _RESIZE_TARGETS = (
     *_MOVE_TARGETS,
     (lambda s: s.selected_balloon, BalloonObject, "フキダシ"),
 )
-
-
-# 鉛筆カーソルの大きさと、先端（掴む点）の位置（画面ピクセル）
-PENCIL_CURSOR_PX = 24
-PENCIL_TIP = (4, 20)
-
-# 作った鉛筆カーソルの控え。**1回だけ作って使い回す**（→ `pencil_cursor`）
-_pencil_cursor: QCursor | None = None
-
-
-def pencil_cursor() -> QCursor:
-    """鉛筆の形のカーソル。**ラフを調整している間だけ出す**（要件定義 6.23）。
-
-    Qt の標準カーソルに鉛筆は無いので、その場で描いて作る。道具箱の
-    選択状態は画面の上端にあり、絵を見ている間は目に入らない。手元の形が
-    変わっていれば、いま掴めるのがラフだけであることがその場で分かる。
-
-    **1回だけ作って使い回す。** カーソルはマウスを動かすたびに設定されるので、
-    毎回作ると動かしている間ずっと絵を描き続けることになる。
-
-    **`QApplication` ができてから呼ぶこと。** QPixmap は画面まわりの
-    初期化が済む前には作れない。
-    """
-    global _pencil_cursor
-    if _pencil_cursor is not None:
-        return _pencil_cursor
-
-    pixmap = QPixmap(PENCIL_CURSOR_PX, PENCIL_CURSOR_PX)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    # 先端を原点に置いてから、左下を向くように倒す。掴む点と絵の先端が
-    # 必ず一致する（別々に決めると、押した場所と効く場所がずれる）
-    painter.translate(float(PENCIL_TIP[0]), float(PENCIL_TIP[1]))
-    painter.rotate(45.0)
-
-    body = QPainterPath()
-    body.addPolygon(
-        polygon_of(((0.0, 0.0), (-3.0, -5.0), (-3.0, -19.0), (3.0, -19.0), (3.0, -5.0)))
-    )
-    body.closeSubpath()
-    # 白で縁取ってから塗る。用紙の白の上でも、暗い絵の上でも形が残る
-    painter.setPen(QPen(QColor("#FFFFFF"), 2.5))
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawPath(body)
-    painter.setPen(QPen(QColor("#1A1A1A"), 1.0))
-    painter.setBrush(QBrush(ROUGH_ACCENT))
-    painter.drawPath(body)
-    # 芯と軸の境目。1本引くだけで鉛筆に見える
-    painter.drawLine(QLineF(-3.0, -5.0, 3.0, -5.0))
-    painter.end()
-
-    _pencil_cursor = QCursor(pixmap, PENCIL_TIP[0], PENCIL_TIP[1])
-    return _pencil_cursor
 
 
 class Drag:
@@ -2043,16 +1986,20 @@ class PageView(QGraphicsView):
         return aspect_of(image.src_px)
 
     def _update_cursor(self, x: float, y: float) -> None:
-        # ラフの調整中は鉛筆（→ 要件定義 6.23）。**他のどの判定よりも先に見る。**
+        # ラフの調整中（→ 要件定義 6.23）。**他のどの判定よりも先に見る。**
         # この道具ではラフしか掴めないので、コマや吹き出しの上で移動の形が
         # 出ると、掴めるつもりで押して何も起きないことになる。
+        #
+        # 形は Qt の標準の手（`OpenHandCursor`）。**専用の絵は持たない。**
+        # 掴めるものが1種類しか無いモードなので、他のもの（コマ・セリフ）と
+        # 取り違えようがなく、道具を示す印を手元に出す必要がない。
         # つまみの上だけは、伸びる向きを示す形のままにする
         if self.state.tool == TOOL_ROUGH:
             rough_handle = self._rough_handle_at(x, y)
             self.viewport().setCursor(
                 _HANDLE_CURSORS[rough_handle]
                 if rough_handle is not None
-                else pencil_cursor()
+                else Qt.CursorShape.OpenHandCursor
             )
             return
 

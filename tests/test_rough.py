@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 from test_ui_balloon import drag, move_to, press, release
 
@@ -33,7 +33,6 @@ from manga_layout.settings import (
     save_settings,
 )
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.canvas import PENCIL_TIP, pencil_cursor
 from manga_layout.ui.export import render_page
 from manga_layout.ui.menus import ROUGH_FADED_LABELS
 from manga_layout.ui.render import PAGE_BG, PageRenderer
@@ -389,26 +388,21 @@ class Test調整の道具:
         assert state.selected_id is None
         release(window_with_rough.view, 900.0, 1100.0)
 
-    def test_調整中のカーソルは鉛筆(self, window_with_rough):
-        """ラフだけが掴めることを手元の形で示す（→ 6.23）。"""
+    def test_調整中のカーソルは掴める形(self, window_with_rough):
+        """標準の手。**専用の絵は持たない**（→ 6.23）。"""
         view = window_with_rough.view
         window_with_rough.state.set_tool(TOOL_ROUGH)
         move_to(view, *ROUGH_INSIDE)
 
-        assert view.viewport().cursor().shape() == Qt.CursorShape.BitmapCursor
-        assert view.viewport().cursor().hotSpot() == QPoint(*PENCIL_TIP)
+        assert view.viewport().cursor().shape() == Qt.CursorShape.OpenHandCursor
 
     def test_つまみの上では伸びる向きを出す(self, window_with_rough):
-        """鉛筆で塗り潰すと、どちらへ伸びるつまみか分からなくなる。"""
+        """手のままだと、どちらへ伸びるつまみか分からない。"""
         view = window_with_rough.view
         window_with_rough.state.set_tool(TOOL_ROUGH)
         move_to(view, ROUGH_RECT.right, ROUGH_RECT.bottom)
 
         assert view.viewport().cursor().shape() == Qt.CursorShape.SizeFDiagCursor
-
-    def test_鉛筆カーソルは作り直さない(self, qapp):
-        """マウスを動かすたびに絵を描き直すことになる。"""
-        assert pencil_cursor() is pencil_cursor()
 
     def test_普段の選択ではラフを掴めない(self, window_with_rough):
         state = window_with_rough.state
