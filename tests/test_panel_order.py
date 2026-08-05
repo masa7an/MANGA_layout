@@ -177,6 +177,19 @@ class Testメニュー:
         assert window.panel_menu.raise_action.isEnabled() is False
         assert window.panel_menu.lower_action.isEnabled() is True
 
+    def test_2項目めは頭が揃う(self, window):
+        """「コマを手前へ／　　　奥へ」。空白の数は「コマを」の字数と同じ。
+
+        揃っていないと、2項目めが上の行の続きに見えず、何が奥へ行くのか
+        分からない項目になる。字数を変えたら空白も直す必要があるので、
+        目で見て気づけない崩れをここで止める。
+        """
+        raise_text = window.panel_menu.raise_action.text()
+        lower_text = window.panel_menu.lower_action.text()
+        assert raise_text == "コマを手前へ"
+        assert lower_text.lstrip("　") == "奥へ"
+        assert len(lower_text) - len("奥へ") == len("コマを")
+
     def test_右クリックには押せる側だけ出る(self, window):
         lower, _ = panel_ids(window.state)
         window.state.select(lower)
