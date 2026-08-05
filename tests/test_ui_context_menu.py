@@ -241,8 +241,8 @@ class TestContents:
         menu = right_click(window_with_panel, 400.0, 300.0)
         found = labels(menu)
         # 3つとも必ず一緒に出るので、前置きが付くのは常に「横」
-        assert split_first("横に割る") in found
-        for name in ("縦に割る", "斜めに割る"):
+        assert split_first("コマを横に割る") in found
+        for name in ("コマを縦に割る", "コマを斜めに割る"):
             assert split_rest(name) in found
         # コマを選ぶと「コマ」が外れるので、フキダシが並びの1つめになる。
         # 種類は畳んだ下にある（→ 要件定義 10.1）
@@ -479,7 +479,7 @@ class TestActions:
 
     def test_ここで横に割る(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, split_first("横に割る")).trigger()
+        find(menu, split_first("コマを横に割る")).trigger()
 
         panels = window_with_panel.state.page.panels
         assert len(panels) == 2
@@ -493,7 +493,7 @@ class TestActions:
         持ち替えると、次に画面を押したときに割るつもりのない場所が割れる。
         """
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, split_rest("縦に割る")).trigger()
+        find(menu, split_rest("コマを縦に割る")).trigger()
 
         assert window_with_panel.state.tool == TOOL_SELECT
 

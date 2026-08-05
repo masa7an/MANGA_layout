@@ -367,9 +367,9 @@ class ContextMenu:
         view = self._view
         for index, (name, tool) in enumerate(
             (
-                ("横に割る", TOOL_SPLIT_H),
-                ("縦に割る", TOOL_SPLIT_V),
-                ("斜めに割る", TOOL_SPLIT_SLANT),
+                ("コマを横に割る", TOOL_SPLIT_H),
+                ("コマを縦に割る", TOOL_SPLIT_V),
+                ("コマを斜めに割る", TOOL_SPLIT_SLANT),
             )
         ):
             self._menu_act(
