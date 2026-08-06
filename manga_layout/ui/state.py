@@ -86,6 +86,7 @@ from ..storage import (
 from ..tone import (
     ANGLE_STEP as TONE_ANGLE_STEP,
     default_tone,
+    level_label as tone_level_label,
     stepped_density as tone_stepped_density,
     stepped_pitch as tone_stepped_pitch,
     stepped_thin as tone_stepped_thin,
@@ -1307,13 +1308,21 @@ class EditorState(QObject):
                 target.tone = None
         return True
 
+    # 押した直後の状態表示は、**割合ではなく「何段目か」で出す**
+    # （→ 要件定義 6.27）。`0.3% 未満` の形だと「設定値を1つ決めた」ように
+    # 読め、**同じ項目をもう一度押してよいことが伝わらない**（本人談
+    # 2026-08-06。「細い線を残す」を3回押してちょうどよくなった）。
+    # メニューの項目名にも同じ数字が出る（→ `ToneMenu`）。
+
     def step_tone_threshold(self, steps: int) -> bool:
         """どこまでを黒と見るかを増減する。変わったら True。"""
         return self._step_tone(
             "threshold",
             tone_stepped_threshold,
             steps,
-            lambda n: f"トーンにする明るさ: {n} 以下",
+            # ここだけ元の値も添える。**絵ごとに合わせる値**で、
+            # 前に上手くいった絵と見比べられるようにしておく（→ 6.27）
+            lambda n: f"拾う黒: {tone_level_label('threshold', n)}（明るさ {n} 以下）",
         )
 
     def step_tone_pitch(self, steps: int) -> bool:
@@ -1322,7 +1331,7 @@ class EditorState(QObject):
             "pitch",
             tone_stepped_pitch,
             steps,
-            lambda v: f"斜線の間隔: {v * 100:.1f}%（画像の短辺に対する割合）",
+            lambda v: f"斜線の間隔: {tone_level_label('pitch', v)}",
         )
 
     def step_tone_density(self, steps: int) -> bool:
@@ -1331,7 +1340,7 @@ class EditorState(QObject):
             "density",
             tone_stepped_density,
             steps,
-            lambda v: f"トーンの濃さ: {v * 100:.0f}%",
+            lambda v: f"トーンの濃さ: {tone_level_label('density', v)}",
         )
 
     def step_tone_thin(self, steps: int) -> bool:
@@ -1341,9 +1350,10 @@ class EditorState(QObject):
             tone_stepped_thin,
             steps,
             lambda v: (
-                "細い線も全部トーンにする"
-                if v <= 0.0
-                else f"トーンにしない細さ: {v * 100:.1f}% 未満（画像の短辺に対する割合）"
+                # 0 は「細さで選り分けない」という別の状態。段数だけだと
+                # 端に着いたことしか分からないので、言葉でも断る
+                f"細い線を残す: {tone_level_label('thin', v)}"
+                + ("（細さで選り分けない）" if v <= 0.0 else "")
             ),
         )
 

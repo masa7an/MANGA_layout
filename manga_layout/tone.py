@@ -136,6 +136,44 @@ def stepped_thin(thin: float, steps: int) -> float:
     return _clamp(thin + steps * THIN_STEP, THIN_MIN, THIN_MAX)
 
 
+# -- 何段目か -------------------------------------------------------------
+
+# 増減できる4つの値の、範囲と1回ぶんを1つの表にまとめる。
+# **メニューに「今 何段目か」を出すため**（→ 要件定義 6.27）。
+_RANGES = {
+    "threshold": (THRESHOLD_MIN, THRESHOLD_MAX, THRESHOLD_STEP),
+    "pitch": (PITCH_MIN, PITCH_MAX, PITCH_STEP),
+    "density": (DENSITY_MIN, DENSITY_MAX, DENSITY_STEP),
+    "thin": (THIN_MIN, THIN_MAX, THIN_STEP),
+}
+
+
+def level_max(field: str) -> int:
+    """その値を端から端まで押したときの段数。"""
+    low, high, step = _RANGES[field]
+    return round((high - low) / step)
+
+
+def level_of(field: str, value: float) -> int:
+    """今の値が何段目か。
+
+    **押した回数を数えるのではなく、値から逆算する。** 数えると、Undo で
+    戻したとき・別の絵に移ったとき・保存して開き直したときに、数字だけが
+    実際の値とずれる（入れた直後が既に 0 段目でないものもある。`thin` の
+    既定 0.002 は 2 段目 → 要件定義 6.27）。
+
+    手で書き換えた `project.json` のように**範囲の外**の値が来ても、
+    0〜上限に収めて返す（表示のためのものなので、弾いて止めるより丸める）。
+    """
+    low, _high, step = _RANGES[field]
+    return max(0, min(level_max(field), round((value - low) / step)))
+
+
+def level_label(field: str, value: float) -> str:
+    """メニューと状態表示に出す「2/20」の形。"""
+    return f"{level_of(field, value)}/{level_max(field)}"
+
+
 # -- 中の4段 --------------------------------------------------------------
 
 

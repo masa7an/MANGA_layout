@@ -27,6 +27,7 @@ from PySide6.QtWidgets import QMenu
 from ..model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE
 from ..recent_project import load_recent_project
 from ..storage import PROJECT_FILENAME
+from ..tone import level_label as tone_level_label
 from .export import EXPORT_DIRNAME
 from .state import (
     BALLOON_STYLE_LABELS,
@@ -543,11 +544,28 @@ class FlowMenu:
             self.color_action.setText("黒に戻す" if flow.white else "白にする")
 
 
+def _level_text(name: str, key: str, level: str | None) -> str:
+    """トーンの増減する項目の文言（→ 要件定義 6.27）。
+
+    `level` は「2/20」の形か、トーンが入っていなければ `None`。
+    キーの案内が付くものだけ、**括弧を重ねずに数字を前へ置く**。
+    """
+    if level is None:
+        return f"{name}（{key}）" if key else name
+    if key:
+        return f"{name} {level}（{key}）"
+    return f"{name}（{level}）"
+
+
 class ToneMenu:
     """トーンのメニュー（要件定義 10.1）。**集中線・流線と同じ形で畳む。**
 
     項目名は短く保ち、**説明はステータスバーへ逃がす**。畳みの中で読む字数が
     増えると、畳んだ意味が薄れる（→ 6.12、6.16）。
+
+    **増減する項目にだけ「2/20」を添えるのは、この決まりの例外ではない。**
+    数字は説明ではなく押した結果そのもので、押すたびに動く（「入れる／消す」
+    がラベルを書き換えているのと同じ筋 → 6.19、6.27）。
 
     **キーは1つも割り当てない**（→ 7章。集中線・流線と同じ）。矩形を絞る
     操作だけは道具（「トーン範囲を調整」）に出してある。
@@ -574,6 +592,20 @@ class ToneMenu:
             self.actions.append(action)
             return action
 
+        # 増減する項目には**今が何段目かを添える**（→ 要件定義 6.27）。
+        # `refresh` が書き換えるので、ここで渡すのは入っていないときの文言。
+        self.level_actions: list[tuple[QAction, str, str, str]] = []
+
+        def add_level(name: str, field: str, slot, tip: str = "", key: str = "") -> QAction:
+            """段数の付く項目。`key` はキーの案内（例 `Shift+]`）。
+
+            **キーの付くものだけ括弧を重ねない。**
+            「拾う黒を増やす（Shift+]）（3/20）」は括弧が2つ続いて読みにくい。
+            """
+            action = add(_level_text(name, key, None), slot, tip)
+            self.level_actions.append((action, name, field, key))
+            return action
+
         # **範囲の2項目は「入れる」のすぐ下に置く。** 道具の切り替えは
         # 「道具」メニューにも出ているが、そこだけだと入れた直後に
         # 遠くのメニューへ移ることになり、繋がりが見えない
@@ -589,11 +621,21 @@ class ToneMenu:
         )
         menu.addSeparator()
 
-        add("濃く", lambda: window.state.step_tone_density(1), "斜線を太くする")
-        add("薄く", lambda: window.state.step_tone_density(-1), "斜線を細くする")
+        add_level(
+            "濃く", "density", lambda: window.state.step_tone_density(1), "斜線を太くする"
+        )
+        add_level(
+            "薄く", "density", lambda: window.state.step_tone_density(-1), "斜線を細くする"
+        )
         menu.addSeparator()
-        add("目を細かく", lambda: window.state.step_tone_pitch(-1), "斜線の間隔を狭める")
-        add("目を粗く", lambda: window.state.step_tone_pitch(1), "斜線の間隔を広げる")
+        add_level(
+            "目を細かく", "pitch", lambda: window.state.step_tone_pitch(-1), "斜線の間隔を狭める"
+        )
+        add_level(
+            "目を粗く", "pitch", lambda: window.state.step_tone_pitch(1), "斜線の間隔を広げる"
+        )
+        # **向きにだけ段数を付けない。** ぐるぐる回るだけで端が無く、
+        # 「あと何回押せるか」に意味が無い（→ 要件定義 6.27）
         add(
             "15度回す",
             lambda: window.state.step_tone_angle(1),
@@ -608,24 +650,30 @@ class ToneMenu:
         # 入力欄より先に処理するので、セリフを打っている最中の `}` を
         # 奪う。画面（`PageView`）側で拾い、入力中は1つも横取りしない
         # という規則に合わせる（→ 要件定義 7章の `+` / `-` と同じ扱い）
-        add(
-            "拾う黒を増やす（Shift+]）",
+        add_level(
+            "拾う黒を増やす",
+            "threshold",
             lambda: window.state.step_tone_threshold(1),
-            "より明るい灰色までトーンにする。黒ベタが拾われないときに上げる",
+            "より明るい灰色までトーンにする。黒ベタが拾われないときに、届くまで何回でも",
+            key="Shift+]",
         )
-        add(
-            "拾う黒を減らす（Shift+[）",
+        add_level(
+            "拾う黒を減らす",
+            "threshold",
             lambda: window.state.step_tone_threshold(-1),
             "本当に暗い所だけをトーンにする",
+            key="Shift+[",
         )
         menu.addSeparator()
-        add(
+        add_level(
             "細い線を残す",
+            "thin",
             lambda: window.state.step_tone_thin(1),
-            "これより細いものはトーンにしない。線画の線が破線になるときに上げる",
+            "これより細いものはトーンにしない。線画の線が破線になるときに、直るまで何回でも",
         )
-        add(
+        add_level(
             "細い線も塗る",
+            "thin",
             lambda: window.state.step_tone_thin(-1),
             "細さで選り分けるのをやめる。線画を持たない絵ではこちら",
         )
@@ -653,6 +701,11 @@ class ToneMenu:
             action.setEnabled(tone is not None)
         # 絞っていなければ戻す先が無い
         self.clear_area_action.setEnabled(tone is not None and tone.area is not None)
+        # 今が何段目かを項目名に出す（→ 要件定義 6.27）。**右クリック側にも
+        # そのまま出る**——写しているのは同じ QAction そのものだから
+        for action, name, field, key in self.level_actions:
+            level = None if tone is None else tone_level_label(field, getattr(tone, field))
+            action.setText(_level_text(name, key, level))
 
 
 class ImageMenu:

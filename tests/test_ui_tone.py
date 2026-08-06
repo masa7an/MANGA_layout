@@ -171,7 +171,8 @@ def test_右クリックに並ぶ_コマを選んでいるとき(window_with_ton
 
 def test_右クリックの畳みに中身が入っている(window_with_tone):
     menu = window_with_tone.context_menu.build(0.0, 0.0)
-    assert "濃く" in folded_labels(menu, "トーン")
+    # 増減する項目は「濃く（6/17）」の形で段数が付く（→ 6.27）
+    assert any(name.startswith("濃く") for name in folded_labels(menu, "トーン"))
 
 
 def test_範囲の項目が入れるのすぐ下に並ぶ(window_with_tone):
@@ -225,6 +226,70 @@ def test_入れていない画像では調整の項目が押せない(window_wit
     menu = window_with_image.image_menu.tone
     window_with_image._refresh()
     assert all(not action.isEnabled() for action in menu.actions)
+
+
+# -- 何段目かを項目名に出す（→ 6.27）----------------------------------------
+
+
+def level_text(window, name: str) -> str:
+    """トーンのメニューから、その項目の今の文言を1つ取り出す。"""
+    for action, base, _field, _key in window.image_menu.tone.level_actions:
+        if base == name:
+            return action.text()
+    raise AssertionError(f"{name} という項目が無い")
+
+
+def test_項目名に今の段数が出る(window_with_tone):
+    """一回きりに見える文言だと、重ねてよいことが伝わらない（本人談 2026-08-06）。"""
+    window_with_tone._refresh()
+    assert level_text(window_with_tone, "細い線を残す") == "細い線を残す（2/20）"
+
+
+def test_押すたびに数字が動く(window_with_tone):
+    """**動くことが「もう一度押してよい」の合図。**"""
+    window_with_tone.state.step_tone_thin(1)
+    window_with_tone._refresh()
+    assert level_text(window_with_tone, "細い線を残す") == "細い線を残す（3/20）"
+    # 対になる項目にも同じ数字を出す。片方だけだと、2つが同じ1つの値を
+    # 上げ下げしていることが伝わらない
+    assert level_text(window_with_tone, "細い線も塗る") == "細い線も塗る（3/20）"
+
+
+def test_キーの付く項目は括弧を重ねない(window_with_tone):
+    """「拾う黒を増やす（Shift+]）（3/20）」は括弧が2つ続いて読みにくい。"""
+    window_with_tone._refresh()
+    assert level_text(window_with_tone, "拾う黒を増やす") == "拾う黒を増やす 3/20（Shift+]）"
+
+
+def test_トーンが無いときは数字を出さない(window_with_image):
+    """出す値が無い。押せない状態でもあるので、名前だけに戻す。"""
+    window_with_image._refresh()
+    assert level_text(window_with_image, "細い線を残す") == "細い線を残す"
+    assert level_text(window_with_image, "拾う黒を増やす") == "拾う黒を増やす（Shift+]）"
+
+
+def test_向きにだけ数字を付けない(window_with_tone):
+    """ぐるぐる回るだけで端が無く、「あと何回」に意味が無い。"""
+    window_with_tone._refresh()
+    names = [base for _a, base, _f, _k in window_with_tone.image_menu.tone.level_actions]
+    assert "15度回す" not in names
+
+
+def test_キーで動かしても数字が付いてくる(window_with_tone):
+    """`Shift+]` はメニューを開かずに押す。次に開いたとき合っていること。"""
+    from PySide6.QtCore import Qt
+
+    press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
+    window_with_tone._refresh()
+    assert level_text(window_with_tone, "拾う黒を増やす") == "拾う黒を増やす 4/20（Shift+]）"
+
+
+def test_Undoで戻すと数字も戻る(window_with_tone):
+    """**押した回数を数えていない**ので、戻せば数字も一緒に戻る（→ 6.27）。"""
+    window_with_tone.state.step_tone_thin(1)
+    window_with_tone.state.undo()
+    window_with_tone._refresh()
+    assert level_text(window_with_tone, "細い線を残す") == "細い線を残す（2/20）"
 
 
 def test_絞っていなければ範囲を戻す項目は押せない(window_with_tone):

@@ -248,6 +248,58 @@ def test_既定値は設定から作る():
     assert tone.area is None, "入れた時点では絞らない"
 
 
+# -- 何段目か（メニューに出す → 6.27）---------------------------------------
+
+
+def test_端から端までの段数():
+    """4つとも 0 から数え、上限は押し切ったときの回数。"""
+    assert TN.level_max("thin") == 20
+    assert TN.level_max("threshold") == 20
+    assert TN.level_max("pitch") == 24
+    assert TN.level_max("density") == 17
+
+
+def test_入れた直後の段数():
+    """**0 段目から始まるとは限らない。** 押した回数を数えられない理由。"""
+    s = TN.DEFAULT_TONE_SETTINGS
+    assert TN.level_of("thin", s.thin) == 2
+    assert TN.level_of("threshold", s.threshold) == 3
+    assert TN.level_of("pitch", s.pitch) == 3
+    assert TN.level_of("density", s.density) == 6
+
+
+def test_1回押すと1段進む():
+    value = TN.DEFAULT_TONE_SETTINGS.thin
+    for expected in (3, 4, 5):
+        value = TN.stepped_thin(value, 1)
+        assert TN.level_of("thin", value) == expected
+
+
+def test_連打しても割り算の誤差で狂わない():
+    """0.001 を足し続けると 0.006000000000000001 のような値になる。"""
+    value = TN.THIN_MIN
+    for expected in range(1, TN.level_max("thin") + 1):
+        value = TN.stepped_thin(value, 1)
+        assert TN.level_of("thin", value) == expected
+
+
+def test_拾う黒は下端だけ刻みからはみ出す():
+    """4 → 10 → 20 … と並ぶ（下限 4、刻み 10）。**端も 0 段目に収まる。**"""
+    assert TN.level_of("threshold", TN.THRESHOLD_MIN) == 0
+    assert TN.level_of("threshold", 10) == 1
+    assert TN.level_of("threshold", TN.THRESHOLD_MAX) == TN.level_max("threshold")
+
+
+def test_範囲の外は丸めて収める():
+    """手で書き換えた project.json でも、表示だけは崩さない。"""
+    assert TN.level_of("thin", -1.0) == 0
+    assert TN.level_of("thin", 99.0) == TN.level_max("thin")
+
+
+def test_出す形は何段目か_全部で何段か():
+    assert TN.level_label("thin", TN.DEFAULT_TONE_SETTINGS.thin) == "2/20"
+
+
 # -- 覚えておく1枚 -----------------------------------------------------------
 
 
