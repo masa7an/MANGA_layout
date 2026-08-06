@@ -104,6 +104,20 @@ TAIL_SHAPE_LABELS = {
     TAIL_SHAPE_BUBBLES: "しっぽを丸くする",
 }
 
+# コマのロック（→ 6.17）を切り替える項目の文言。**「どちらに変わるか」を
+# 名前に出す**のは上の2つと同じで、ここだけ**ロック中は頭に錠前を足す**
+# （本人の要望 2026-08-06）。
+#
+# 文言だけだと、「ロックを解除」が出ている＝今ロック中、という**裏返しの
+# 読み方**を挟む。錠前は今の状態をそのまま見せるので、その一手間が消える。
+#
+# 「ロック」を「ロックする」にしたのも同じ理由。「ロック」は名詞にも
+# 命令にも読めて、状態を書いているのか押した結果を書いているのか紛れる
+LOCK_TOGGLE_LABELS = {
+    False: "ロックする",
+    True: "\N{LOCK}ロックを解除",
+}
+
 
 def items_to_copy(
     source: QMenu, exclude: Iterable[QAction] = ()
@@ -381,10 +395,10 @@ class PanelMenu:
         )
         menu.addAction(self.lower_action)
         menu.addSeparator()
-        # 「ロック」と「ロックを解除」は1項目の文言を入れ替える
-        # （しっぽの「消す／出す」と同じ → `refresh`）
+        # 「ロックする」と「ロックを解除」は1項目の文言を入れ替える
+        # （しっぽの「消す／出す」と同じ → `LOCK_TOGGLE_LABELS`・`refresh`）
         self.lock_toggle_action = window._act(
-            "ロック",
+            LOCK_TOGGLE_LABELS[False],
             window.toggle_panel_lock,
             None,
             "選んだコマを動かせなくする。中の画像やフキダシは今まで通り触れる",
@@ -415,12 +429,13 @@ class PanelMenu:
             panel is not None and self._state.can_lower_panel(panel.id)
         )
 
-        # ロック（→ 6.17）。「ロック／ロックを解除」は集中線の「入れる／消す」
-        # と同じく1項目の文言を入れ替える。一括の2項目は、押しても何も
-        # 変わらない側をグレーにする（→ `lock_all_panels` の無変化ガード）
+        # ロック（→ 6.17）。「ロックする／ロックを解除」は集中線の
+        # 「入れる／消す」と同じく1項目の文言を入れ替える。一括の2項目は、
+        # 押しても何も変わらない側をグレーにする
+        # （→ `lock_all_panels` の無変化ガード）
         self.lock_toggle_action.setEnabled(self._state.selected_panel is not None)
         self.lock_toggle_action.setText(
-            "ロックを解除" if self._state.is_locked_selection else "ロック"
+            LOCK_TOGGLE_LABELS[self._state.is_locked_selection]
         )
         page_panels = self._state.page.panels
         self.lock_all_action.setEnabled(

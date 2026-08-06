@@ -78,13 +78,28 @@ def test_解除も1手で戻る(window_with_locked_panel):
     assert panel(window_with_locked_panel).locked is True
 
 
-def test_メニューの文言がロック_ロックを解除で入れ替わる(window_with_panel):
+def test_メニューの文言がロックするとロックを解除で入れ替わる(window_with_panel):
     window = window_with_panel
-    assert window.panel_menu.lock_toggle_action.text() == "ロック"
+    assert window.panel_menu.lock_toggle_action.text() == "ロックする"
     window.toggle_panel_lock()
-    assert window.panel_menu.lock_toggle_action.text() == "ロックを解除"
+    assert window.panel_menu.lock_toggle_action.text().endswith("ロックを解除")
     window.toggle_panel_lock()
-    assert window.panel_menu.lock_toggle_action.text() == "ロック"
+    assert window.panel_menu.lock_toggle_action.text() == "ロックする"
+
+
+def test_ロック中だけ文言の頭に錠前が付く(window_with_panel):
+    """状態の見分けが**文言の裏返し無しで**つくこと（→ 6.17）。
+
+    錠前そのものを assert に書かない。落ちたときの pytest の出力を
+    リダイレクトすると、CP932 では絵文字が化けて読めなくなる
+    （`~/project/claude_config/common.md` のエンコーディング規約と同じ話）。
+    """
+    window = window_with_panel
+    action = window.panel_menu.lock_toggle_action
+    assert action.text().startswith("ロック")
+    window.toggle_panel_lock()
+    assert not action.text().startswith("ロック")
+    assert len(action.text()) == len("ロックを解除") + 1
 
 
 def test_右クリックにもロック項目が出る(window_with_panel):
