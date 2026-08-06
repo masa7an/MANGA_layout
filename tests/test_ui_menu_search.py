@@ -20,6 +20,7 @@ import pytest
 
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.menu_search import (
+    HIGHLIGHT_SECONDS,
     MenuEntry,
     collect_menu_entries,
     item_text,
@@ -168,6 +169,74 @@ class Test出しかた:
         dialog._field.setText("抜け")
         assert dialog._list.count() == 1
         assert "抜けチェック..." in dialog._list.item(0).text()
+        dialog.close()
+
+
+class Test押した項目のメニューを囲む:
+    """押すと、そのメニューの見出しが画面上端で四角く囲まれる（→ 6.30）。
+
+    **枠の見た目は自動では確かめられない。** ここで押さえるのは、
+    どこを囲むかの座標と、押してから枠が出るまでの配線。
+    """
+
+    def test_見出しの位置を囲む(self, window):
+        window.highlight_menu("画像")
+        bar = window.menuBar()
+        action = next(a for a in bar.actions() if plain_label(a.text()) == "画像")
+        # `isVisible` ではなく `isHidden` で見る。窓自体を表示していない
+        # テストでは、出したはずの子まで「見えていない」になる
+        assert not window._menu_highlight.isHidden()
+        assert window._menu_highlight.geometry() == bar.actionGeometry(action)
+
+    def test_別のメニューを押すと囲み直す(self, window):
+        window.highlight_menu("画像")
+        first = window._menu_highlight.geometry()
+        window.highlight_menu("ページ")
+        assert window._menu_highlight.geometry() != first
+
+    def test_知らない名前は黙って何もしない(self, window):
+        window.highlight_menu("そんなメニューは無い")
+        assert window._menu_highlight is None
+
+    def test_しばらくすると消える(self, window):
+        """消し方はタイマー任せ。**出しっぱなしにしない**ことだけ確かめる。"""
+        window.highlight_menu("画像")
+        timer = window._menu_highlight_timer
+        assert timer.isSingleShot()
+        assert timer.isActive()
+        assert timer.interval() == int(HIGHLIGHT_SECONDS * 1000)
+        timer.timeout.emit()  # 時間切れの代わり
+        assert window._menu_highlight.isHidden()
+
+    def test_一覧を押すと囲むところまで繋がっている(self, window):
+        window.search_menu()
+        dialog = window._menu_search_dialog
+        dialog._field.setText("トーン範囲を調整")
+        item = dialog._list.item(0)
+        assert "画像 → トーン" in item.text()
+
+        dialog._list.itemClicked.emit(item)
+        bar = window.menuBar()
+        action = next(a for a in bar.actions() if plain_label(a.text()) == "画像")
+        assert window._menu_highlight.geometry() == bar.actionGeometry(action)
+        dialog.close()
+
+    def test_窓はメニューバーに重ならない位置に出る(self, window):
+        """囲んだ枠が窓の下に隠れては意味が無い（→ `_place_once`）。"""
+        window.show()
+        window.search_menu()
+        dialog = window._menu_search_dialog
+        bar = window.menuBar()
+        bar_bottom = bar.mapToGlobal(bar.rect().bottomLeft()).y()
+        assert dialog.frameGeometry().top() > bar_bottom
+        dialog.close()
+
+    def test_2回目からは置き直した場所を動かさない(self, window):
+        window.search_menu()
+        dialog = window._menu_search_dialog
+        dialog.move(0, 0)  # 使う人が動かしたつもり
+        window.search_menu()
+        assert dialog.pos().x() == 0 and dialog.pos().y() == 0
         dialog.close()
 
 

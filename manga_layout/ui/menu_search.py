@@ -12,6 +12,10 @@
 **言い換えの表は持たない。** 「ふきだし」と打っても「フキダシ」は出ない。
 先回りで表を作ると、使われない言い換えまで抱え込んだうえ、項目を増やす
 たびに足す手間が残る。実際に出てこなかった言葉が分かってから足す。
+
+押した項目については、**そのメニューを画面上端で四角く囲む**
+（→ `MainWindow.highlight_menu`）。実行はしないまま、最初に開く場所だけ
+名指しする。
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
@@ -27,6 +32,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMenu,
     QVBoxLayout,
     QWidget,
@@ -41,6 +47,21 @@ DIALOG_SIZE = (520, 480)
 
 # 道順のつなぎ目。メニューを上から順にたどる向きに読める矢印にする
 PATH_SEPARATOR = " → "
+
+# 押した項目のメニューを囲んでおく時間（秒）。
+#
+# **消えるようにする。** 出しっぱなしにすると、次に押すまで「今どれを
+# 探していたか」と関係のない枠が残る。状態表示の1行（6秒）より短いのは、
+# あちらが読ませる文なのに対し、こちらは目を向けさせるだけのため
+HIGHLIGHT_SECONDS = 3.0
+
+# 窓を最初に出す場所。親の窓の右下から、この幅だけ内側に置く。
+#
+# **上端に重ねない。** 押した項目のメニューを画面上端で囲むので
+# （→ `MainWindow.highlight_menu`）、窓がそこに重なると肝心の枠が隠れる。
+# `TOP_GAP` はメニューバーと道具箱の2段ぶんの見込み
+FIRST_PLACE_MARGIN = 24
+FIRST_PLACE_TOP_GAP = 120
 
 # アクセスキーの印（「ファイル(&F)」の `(&F)` の部分）
 _ACCESS_KEY = re.compile(r"\(&.\)")
@@ -185,6 +206,11 @@ class MenuSearchDialog(QDialog):
     この窓が出たままでもメニューバーへ手が届く必要がある。
     """
 
+    # 押された項目の、いちばん上のメニュー名（「画像」）。
+    # **窓は囲む相手を知らない。** 画面上端のどこにあるかはメニューバーに
+    # 聞かないと分からないので、名前だけ渡して `MainWindow` に任せる
+    menu_chosen = Signal(str)
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle("メニューを探す")
@@ -192,6 +218,8 @@ class MenuSearchDialog(QDialog):
         self.resize(*DIALOG_SIZE)
 
         self._entries: list[MenuEntry] = []
+        self._hits: list[MenuEntry] = []
+        self._placed = False
 
         self._field = QLineEdit()
         self._field.setPlaceholderText("探す言葉（例: ラフ、トーン、書き出し）")
@@ -202,10 +230,16 @@ class MenuSearchDialog(QDialog):
         self._list = QListWidget()
         # 説明が長い項目があるので折り返す。横スクロールで読ませない
         self._list.setWordWrap(True)
+        # **1回押しただけで囲む。** ダブルクリックや Enter だけにすると、
+        # 押しても何も起きない当たり判定ができる（この一覧は押して実行する
+        # ものではないので、二段構えにする理由が無い）。Enter でも通す
+        self._list.itemClicked.connect(self._announce)
+        self._list.itemActivated.connect(self._announce)
 
         note = QLabel(
             "項目名と、その説明の両方から探します。"
-            "ここから実行はしません（メニューのどこにあるかを出すだけ）。"
+            "押すと、その項目があるメニューを画面の上端で四角く囲みます"
+            "（実行はしません）。"
         )
         note.setWordWrap(True)
         note.setEnabled(False)
@@ -228,20 +262,51 @@ class MenuSearchDialog(QDialog):
         """
         self._entries = entries
         self._filter()
+        self._place_once()
         self._field.setFocus()
         self._field.selectAll()
         self.show()
         self.raise_()
         self.activateWindow()
 
+    def _place_once(self) -> None:
+        """初めて開くときだけ、親の窓の右下へ寄せる。
+
+        **2回目からは動かさない。** 使う人が置き直した場所を、開くたびに
+        引き戻すことになる。
+        """
+        parent = self.parentWidget()
+        if self._placed or parent is None:
+            return
+        self._placed = True
+        area = parent.frameGeometry()
+        self.move(
+            max(
+                area.left() + FIRST_PLACE_MARGIN,
+                area.right() - self.width() - FIRST_PLACE_MARGIN,
+            ),
+            max(
+                area.top() + FIRST_PLACE_TOP_GAP,
+                area.bottom() - self.height() - FIRST_PLACE_MARGIN,
+            ),
+        )
+
     def _filter(self) -> None:
-        hits = search(self._entries, self._field.text())
+        self._hits = search(self._entries, self._field.text())
         self._list.clear()
-        for entry in hits:
+        for entry in self._hits:
             self._list.addItem(item_text(entry))
         self._count.setText(
-            f"{len(hits)} 件" if hits else "見つかりません（別の言葉で探してください）"
+            f"{len(self._hits)} 件"
+            if self._hits
+            else "見つかりません（別の言葉で探してください）"
         )
+
+    def _announce(self, item: QListWidgetItem) -> None:
+        """押された行の、いちばん上のメニュー名を知らせる。"""
+        row = self._list.row(item)
+        if 0 <= row < len(self._hits):
+            self.menu_chosen.emit(self._hits[row].path[0])
 
 
 # メニューに添える説明（ホバー中の状態表示に出る → 7章）

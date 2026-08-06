@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication, QKeySequence
 from PySide6.QtWidgets import (
     QDialog,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QRubberBand,
     QToolBar,
 )
 
@@ -33,7 +34,13 @@ from ..storage import prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
-from .menu_search import MENU_SEARCH_HINT, MenuSearchDialog, collect_menu_entries
+from .menu_search import (
+    HIGHLIGHT_SECONDS,
+    MENU_SEARCH_HINT,
+    MenuSearchDialog,
+    collect_menu_entries,
+    plain_label,
+)
 from .menus import (
     TAIL_TURN_LABELS,
     BalloonMenu,
@@ -150,8 +157,11 @@ class MainWindow(QMainWindow):
         # 点検の結果の窓（→ 10.1）。**押されるまで作らない。**
         # 起動のたびに窓を1つ作るのは、一度も使わない場合に無駄が出る
         self._check_dialog: CheckResultDialog | None = None
-        # メニューを探す窓（→ 6.30）。こちらも押されるまで作らない
+        # メニューを探す窓（→ 6.30）。こちらも押されるまで作らない。
+        # 押された項目のメニューを囲む枠と、それを消すタイマーも同じ扱い
         self._menu_search_dialog: MenuSearchDialog | None = None
+        self._menu_highlight: QRubberBand | None = None
+        self._menu_highlight_timer: QTimer | None = None
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -1181,7 +1191,39 @@ class MainWindow(QMainWindow):
         """
         if self._menu_search_dialog is None:
             self._menu_search_dialog = MenuSearchDialog(self)
+            self._menu_search_dialog.menu_chosen.connect(self.highlight_menu)
         self._menu_search_dialog.show_entries(collect_menu_entries(self))
+
+    def highlight_menu(self, name: str) -> None:
+        """メニューバーの見出し1つを四角く囲む（→ 要件定義 6.30）。
+
+        **開いて見せるのではなく、場所を指すだけ。** メニューを外から
+        開かせる操作は環境で挙動が割れやすいうえ、開いたメニューは押せて
+        しまう——「この窓から実行はしない」という線引きの裏口になる。
+
+        枠は `QRubberBand`（範囲を示すためだけの部品）を借りる。自前で
+        描くと、メニューバーの上に重ねる順番と再描画の面倒を見ることになる。
+
+        知らない名前が来ても黙って何もしない。メニューの名前を変えたときに
+        探す窓のほうが古い名前を持っている、という食い違いは起こりうるが、
+        そこで画面を止めるほどのことではない。
+        """
+        bar = self.menuBar()
+        action = next(
+            (a for a in bar.actions() if plain_label(a.text()) == name), None
+        )
+        if action is None:
+            return
+        if self._menu_highlight is None:
+            # 親をメニューバーにする。座標をそのまま使えて、窓を動かしても付いて回る
+            self._menu_highlight = QRubberBand(QRubberBand.Shape.Rectangle, bar)
+            self._menu_highlight_timer = QTimer(self)
+            self._menu_highlight_timer.setSingleShot(True)
+            self._menu_highlight_timer.timeout.connect(self._menu_highlight.hide)
+        self._menu_highlight.setGeometry(bar.actionGeometry(action))
+        self._menu_highlight.show()
+        # 同じ項目を押し直したときは、消えるまでの時間を数え直す
+        self._menu_highlight_timer.start(int(HIGHLIGHT_SECONDS * 1000))
 
     def add_full_page_panel(self) -> None:
         rect = full_page_rect(self.state.page, self.state.settings)
