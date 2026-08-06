@@ -190,6 +190,22 @@ TAIL_BUBBLE_GAP_RATIO = 0.45
 # 上限に当たった分だけ鎖は先端まで届かなくなるが、向きは変わらない
 TAIL_BUBBLE_MAX_RATIO = 0.25
 
+# **選ぶとき**のしっぽの当たり判定を、見えている形からどれだけ細くするか
+# （→ `balloon_pick_at`）。
+#
+# 選んでいない吹き出しでも、しっぽを押せばその吹き出しが選べる。ただし
+# しっぽは本体の外へ長く伸びるので、見えているとおりの太さで判定すると、
+# **しっぽの下にあるコマや画像が選べなくなる**。細くしておけば、狙って
+# 押したときだけ拾い、脇をかすめた分は下へ抜ける。
+#
+# 細くするのは幅だけで、長さはそのまま（先端まで押せる）。
+#
+# 既に選んでいる吹き出しのしっぽを掴むほうは**細くしない**
+# （→ `PageView._tail_body_at`）。あちらは下のものと取り合いにならないうえ、
+# 「しっぽの絵は見えているのに反応しない」というズレを潰すために
+# 見えている形いっぱいに取った経緯がある（2026-08-05）
+TAIL_PICK_NARROW = 0.6
+
 
 # --------------------------------------------------------------------------
 # 当たり判定
@@ -1189,18 +1205,46 @@ def tail_body_contains(
     x: float,
     y: float,
     settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS,
+    narrow: float = 1.0,
 ) -> bool:
     """**見えているしっぽ**の内側を押しているか。形の違いはここで吸収する。
 
     先端の丸・付け根のひし形は小さく、そこだけしか掴めないと「しっぽの絵は
     見えているのに反応しない」というズレになる（→ `PageView._tail_body_at`）。
     三角と飛びしっぽで2通り書くと、片方を直し忘れて挙動が食い違う。
+
+    `narrow` は見えている形より**細く**取るための倍率（1.0 でそのまま）。
+    選ぶときだけ細くする（→ `TAIL_PICK_NARROW`）。ここに1本化してあるので、
+    三角と飛びしっぽで細さの入れ忘れが起きない。
     """
     triangle = tail_triangle(balloon, settings)
     if triangle is not None:
-        return Polygon(triangle).contains(x, y)
+        return Polygon(_narrowed_triangle(triangle, narrow)).contains(x, y)
     return any(
-        math.hypot(x - cx, y - cy) <= r for cx, cy, r in tail_bubbles(balloon, settings)
+        math.hypot(x - cx, y - cy) <= r * narrow
+        for cx, cy, r in tail_bubbles(balloon, settings)
+    )
+
+
+def _narrowed_triangle(
+    triangle: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+    narrow: float,
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+    """三角のしっぽを、付け根の幅だけ細くする。**長さは変えない。**
+
+    重心へ向けて一様に縮めると先端側も引っ込み、いちばん狙いやすい
+    「しっぽの先」が押せなくなる。付け根の2点を付け根の中央へ寄せれば、
+    細いまま先端まで届く。
+    """
+    if narrow >= 1.0:
+        return triangle
+    left, tip, right = triangle
+    mx = (left[0] + right[0]) / 2.0
+    my = (left[1] + right[1]) / 2.0
+    return (
+        (mx + (left[0] - mx) * narrow, my + (left[1] - my) * narrow),
+        tip,
+        (mx + (right[0] - mx) * narrow, my + (right[1] - my) * narrow),
     )
 
 
@@ -1247,10 +1291,45 @@ def balloon_contains(balloon: BalloonObject, x: float, y: float) -> bool:
 
 
 def balloon_at(page: Page, x: float, y: float) -> BalloonObject | None:
-    """その位置にある吹き出し。重なっていれば手前のものを返す。"""
+    """その位置にある吹き出し。重なっていれば手前のものを返す。
+
+    **本体だけを見る。しっぽは含まない。** セリフの紐づけ先を決めるのに
+    使うので（→ `EditorState.add_text`）、しっぽの上に置いた文字まで
+    その吹き出しの中身として扱われては困る。
+
+    選ぶときは代わりに `balloon_pick_at` を使う。
+    """
     balloons = [f for f in page.floating if isinstance(f, BalloonObject)]
     for balloon in sorted(balloons, key=lambda b: b.z, reverse=True):
         if balloon_contains(balloon, x, y):
+            return balloon
+    return None
+
+
+def balloon_pick_at(
+    page: Page,
+    x: float,
+    y: float,
+    settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS,
+) -> BalloonObject | None:
+    """**選ぶとき**にその位置で拾う吹き出し。本体に加えてしっぽも見る。
+
+    しっぽを押しても選べないと、「絵が見えているのに反応しない」場所が
+    残る。選んでいない吹き出しでも、しっぽを押せばそれが選ばれる
+    （本人の指定 2026-08-07）。
+
+    しっぽの判定は見えている形より細い（→ `TAIL_PICK_NARROW`）。しっぽは
+    本体の外へ長く伸びるので、そのままの太さだと下のコマや画像を覆う。
+
+    本体としっぽを**吹き出し1つぶんずつまとめて**見ること。先に全部の
+    本体を見てからしっぽを見る書き方だと、手前の吹き出しのしっぽより
+    奥の吹き出しの本体が勝ってしまい、描いてある前後と食い違う。
+    """
+    balloons = [f for f in page.floating if isinstance(f, BalloonObject)]
+    for balloon in sorted(balloons, key=lambda b: b.z, reverse=True):
+        if balloon_contains(balloon, x, y):
+            return balloon
+        if tail_body_contains(balloon, x, y, settings, TAIL_PICK_NARROW):
             return balloon
     return None
 

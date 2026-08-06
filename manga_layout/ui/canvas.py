@@ -57,7 +57,7 @@ from ..geometry import (
 )
 from ..layout import (
     aspect_of,
-    balloon_at,
+    balloon_pick_at,
     default_balloon_rect,
     default_panel_rect,
     handle_at,
@@ -1825,7 +1825,7 @@ class PageView(QGraphicsView):
         rotating = self._rotate_handle_at(x, y)
         text = text_at(self.state.page, x, y)
         sticker = sticker_at(self.state.page, x, y)
-        balloon = balloon_at(self.state.page, x, y)
+        balloon = balloon_pick_at(self.state.page, x, y, self.state.balloon_settings)
         hit = panel_at(self.state.page, x, y)
 
         # コマ追加の道具でも、既にあるコマやそのつまみの上なら編集を優先する。
@@ -2101,7 +2101,7 @@ class PageView(QGraphicsView):
         if sticker is not None:
             return sticker.id
 
-        balloon = balloon_at(self.state.page, x, y)
+        balloon = balloon_pick_at(self.state.page, x, y, self.state.balloon_settings)
         if balloon is not None:
             return balloon.id
 
@@ -2590,7 +2590,12 @@ class PageView(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif sticker_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
-        elif balloon_at(self.state.page, x, y) is not None:
+        elif (
+            balloon_pick_at(self.state.page, x, y, self.state.balloon_settings)
+            is not None
+        ):
+            # しっぽの上でも出る。掴む側（`_pick_at`）と同じ判定を通すので、
+            # 動かせる印が出た場所は必ず動かせる
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif panel_at(self.state.page, x, y) is not None:
             hovered = panel_at(self.state.page, x, y)

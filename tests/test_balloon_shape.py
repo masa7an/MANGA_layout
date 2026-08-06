@@ -20,12 +20,14 @@ from manga_layout.layout import (
     TAIL_BUBBLE_MAX_RATIO,
     TAIL_LENGTH_MIN_PX,
     TAIL_LENGTH_RATIO,
+    TAIL_PICK_NARROW,
     TAIL_ROOT_MAX_GAP,
     WAVY_MIN_SEGMENTS_PER_WAVE,
     BalloonSettings,
     attach_target,
     balloon_at,
     balloon_contains,
+    balloon_pick_at,
     balloon_outline,
     cloud_max_depth,
     cloud_points,
@@ -801,6 +803,100 @@ class TestBubbleTail:
             sum(p[1] for p in triangle) / 3.0,
         )
         assert tail_body_contains(balloon, *inside, SETTINGS)
+
+
+class TestTailPick:
+    """しっぽを押して吹き出しを選ぶ（→ `balloon_pick_at`、本人の指定 2026-08-07）。
+
+    選んでいない吹き出しでも、しっぽを押せば選べる。ただし判定は見えている
+    形より細く、脇をかすめた分は下のコマや画像へ抜ける。
+    """
+
+    @pytest.fixture
+    def project(self):
+        return new_project()
+
+    @pytest.fixture
+    def page(self, project):
+        return project.pages[0]
+
+    @pytest.fixture
+    def tailed(self, project, page):
+        balloon = project.add_balloon(page, RECT)
+        balloon.tail.tip = default_tail_tip(RECT)
+        return balloon
+
+    @staticmethod
+    def point_in_tail(balloon, along: float, across: float) -> tuple[float, float]:
+        """三角のしっぽの内側の点。
+
+        `along` は付け根（0.0）から先端（1.0）まで、`across` は**その高さでの
+        半分の幅に対する割合**（0.0 で真ん中、1.0 で縁）。三角は先端へ向かって
+        線形に細るので、`across` はどの高さでも同じ意味になる。
+        """
+        left, tip, right = tail_triangle(balloon, SETTINGS)
+        mx, my = (left[0] + right[0]) / 2.0, (left[1] + right[1]) / 2.0
+        bx, by = mx + (left[0] - mx) * across, my + (left[1] - my) * across
+        return (bx + (tip[0] - bx) * along, by + (tip[1] - by) * along)
+
+    def test_選んでいなくてもしっぽで拾える(self, page, tailed):
+        """本体の外なのに反応しない場所を残さない。"""
+        point = self.point_in_tail(tailed, 0.6, 0.0)
+        assert not balloon_contains(tailed, *point)  # 本体では拾えていない
+        assert balloon_pick_at(page, *point, SETTINGS) is tailed
+
+    def test_先端の近くまで拾える(self, page, tailed):
+        """細くするのは幅だけ。長さまで縮めると、いちばん狙いやすい
+        「しっぽの先」が押せなくなる。"""
+        point = self.point_in_tail(tailed, 0.95, 0.0)
+        assert balloon_pick_at(page, *point, SETTINGS) is tailed
+
+    def test_しっぽの脇は拾わない(self, page, tailed):
+        """見えている縁いっぱいまで拾うと、しっぽの下のコマが選べなくなる。"""
+        point = self.point_in_tail(tailed, 0.6, 0.9)
+        assert tail_body_contains(tailed, *point, SETTINGS)  # 絵の上ではある
+        assert balloon_pick_at(page, *point, SETTINGS) is None
+
+    def test_細さの境目は設定どおり(self, page, tailed):
+        inside = self.point_in_tail(tailed, 0.6, TAIL_PICK_NARROW * 0.9)
+        outside = self.point_in_tail(tailed, 0.6, TAIL_PICK_NARROW * 1.1)
+        assert balloon_pick_at(page, *inside, SETTINGS) is tailed
+        assert balloon_pick_at(page, *outside, SETTINGS) is None
+
+    def test_飛びしっぽでも拾える(self, page, tailed):
+        """形の違いは `tail_body_contains` が吸収する。"""
+        tailed.tail.shape = TAIL_SHAPE_BUBBLES
+        for cx, cy, _ in tail_bubbles(tailed, SETTINGS):
+            assert not balloon_contains(tailed, cx, cy)
+            assert balloon_pick_at(page, cx, cy, SETTINGS) is tailed
+
+    def test_飛びしっぽも円の縁までは拾わない(self, page, tailed):
+        tailed.tail.shape = TAIL_SHAPE_BUBBLES
+        cx, cy, r = tail_bubbles(tailed, SETTINGS)[0]
+        edge = (cx + r * 0.9, cy)
+        assert tail_body_contains(tailed, *edge, SETTINGS)
+        assert balloon_pick_at(page, *edge, SETTINGS) is None
+
+    def test_しっぽを消していれば拾わない(self, page, tailed):
+        point = self.point_in_tail(tailed, 0.6, 0.0)
+        tailed.tail.enabled = False
+        assert balloon_pick_at(page, *point, SETTINGS) is None
+
+    def test_手前のしっぽが奥の本体より勝つ(self, project, page, tailed):
+        """描いてある前後と食い違わせない。**本体としっぽを1つぶんずつ**
+        見ていないと、奥の本体が手前のしっぽを追い越す。"""
+        point = self.point_in_tail(tailed, 0.6, 0.0)
+        under = project.add_balloon(page, Rect(25.0, 52.0, 30.0, 20.0))
+        under.tail.enabled = False
+        assert balloon_contains(under, *point)  # 奥の本体の上でもある
+        assert under.z > tailed.z  # 後から足したので奥のほうが手前
+        under.z = tailed.z - 1  # 奥へ回す
+        assert balloon_pick_at(page, *point, SETTINGS) is tailed
+
+    def test_セリフの紐づけはしっぽを含まない(self, page, tailed):
+        """`balloon_at` は本体だけ。しっぽの上の文字まで中身にはしない。"""
+        point = self.point_in_tail(tailed, 0.6, 0.0)
+        assert balloon_at(page, *point) is None
 
 
 class TestRect:
