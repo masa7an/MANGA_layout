@@ -191,9 +191,12 @@ class Testファイル名:
     def test_JPGは拡張子が変わる(self):
         assert page_filename(0, 9, "JPG") == "p01.jpg"
 
+    def test_PSDも拡張子が変わる(self):
+        assert page_filename(0, 9, "PSD") == "p01.psd"
+
     def test_既定はPNG(self):
         assert DEFAULT_FORMAT == "PNG"
-        assert EXPORT_FORMATS == ("PNG", "JPG")
+        assert EXPORT_FORMATS == ("PNG", "JPG", "PSD")
 
 
 class Test書き出し先:

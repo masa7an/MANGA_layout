@@ -139,10 +139,25 @@ def rough_preview_from_bytes(data: bytes) -> Preview:
     合成をやり直すことになる。ラフは長辺 2,000px を超える写真が普通なので、
     順番を逆にすると読み込みで待たされる。
 
-    書き出しには出ない（→ 6.23）ので、原寸を返す経路は要らない。
+    PNG / JPG の書き出しには出ない（→ 6.23）。原寸を返す経路が要るのは
+    PSD だけなので、そちらは別に持つ（→ `full_rough_from_bytes`）。
     """
     full = decode(data)
     return Preview(image=to_blue_pencil(make_preview(full)), source_px=size_px(full))
+
+
+def full_rough_from_bytes(data: bytes) -> Preview:
+    """ラフ用の1枚を、縮めずに青く染める。**PSD 書き出しのときだけ使う。**
+
+    PSD のラフは非表示のレイヤーとして入れる（→ 要件定義 10.1）。
+    **クリスタでなぞる相手になる**ので、画面用の縮小版（長辺 1,600px）を
+    引き伸ばして入れると、そこに入れた意味が薄れる。
+
+    染めるのが縮めたあとではなく先になるぶん、`rough_preview_from_bytes`
+    より重い。書き出しの一度きりなので、待ち時間より細かさを取る。
+    """
+    full = decode(data)
+    return Preview(image=to_blue_pencil(full), source_px=size_px(full))
 
 
 def full_from_bytes(data: bytes) -> Preview:

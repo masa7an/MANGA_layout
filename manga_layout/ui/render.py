@@ -239,7 +239,9 @@ class PageRenderer:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRect(rect)
 
-    def draw_rough(self, painter: QPainter, page: Page) -> None:
+    def draw_rough(
+        self, painter: QPainter, page: Page, *, images=None
+    ) -> None:
         """ラフ（下敷き → 要件定義 6.23）。**用紙のすぐ上、一番奥に敷く。**
 
         目安線よりも奥に描く。目安線はラフの上でも見えている必要がある
@@ -257,11 +259,16 @@ class PageRenderer:
         **実体が無いときは何も描かない。** 画像の×印（`_draw_missing`）に
         当たるものは出さない——ラフは作品の一部ではないので、欠けていても
         書き出しには響かず、用紙の上に赤い×だけが残るほうが邪魔になる。
+
+        `images` はラフを引く経路。既定は画面用の縮小版で、**PSD 書き出し
+        だけが原寸を返すものを渡す**（→ 要件定義 10.1）。`PageRenderer.images`
+        が画像でしている切り替えと同じだが、ラフは1ページに1枚しか無いので
+        構築時ではなくここで受け取る。
         """
         rough = page.rough
         if rough is None:
             return
-        preview = self.state.rough_preview(rough.asset, rough.faded)
+        preview = (images or self.state.rough_preview)(rough.asset, rough.faded)
         if preview is None:
             return
         if rough.faded:
@@ -306,29 +313,50 @@ class PageRenderer:
         page: Page,
         panel: Panel,
         preview: DragPreview = NO_PREVIEW,
+        *,
+        contents: bool = True,
+        effects: bool = True,
+        border: bool = True,
     ) -> None:
+        """コマ1つ。**既定では画面と同じく全部描く。**
+
+        3つの `bool` は PSD 書き出し（→ 要件定義 10.1）が中身・効果線・
+        枠線を別のレイヤーへ振り分けるためのもの。**画面はどれも既定の
+        まま通る**ので、ここを足したことで見た目は変わらない。
+
+        分けられる単位をこの3つにしたのは、レイヤーとして意味を持つのが
+        この粒度だから。「絵だけ薄くする」「枠線だけ残す」がクリスタ側で
+        したいことで、それより細かく割っても使い道が無い。
+        """
         shape = self._preview_shape(page, panel, preview)
         if shape is None:
             shape = panel.shape
         polygon = polygon_of(shape.points)
-        if self.aids:
+        if self.aids and contents:
             # 下地は画面で「どこがコマか」を見分けるための色。紙の上では
             # コマの中は白なので、書き出しでは塗らずに用紙の白を残す
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QBrush(PANEL_FILL))
             painter.drawPolygon(polygon)
 
-        focus = self._focus_of(panel, preview)
-        flow = self._flow_of(panel, preview)
-        if panel.children or focus is not None or flow is not None:
+        focus = self._focus_of(panel, preview) if effects else None
+        flow = self._flow_of(panel, preview) if effects else None
+        if (panel.children and contents) or focus is not None or flow is not None:
             # 集中線・流線の基準は、**いま描いている形**の外接矩形。斜めの
             # 境界をずらしている最中はモデルと形が違うので、`panel` から
             # 取り直すと線だけ前の位置に残る
             self._draw_inside(
-                painter, panel, polygon, shape.bounds(), focus, flow, preview
+                painter,
+                panel,
+                polygon,
+                shape.bounds(),
+                focus,
+                flow,
+                preview,
+                images=contents,
             )
 
-        if panel.border.visible and panel.border.width > 0:
+        if border and panel.border.visible and panel.border.width > 0:
             # 枠線は作品の一部なので、太さは px のまま（表示倍率で見た目が変わる）
             # 画像より後に描く。先に描くと、はみ出した絵が枠線を覆ってしまう
             painter.setPen(QPen(QColor(panel.border.color), panel.border.width))
@@ -358,6 +386,8 @@ class PageRenderer:
         focus: FocusLines | None,
         flow: FlowLines | None = None,
         preview: DragPreview = NO_PREVIEW,
+        *,
+        images: bool = True,
     ) -> None:
         """コマの中身を、コマの形で切り抜いて描く。
 
@@ -382,7 +412,7 @@ class PageRenderer:
 
         painter.save()
         painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
-        for image in sorted(panel.children, key=lambda i: i.z):
+        for image in sorted(panel.children if images else (), key=lambda i: i.z):
             self._draw_image(painter, image, preview)
         if flow is not None:
             self._draw_flow(painter, bounds, flow)
@@ -496,15 +526,26 @@ class PageRenderer:
     # -- 吹き出しとセリフ --------------------------------------------------
 
     def draw_floating(
-        self, painter: QPainter, page: Page, preview: DragPreview = NO_PREVIEW
+        self,
+        painter: QPainter,
+        page: Page,
+        preview: DragPreview = NO_PREVIEW,
+        *,
+        kinds: tuple[type, ...] | None = None,
     ) -> None:
         """ページ直下のもの。**段が先、z が後**（`model.floating_order`）。
 
         セリフは常に吹き出しより手前。z だけで重ねると、セリフを書いた
         あとに載せた吹き出しが文字を塗り潰してしまう。マークはその間で、
         吹き出しの上・セリフの下（要件定義 6.14）。
+
+        `kinds` を渡すと、その種類だけを描く。PSD 書き出しが吹き出し・
+        マーク・セリフを別のレイヤーへ振り分けるためのもの（→ 10.1）。
+        **None が既定**なので、画面はこれまでどおり全部通る。
         """
         for obj in sorted(page.floating, key=floating_order):
+            if kinds is not None and not isinstance(obj, kinds):
+                continue
             if isinstance(obj, BalloonObject):
                 self._draw_balloon(painter, obj, preview)
             elif isinstance(obj, StickerObject):

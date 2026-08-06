@@ -139,12 +139,18 @@ def dots_per_meter(dpi: float) -> int:
     return round(dpi / (MM_PER_INCH / 1000.0))
 
 
-#: 選べる書き出し形式。Qt の `QImage.save` に渡す形式名でもある
-EXPORT_FORMATS = ("PNG", "JPG")
+#: 選べる書き出し形式。PNG / JPG は Qt の `QImage.save` に渡す形式名でも
+#: ある。**PSD だけは別の経路**（`ui.psd_export`）を通る——1枚に潰さず、
+#: レイヤーに分けて書くため（→ 要件定義 10.1）
+EXPORT_FORMATS = ("PNG", "JPG", "PSD")
 DEFAULT_FORMAT = "PNG"
 
+#: レイヤーに分けて書き出す形式。ここに入っているものは `export_pages`
+#: ではなく `psd_export.export_psd_pages` が受け持つ
+LAYERED_FORMATS = ("PSD",)
+
 # 形式名 → 拡張子。JPG は Qt 側でも `.jpg` を使うので綴りをそのまま流用する
-_EXTENSIONS = {"PNG": "png", "JPG": "jpg"}
+_EXTENSIONS = {"PNG": "png", "JPG": "jpg", "PSD": "psd"}
 
 
 def page_filename(index: int, total: int, fmt: str = DEFAULT_FORMAT) -> str:
@@ -246,10 +252,13 @@ class FullImages:
         return self._cache.get(ref, lambda: self.state.read_asset(ref))
 
 
-def render_page(state, page: Page, scale: float = FULL_SCALE) -> QImage:
-    """1ページを画像にする。100% ならページの px 寸法そのまま。
+def checked_page_px(page: Page, scale: float = FULL_SCALE) -> tuple[int, int]:
+    """書き出される画素数。**確保する前に断る所**をここにまとめてある。
 
     1辺の上限は `MAX_SIDE_PX`。ここから上は確保できても待たされるだけになる。
+
+    PNG / JPG（`render_page`）と PSD（`psd_export`）の両方が通る。
+    片方にだけ書くと、同じページが形式によって断られたり通ったりする。
     """
     if page.size.w <= 0 or page.size.h <= 0:
         raise ExportError(f"ページの大きさが不正です（{page.size.w} × {page.size.h} px）")
@@ -260,6 +269,12 @@ def render_page(state, page: Page, scale: float = FULL_SCALE) -> QImage:
             f"{width} × {height} 画素は大きすぎます（1辺の上限 {MAX_SIDE_PX:,}px）。"
             "ページを小さくするか、画像サイズを下げてください"
         )
+    return width, height
+
+
+def render_page(state, page: Page, scale: float = FULL_SCALE) -> QImage:
+    """1ページを画像にする。100% ならページの px 寸法そのまま。"""
+    width, height = checked_page_px(page, scale)
 
     image = QImage(width, height, QImage.Format.Format_ARGB32)
     if image.isNull():
@@ -328,6 +343,11 @@ def export_pages(
     途中で失敗したらそこで止める。残りを飛ばして進めると、どこまでが
     今回の書き出しなのか分からないファイルの山になる。
     """
+    if fmt in LAYERED_FORMATS:
+        # ここへ来るのは呼ぶ側の間違い。Qt に投げると「書き出せませんでした」
+        # としか出ず、経路を取り違えたことに気づけない
+        raise ExportError(f"{fmt} はレイヤーに分けて書き出します（psd_export）")
+
     total = state.page_count
     written: list[pathlib.Path] = []
     for i in indexes:
@@ -359,8 +379,12 @@ class ExportDialog(QDialog):
     紙に置き換えた大きさは**参考として1行出すだけ**。印刷しないので出力には
     関わらないが、「1240px と言われてもピンとこない」ときの手掛かりになる。
 
-    形式は PNG / JPG の2つ。既定は PNG（これまでどおりの動き）。JPG の品質は
-    ここでは選ばせず、`AppSettings.jpg_quality` から取る（→ 要件定義 6.7・10.2）。
+    形式は PNG / JPG / PSD の3つ。既定は PNG（これまでどおりの動き）。
+    JPG の品質はここでは選ばせず、`AppSettings.jpg_quality` から取る
+    （→ 要件定義 6.7・10.2）。
+
+    **PSD でも選ぶものは変わらない。** レイヤーの分け方は決め打ちなので
+    （→ `ui.psd_export`）、増える項目は無い。倍率もそのまま効く。
     """
 
     def __init__(

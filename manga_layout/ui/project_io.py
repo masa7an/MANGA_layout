@@ -29,6 +29,7 @@ from . import saving
 from .export import (
     DEFAULT_FORMAT,
     DEFAULT_SCALE,
+    LAYERED_FORMATS,
     ExportDialog,
     existing_paths,
     export_dir_of,
@@ -38,6 +39,7 @@ from .export import (
     planned_paths,
     scale_label,
 )
+from .psd_export import export_psd_pages
 from .restore import RestoreDialog
 from .saving import SaveAsDialog
 
@@ -357,7 +359,7 @@ class ProjectIO:
     # -- 書き出し ----------------------------------------------------------
 
     def export_image(self) -> bool:
-        """PNG / JPG で書き出す（要件定義 6.7）。書き出したら True。
+        """PNG / JPG / PSD で書き出す（要件定義 6.7、10.1）。書き出したら True。
 
         断る場所を3つ設けてある。**どれも書き始める前に出す。**
         書いたあとで知らせても、上書きしてしまったものは戻らない。
@@ -468,9 +470,21 @@ class ProjectIO:
         quality = load_settings(self._window.settings_file).jpg_quality
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            written = export_pages(
-                self._state, indexes, dest, self.export_scale, self.export_format, quality
-            )
+            if self.export_format in LAYERED_FORMATS:
+                # PSD は1枚に潰さずレイヤーに分けて書く（→ 要件定義 10.1）。
+                # 品質（JPG 用）も倍率以外の引数も要らない
+                written = export_psd_pages(
+                    self._state, indexes, dest, self.export_scale
+                )
+            else:
+                written = export_pages(
+                    self._state,
+                    indexes,
+                    dest,
+                    self.export_scale,
+                    self.export_format,
+                    quality,
+                )
         except (MangaLayoutError, OSError) as e:
             QMessageBox.critical(self._window, "書き出せません", str(e))
             return False
