@@ -159,9 +159,14 @@ class PageRenderer:
     `state` からは設定と画像の縮小版だけを読む。**描くページは引数で渡す。**
     表示中のページに縛られないので、サムネイル一覧が同じ処理を使える。
 
-    `images` は画像を引く経路。既定は画面用の縮小版（`state.preview`）で、
+    `images` は画像を引く経路。既定は画面用の縮小版（`state.image_preview`）で、
     PNG 書き出しだけが原寸を返すものを渡す（`export.FullImages`）。
     描く手順そのものは共通のまま、解像度だけを差し替えられる。
+
+    **渡すのは参照文字列ではなく画像そのもの。** トーン（→ 要件定義 10.1）を
+    焼いた1枚は画像ごとに違うので、同じ `asset` でも別の絵になる。参照だけを
+    渡していると、同じ画像を2枚貼ってトーンだけ変えたときに**後から引いた
+    ほうが先の1枚を掴む**。
 
     `aids` は「画面でだけ要る補助表示」。次の3つがこれに当たる。
 
@@ -182,7 +187,7 @@ class PageRenderer:
 
     def __init__(self, state, images=None, *, aids: bool = True) -> None:
         self.state = state
-        self.images = images if images is not None else state.preview
+        self.images = images if images is not None else state.image_preview
         self.aids = aids
 
     # -- 全体 --------------------------------------------------------------
@@ -463,7 +468,7 @@ class PageRenderer:
         self, painter: QPainter, image: ImageObject | StickerObject
     ) -> None:
         """傾きを考えずに1枚描く。回転は呼ぶ側が painter に掛けてある。"""
-        preview = self.images(image.asset)
+        preview = self.images(image)
         if preview is None:
             self._draw_missing(painter, image)
             return

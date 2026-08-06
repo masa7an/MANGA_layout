@@ -49,7 +49,7 @@ from PySide6.QtWidgets import (
 
 from ..errors import ExportError
 from ..geometry import Size
-from ..images import ImageCache, Preview, full_from_bytes
+from ..images import ImageCache, Preview, ToneCache, full_from_bytes
 from ..model import DEFAULT_PAGE_SIZE, Page, StickerObject
 from .render import PAGE_BG, PageRenderer
 
@@ -223,13 +223,26 @@ class FullImages:
 
     `state.image_cache`（画面用）とは別物。混ぜると、書き出しに縮小版が
     紛れ込んでも見た目では気づけない。
+
+    **トーン（→ 要件定義 10.1）も原寸に対して焼き直す。** 画面用に焼いた
+    1枚を引き伸ばすと、書き出したものだけ斜線がぼやける。焼き直しても
+    見た目が変わらないのは、間隔と太さを画像の短辺に対する割合で持って
+    いるため。
     """
 
     def __init__(self, state) -> None:
         self.state = state
         self._cache = ImageCache(full_from_bytes)
+        self._toned = ToneCache()
 
-    def __call__(self, ref: str) -> Preview | None:
+    def __call__(self, image) -> Preview | None:
+        ref = image.asset
+        tone = getattr(image, "tone", None)
+        if tone is None:
+            return self._raw(ref)
+        return self._toned.get(ref, tone, lambda: self._raw(ref))
+
+    def _raw(self, ref: str) -> Preview | None:
         return self._cache.get(ref, lambda: self.state.read_asset(ref))
 
 

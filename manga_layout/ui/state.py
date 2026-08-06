@@ -34,6 +34,7 @@ from ..history import History
 from ..images import (
     ImageCache,
     Preview,
+    ToneCache,
     preview_from_bytes,
     rough_preview_from_bytes,
 )
@@ -244,6 +245,9 @@ class EditorState(QObject):
         # 「同じ入れ物に別の作り方のものを入れてはいけない」決まりで動いて
         # おり、青く染めた1枚を混ぜると、引く側がどちらか判断できなくなる
         self.rough_cache = ImageCache(make=rough_preview_from_bytes)
+        # トーンを焼いた1枚の入れ物（→ 10.1）。こちらも画像と混ぜない。
+        # 鍵に設定が入るぶん増え続けるので、あちらと違って上限を持つ
+        self.tone_cache = ToneCache()
         # ラフの濃さ（→ `settings.rough_opacity`）。作品ではなく好みなので
         # `project.json` ではなく `settings.json` から来る。窓が起動時と
         # ラフを読み込む直前に入れ直す（→ `MainWindow.load_rough`）
@@ -614,8 +618,26 @@ class EditorState(QObject):
         return store.read(ref) if store.exists(ref) else None
 
     def preview(self, ref: str) -> Preview | None:
-        """画面に描くための1枚。無い・壊れているときは None。"""
+        """画面に描くための1枚。無い・壊れているときは None。
+
+        **トーンは掛かっていない。** ラフのように「画像そのもの」が要る
+        経路が使う。コマの中の画像を描くときは `image_preview` を通す。
+        """
         return self.image_cache.get(ref, lambda: self.read_asset(ref))
+
+    def image_preview(self, image) -> Preview | None:
+        """画面に描くための1枚。**トーンが入っていれば焼いたほうを返す。**
+
+        受け取るのが参照文字列ではなく画像そのものなのは、同じ `asset` でも
+        トーンの設定次第で別の絵になるため（→ 要件定義 10.1）。マーク
+        （`StickerObject`）もここを通るが、あちらはトーンを持たない。
+        """
+        tone = getattr(image, "tone", None)
+        if tone is None:
+            return self.preview(image.asset)
+        return self.tone_cache.get(
+            image.asset, tone, lambda: self.preview(image.asset)
+        )
 
     def import_bytes(self, data: bytes) -> tuple[str, tuple[int, int]]:
         """画像を取り込み、参照と原寸のピクセル寸法を返す。
@@ -1388,6 +1410,7 @@ class EditorState(QObject):
         self.pending_assets = PendingAssets()
         self.image_cache.clear()
         self.rough_cache.clear()
+        self.tone_cache.clear()
         self.changed.emit()
         self.selection_changed.emit()
         self.page_changed.emit()

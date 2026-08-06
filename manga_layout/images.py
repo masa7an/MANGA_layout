@@ -1,7 +1,8 @@
 """画像の展開と、画面用の縮小版の保持。
 
-**ここが Qt に依存する唯一の非 UI 層。** `assets.py` はバイト列しか扱わず
-「画像として展開できるか」を判定できないため、その検証をここが受け持つ。
+**Qt に依存する非 UI 層は、ここと `tone.py` の2つ。** `assets.py` は
+バイト列しか扱わず「画像として展開できるか」を判定できないため、その検証を
+ここが受け持つ。
 取り込みは必ずこの層を通し、展開に成功したものだけを `assets/` へ渡す。
 壊れたデータを入れてしまうと、内容ハッシュが名前なので、あとから
 人が「どれが壊れているか」を見分けられなくなる。
@@ -21,6 +22,8 @@ from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 
 from .errors import BrokenImageError
+from .model import Tone
+from .tone import apply_tone
 
 # 画面用の縮小版で許す長辺（ピクセル）。
 # A4 を 600dpi で描いても長辺 7016px なので、画面で見るぶんには十分足りる。
@@ -207,4 +210,67 @@ class ImageCache:
 
     def clear(self) -> None:
         """別の作品に入れ替えるとき。前の作品の画像を抱えたままにしない。"""
+        self._items.clear()
+
+
+# トーンを焼いた1枚を、いくつまで覚えておくか。
+#
+# **上限が要るのは `ImageCache` と違って鍵が増え続けるから。** あちらの鍵は
+# 画像の参照だけなので作品の画像数で頭打ちになるが、こちらは設定も鍵に
+# 入る。メニューで「濃く」を10回押せば10通りの鍵ができる。1枚 10MB 前後
+# あるので、放っておくとメモリを食い潰す
+TONE_CACHE_LIMIT = 24
+
+
+class ToneCache:
+    """トーンを焼いた1枚を覚える。鍵は **画像の参照と、トーンの設定の組**。
+
+    **`ImageCache` と分けてある。** 混ぜて鍵だけ増やす手もあるが、それだと
+    同じ画像をトーン違いで2枚使ったときに **PNG の展開が2回**走る。
+    分けておけば展開は画像ごとに1回で、こちらは焼く手間だけを持つ
+    （要件定義 10.1 で並べた2案のうち、後者）。
+
+    焼くのは1枚 40ms 程度（2048×2048 の実測）。画面はコマを毎回描き直す
+    作りなので、**覚えずにいると1フレームごとに払うことになる**。
+    """
+
+    def __init__(self, limit: int = TONE_CACHE_LIMIT) -> None:
+        self._items: dict[tuple[str, tuple], Preview] = {}
+        self._limit = limit
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def get(self, ref: str, tone: Tone, base: Callable[[], Preview | None]) -> Preview | None:
+        """`ref` にトーンを焼いた1枚。まだ無ければ `base()` の絵から焼く。
+
+        `base` は**トーンを焼く前の1枚**を返す。画面用と書き出し用で
+        大きさが違うので、どちらを渡すかは呼ぶ側が決める。
+        """
+        key = (ref, tone.key())
+        found = self._items.get(key)
+        if found is not None:
+            return found
+
+        source = base()
+        if source is None:
+            # 実体が無い・壊れている。**覚えない**——`ImageCache` の側が
+            # 既に覚えているので、ここで二重に持つ意味が無い
+            return None
+
+        baked = Preview(
+            image=apply_tone(source.image, tone), source_px=source.source_px
+        )
+        if len(self._items) >= self._limit:
+            # いちばん古い1枚を捨てる（辞書は入れた順を保つ）
+            self._items.pop(next(iter(self._items)))
+        self._items[key] = baked
+        return baked
+
+    def forget(self, ref: str) -> None:
+        """その画像の焼いた1枚を全部捨てる。設定違いをまとめて落とす。"""
+        for key in [k for k in self._items if k[0] == ref]:
+            self._items.pop(key)
+
+    def clear(self) -> None:
         self._items.clear()

@@ -459,6 +459,88 @@ class FlowLines:
         )
 
 
+@dataclass
+class Tone:
+    """画像の暗い所を斜線に置き換える設定（要件定義 10.1）。
+
+    **画像の属性として1つだけ持つ。** コマではなく画像に付けるのは、
+    「この絵だけ黒ベタのまま残したい」が普通にあるため。
+
+    **長さを1つも絶対値で持たない。** `pitch` と `thin` は画像の短辺に
+    対する割合、`area` は画像に対する割合。px で持つと、画面用の縮小版
+    （長辺 1,600px）と書き出しの原寸（2,048px 程度）で見た目が変わる
+    （集中線・流線が長さを持たないのと同じ理由 → 6.16、6.26）。
+
+    `area` が `None` なら画像全体。矩形で絞るのは、しきい値と太さで
+    拾いきれないもの——服の模様・目の黒・小物のベタ——を位置で外すため。
+
+    **既定値を持たせていない。** 出発点の値は `ToneSettings` にあり、
+    2か所に持つと片方だけ古くなる。作るときは `tone.default_tone()` を通す。
+    """
+
+    threshold: int
+    angle: float
+    pitch: float
+    density: float
+    thin: float
+    area: Rect | None = None
+
+    def key(self) -> tuple:
+        """焼いた1枚を覚えておくときの鍵。**同じ設定なら同じ鍵になる。**
+
+        `area` は `Rect` が dataclass なので、そのままでは辞書の鍵に
+        できない。組にして畳んでおく。
+        """
+        area = None if self.area is None else (
+            self.area.x, self.area.y, self.area.w, self.area.h
+        )
+        return (self.threshold, self.angle, self.pitch, self.density, self.thin, area)
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "threshold": self.threshold,
+            "angle": self.angle,
+            "pitch": self.pitch,
+            "density": self.density,
+            "thin": self.thin,
+        }
+        if self.area is not None:
+            data["area"] = self.area.to_dict()
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> Tone:
+        """**範囲外は切り詰めずに弾く。** 理由は `FocusLines` と同じ。
+
+        `angle` だけは弾かずに畳む（周期的な量なので、範囲外を弾くと
+        -45 度のような正しい値まで読めなくなる → `FlowLines`）。
+
+        `area` は**はみ出していても弾かない**。0〜1 の外は絵が無いだけで
+        破綻せず、画像の縁で自然に切れる（要件定義 10.1）。
+        """
+        d = v.req_mapping(data, where)
+        threshold = v.integer(d, "threshold", where)
+        if not 0 <= threshold <= 255:
+            raise ProjectFormatError(
+                f"{where}.threshold: 0〜255 の範囲外です（{threshold}）"
+            )
+        for name in ("pitch", "density", "thin"):
+            value = v.number(d, name, where)
+            if not 0.0 <= value <= 1.0:
+                raise ProjectFormatError(
+                    f"{where}.{name}: 0.0〜1.0 の範囲外です（{value}）"
+                )
+        area = d.get("area")
+        return cls(
+            threshold=threshold,
+            angle=normalize_angle(v.number(d, "angle", where, 0.0)),
+            pitch=v.number(d, "pitch", where),
+            density=v.number(d, "density", where),
+            thin=v.number(d, "thin", where),
+            area=None if area is None else Rect.from_dict(area, f"{where}.area"),
+        )
+
+
 # --------------------------------------------------------------------------
 # 配置オブジェクト
 # --------------------------------------------------------------------------
@@ -492,11 +574,15 @@ class ImageObject(SceneObject):
     # ここを 0 にすれば今までと同じ経路を通る（要件定義 6.3）
     rotation: float = 0.0
     opacity: float = 1.0
+    # 暗い所を斜線に置き換える設定（→ `Tone`、要件定義 10.1）。
+    # **None なら項目ごと書かない**ので、使っていない作品の project.json は
+    # この機能を足す前と1文字も変わらない（集中線・流線・付箋と同じ線引き）
+    tone: Tone | None = None
 
     TYPE = "image"
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "id": self.id,
             "type": self.TYPE,
             "asset": self.asset,
@@ -506,6 +592,9 @@ class ImageObject(SceneObject):
             "opacity": self.opacity,
             "z": self.z,
         }
+        if self.tone is not None:
+            data["tone"] = self.tone.to_dict()
+        return data
 
     @classmethod
     def from_dict(cls, data: Any, where: str) -> ImageObject:
@@ -516,6 +605,7 @@ class ImageObject(SceneObject):
         opacity = v.number(d, "opacity", where, 1.0)
         if not 0.0 <= opacity <= 1.0:
             raise ProjectFormatError(f"{where}.opacity: 0.0〜1.0 の範囲外です（{opacity}）")
+        tone = d.get("tone")
         return cls(
             id=v.text(d, "id", where),
             z=v.integer(d, "z", where, 0),
@@ -524,6 +614,7 @@ class ImageObject(SceneObject):
             src_px=(int(px[0]), int(px[1])),
             rotation=v.number(d, "rotation", where, 0.0),
             opacity=opacity,
+            tone=None if tone is None else Tone.from_dict(tone, f"{where}.tone"),
         )
 
 

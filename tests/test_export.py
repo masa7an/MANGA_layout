@@ -19,7 +19,7 @@ import pytest
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import QDialog, QMessageBox
 
-from manga_layout import ExportError, Rect, Size
+from manga_layout import ExportError, ImageObject, Rect, Size
 from manga_layout.images import PREVIEW_MAX_PX
 from manga_layout.settings import AppSettings, save_settings
 from manga_layout.ui import EditorState, MainWindow
@@ -302,7 +302,7 @@ class Test原寸:
         ref, px = saved_state.import_bytes(large_png)
         assert px == (2000, 1500)
 
-        full = FullImages(saved_state)(ref)
+        full = FullImages(saved_state)(ImageObject(id="img", asset=ref))
         assert full is not None
         assert not full.is_reduced
         assert (full.image.width(), full.image.height()) == (2000, 1500)
@@ -318,7 +318,7 @@ class Test原寸:
         ref, _ = saved_state.import_bytes(large_png)
         saved_state.preview(ref)  # 画面側を先に温めておく
 
-        full = FullImages(saved_state)(ref)
+        full = FullImages(saved_state)(ImageObject(id="img", asset=ref))
         assert not full.is_reduced
         assert saved_state.preview(ref).is_reduced
 

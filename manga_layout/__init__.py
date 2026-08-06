@@ -38,6 +38,7 @@ from .model import (
     StickerObject,
     Tail,
     TextObject,
+    Tone,
     new_project,
 )
 from .storage import (
@@ -81,6 +82,7 @@ __all__ = [
     "StickerObject",
     "Tail",
     "TextObject",
+    "Tone",
     "UnknownImageFormatError",
     "UnsupportedVersionError",
     "find_missing_assets",

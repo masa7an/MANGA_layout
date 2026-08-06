@@ -6,17 +6,21 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from manga_layout.errors import BrokenImageError
 from manga_layout.images import (
     PREVIEW_MAX_PX,
     ImageCache,
+    ToneCache,
     decode,
     make_preview,
     preview_from_bytes,
     size_px,
 )
+from manga_layout.tone import default_tone
 
 
 @pytest.fixture
@@ -137,3 +141,54 @@ class TestCache:
         cache.get("assets/a.png", lambda: png_bytes)
         cache.clear()
         assert len(cache) == 0
+
+
+class TestトーンCache:
+    """トーンを焼いた1枚の入れ物（要件定義 10.1）。中身は tests/test_tone.py。"""
+
+    @staticmethod
+    def base(png_bytes):
+        source = preview_from_bytes(png_bytes)
+        return lambda: source
+
+    def test_2回目は焼き直さない(self, png_bytes, qapp):
+        cache = ToneCache()
+        base = self.base(png_bytes)
+        tone = default_tone()
+        assert cache.get("assets/a.png", tone, base) is cache.get(
+            "assets/a.png", tone, base
+        )
+
+    def test_設定が違えば別の1枚になる(self, png_bytes, qapp):
+        """同じ画像を2枚貼ってトーンだけ変える場面。参照だけを鍵にすると壊れる。"""
+        cache = ToneCache()
+        base = self.base(png_bytes)
+        first = cache.get("assets/a.png", default_tone(), base)
+        second = cache.get(
+            "assets/a.png", replace(default_tone(), angle=90.0), base
+        )
+        assert first is not second
+        assert len(cache) == 2
+
+    def test_実体が無ければ何も返さない(self, qapp):
+        cache = ToneCache()
+        assert cache.get("assets/x.png", default_tone(), lambda: None) is None
+        assert len(cache) == 0, "覚えない。元の入れ物が既に覚えている"
+
+    def test_溜まりすぎたら古いものから捨てる(self, png_bytes, qapp):
+        """鍵に設定が入るぶん増え続ける。1枚 10MB 前後なので上限が要る。"""
+        cache = ToneCache(limit=3)
+        base = self.base(png_bytes)
+        for i in range(6):
+            cache.get("assets/a.png", replace(default_tone(), angle=float(i)), base)
+        assert len(cache) == 3
+
+    def test_画像ごと忘れさせられる(self, png_bytes, qapp):
+        cache = ToneCache()
+        base = self.base(png_bytes)
+        cache.get("assets/a.png", default_tone(), base)
+        cache.get("assets/a.png", replace(default_tone(), angle=90.0), base)
+        cache.get("assets/b.png", default_tone(), base)
+
+        cache.forget("assets/a.png")
+        assert len(cache) == 1, "設定違いをまとめて落とす"

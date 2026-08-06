@@ -1,0 +1,272 @@
+"""画像の暗い部分を斜線のトーンに置き換える（要件定義 10.1）。
+
+**`images.py` と同じく Qt に依存する非 UI 層。** 画素を触るので `QImage`
+から離れられない。分けてあるのは、`images.py` が「展開して持つ」係で、
+こちらが「絵を作り替える」係だから。
+
+外から使うのは `apply_tone` 1つ。中は4段で、**どの段も画素を1つずつ
+Python で触らない**——`bytes.translate` と `QImage.scaled` に任せる
+（2048×2048 で合計 40ms 程度。要件定義 10.1 の実測）。
+
+    1. 白地に載せてから灰色にする   … 透明を「白」に倒す
+    2. しきい値で切る               … `bytes.translate`
+    3. 細いものを落とす             … 縮小 → 切り直し → 拡大
+    4. 矩形で絞る                   … `setClipRect`
+
+**依存パッケージは1つも増やさない。** numpy も Pillow も OpenCV も要らない
+ことは着手前に実測してある（要件定義 10.1）。
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QImage, QPainter, QPen
+
+from .geometry import Rect
+from .model import Tone
+
+# 斜線の色。白い紙の上の黒い線で、色は選べない。
+# **集中線・流線と違い白は用意しない**——ここは黒ベタの置き換えなので、
+# 白い線にすると「黒を白で塗る」ことになって元の絵の意味が消える
+TONE_INK = QColor("#000000")
+# 置き換えた先の地の色。黒ベタが「白地に黒い斜線」になる
+TONE_PAPER = QColor("#FFFFFF")
+
+# 細いものを落とすとき、縮めたあとどれだけ濃く残っていれば
+# 「太い」と認めるか（0〜255）。200 は「8割方が黒」の意味。
+#
+# **設定にしていない。** `thin`（どの太さから細いと見るか）で足りており、
+# 2つあると片方を動かしたときにもう片方の意味が変わって収拾が付かない
+_KEEP = 200
+
+
+@dataclass(frozen=True)
+class ToneSettings:
+    """トーンを入れるときの出発点。
+
+    **入れた時点で画像の側へ焼き付ける。** あとからここを変えても、
+    既に入っているトーンは変わらない（集中線・流線と同じ → 要件定義
+    6.16、6.26）。
+    """
+
+    # ここより暗い画素をトーンにする（0〜255）。試作で 30 が良かった
+    threshold: int = 30
+    # 斜線の向き（度）。45 が右上がり
+    angle: float = 45.0
+    # 斜線の間隔。**画像の短辺に対する割合。**
+    # px で持つと、画面用の縮小版と原寸で細かさが変わる（要件定義 10.1）
+    pitch: float = 0.008
+    # 線の太さを間隔に対する割合で。これが濃さになる
+    density: float = 0.35
+    # これより細いものはトーンにしない。**画像の短辺に対する割合。**
+    # 0.002 は 2048px で 4px 相当で、試作で線画が守れた値
+    thin: float = 0.002
+
+
+DEFAULT_TONE_SETTINGS = ToneSettings()
+
+# メニューで動かせる範囲。
+#
+# **保存形式として弾く範囲（`Tone.from_dict`）とは別もの。** あちらは
+# 「読んでよい値か」で、こちらは「押し続けたときどこで止めるか」
+# （集中線・流線と同じ線引き → `focus.py`、`flow.py`）
+THRESHOLD_MIN = 4
+THRESHOLD_MAX = 200
+PITCH_MIN = 0.002
+PITCH_MAX = 0.05
+DENSITY_MIN = 0.05
+DENSITY_MAX = 0.9
+THIN_MIN = 0.0
+THIN_MAX = 0.02
+
+# メニューの1回ぶん
+THRESHOLD_STEP = 10
+PITCH_STEP = 0.002
+DENSITY_STEP = 0.05
+THIN_STEP = 0.001
+
+
+def default_tone() -> Tone:
+    """設定の値でトーンを1つ作る。範囲は画像全体（絞らない）。"""
+    s = DEFAULT_TONE_SETTINGS
+    return Tone(
+        threshold=s.threshold,
+        angle=s.angle,
+        pitch=s.pitch,
+        density=s.density,
+        thin=s.thin,
+        area=None,
+    )
+
+
+# -- 中の4段 --------------------------------------------------------------
+
+
+def _flatten_on_white(image: QImage) -> QImage:
+    """白い紙の上に載せた1枚。**透明を「白」に倒すためだけにやる。**
+
+    `Format_Grayscale8` への変換はアルファを捨てるので、透明な部分の色が
+    そのまま出る。背景が「透明かつ白」なら白として読まれて実害が無いが、
+    **「透明かつ黒」で保存された画像では背景一面がトーンになる**。
+    保存の仕方で結果が変わるのは事故のもとなので、先に倒しておく。
+    """
+    out = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(TONE_PAPER)
+    painter = QPainter(out)
+    painter.drawImage(0, 0, image)
+    painter.end()
+    return out
+
+
+def _raw_of(image: QImage) -> tuple[bytes, int, int, int]:
+    """**変換せずに**生バイト列を取り出す。`Format_Grayscale8` 専用。
+
+    ここを `convertToFormat` にすると**マスクの意味が黙って壊れる**。
+    `Format_Alpha8` を `Format_Grayscale8` へ変換すると全画素 255 になり、
+    マスクが「画像全部」を指す（→ [PySide6の落とし穴.md](../PySide6の落とし穴.md) の 3）。
+    """
+    if image.format() != QImage.Format.Format_Grayscale8:
+        raise ValueError(f"Grayscale8 ではありません（{image.format()}）")
+    return (bytes(image.constBits()), image.width(), image.height(), image.bytesPerLine())
+
+
+def _gray_image(raw: bytes, w: int, h: int, bpl: int) -> QImage:
+    # `QImage` は渡したバイト列を**参照したまま持つ**ので、複製して
+    # Python 側の寿命から切り離す。しないと解放後の領域を読む
+    return QImage(raw, w, h, bpl, QImage.Format.Format_Grayscale8).copy()
+
+
+def _cut(raw: bytes, keep_at_or_below: int | None = None, keep_at_or_above: int | None = None) -> bytes:
+    """256 個の対応表で 0 / 255 に切り分ける。
+
+    `bytes.translate` は C 側の1ループなので、419万画素で 4.6ms しか
+    かからない（Python の for 文だと 205ms → 要件定義 10.1）。
+    """
+    if keep_at_or_below is not None:
+        table = bytes(255 if i <= keep_at_or_below else 0 for i in range(256))
+    else:
+        assert keep_at_or_above is not None
+        table = bytes(255 if i >= keep_at_or_above else 0 for i in range(256))
+    return raw.translate(table)
+
+
+def _drop_thin(mask: QImage, k: int) -> QImage:
+    """細いものをマスクから落とす（収縮 → 膨張のかわり）。
+
+    **専用の道具は使わない。** 縮小（`SmoothTransformation`）は周りの画素を
+    混ぜるので、細い線は薄まり、大きなベタは濃いまま残る。そこをもう一度
+    切り直して拡大すれば、収縮 → 膨張と同じ結果になる。
+
+    `k` が**どこまでを細いと見るかの物差し**。4 なら、4px 未満の線が落ちる。
+    """
+    w, h = mask.width(), mask.height()
+    small = mask.scaled(
+        QSize(max(1, w // k), max(1, h // k)),
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    raw, sw, sh, sbpl = _raw_of(small)
+    cut = _gray_image(_cut(raw, keep_at_or_above=_KEEP), sw, sh, sbpl)
+    return cut.scaled(
+        QSize(w, h),
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
+def area_px(area: Rect, w: int, h: int) -> Rect:
+    """割合で持っている矩形を、画像の画素に直す。"""
+    return Rect(area.x * w, area.y * h, area.w * w, area.h * h)
+
+
+def _clip(mask: QImage, area: Rect) -> QImage:
+    """矩形の外をマスクから外す（要件定義 10.1「矩形で範囲を絞る」）。
+
+    **縁はぼかさない。** ぼかすと設定が1つ増えるうえ、「ここで切った」と
+    分かるほうがネームでは扱いやすい。
+    """
+    box = area_px(area, mask.width(), mask.height())
+    out = QImage(mask.size(), QImage.Format.Format_Grayscale8)
+    out.fill(0)
+    painter = QPainter(out)
+    painter.setClipRect(round(box.x), round(box.y), round(box.w), round(box.h))
+    painter.drawImage(0, 0, mask)
+    painter.end()
+    return out
+
+
+def build_mask(image: QImage, tone: Tone) -> QImage:
+    """トーンにする所を 255 にした1枚（`Format_Grayscale8`）。
+
+    分けてあるのは、テストが「どこが選ばれたか」だけを見られるようにする
+    ため。斜線の見た目は目で決めるもので、数では確かめられない。
+    """
+    gray = _flatten_on_white(image).convertToFormat(QImage.Format.Format_Grayscale8)
+    raw, w, h, bpl = _raw_of(gray)
+    mask = _gray_image(_cut(raw, keep_at_or_below=tone.threshold), w, h, bpl)
+
+    short = min(w, h)
+    k = round(short * tone.thin)
+    if k >= 2:
+        mask = _drop_thin(mask, k)
+    if tone.area is not None:
+        mask = _clip(mask, tone.area)
+    return mask
+
+
+def _stripes(size: QSize, tone: Tone) -> QImage:
+    """白地に斜線を引いた1枚。画像と同じ大きさ。
+
+    **タイルを敷き詰めるのではなく、直接引く。** 敷き詰めると、向きが
+    45 度以外のときに継ぎ目が出る。線は多くても数百本で、引く手間は
+    画素を触るのに比べれば無いに等しい。
+    """
+    w, h = size.width(), size.height()
+    out = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(TONE_PAPER)
+
+    pitch = max(1.0, min(w, h) * tone.pitch)
+    width = max(1.0, pitch * tone.density)
+    # 回した先でも端まで届くよう、対角線ぶんの正方形を塗るつもりで引く
+    reach = math.hypot(w, h) / 2.0 + pitch
+
+    painter = QPainter(out)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.translate(w / 2.0, h / 2.0)
+    painter.rotate(tone.angle)
+    painter.setPen(QPen(TONE_INK, width))
+    steps = int(reach / pitch) + 1
+    for i in range(-steps, steps + 1):
+        y = i * pitch
+        painter.drawLine(-reach, y, reach, y)
+    painter.end()
+    return out
+
+
+def apply_tone(image: QImage, tone: Tone) -> QImage:
+    """暗い所を斜線に置き換えた1枚を返す。元の画像は変えない。
+
+    **元のアルファは残る。** マスクが透明な所を外している（白地に載せて
+    から判定する）ので、斜線は不透明な所にしか乗らない。
+    """
+    mask = build_mask(image, tone)
+
+    layer = _stripes(image.size(), tone)
+    painter = QPainter(layer)
+    # 明るさを透明度として読み替える。`convertToFormat` では**できない**
+    # ので、生バイト列を `Format_Alpha8` として持ち直す（1画素1バイトで
+    # 並びが同じ）。→ `_raw_of` の注記
+    raw, w, h, bpl = _raw_of(mask)
+    alpha = QImage(raw, w, h, bpl, QImage.Format.Format_Alpha8).copy()
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+    painter.drawImage(0, 0, alpha)
+    painter.end()
+
+    out = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    painter = QPainter(out)
+    painter.drawImage(0, 0, layer)
+    painter.end()
+    return out
