@@ -38,6 +38,7 @@ from .state import (
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
     TOOL_TEXT,
+    TOOL_TONE_AREA,
     object_label,
 )
 
@@ -573,6 +574,21 @@ class ToneMenu:
             self.actions.append(action)
             return action
 
+        # **範囲の2項目は「入れる」のすぐ下に置く。** 道具の切り替えは
+        # 「道具」メニューにも出ているが、そこだけだと入れた直後に
+        # 遠くのメニューへ移ることになり、繋がりが見えない
+        # （本人談 2026-08-06）。ラフが調整の道具を自分の畳みに
+        # 置いているのと同じ形（→ `RoughMenu`）
+        self.area_tool_action = window._tool_actions[TOOL_TONE_AREA]
+        menu.addAction(self.area_tool_action)
+        self.actions.append(self.area_tool_action)
+        self.clear_area_action = add(
+            "範囲を全体に戻す",
+            window.state.clear_tone_area,
+            "矩形で絞るのをやめて、画像全体を対象に戻す",
+        )
+        menu.addSeparator()
+
         add("濃く", lambda: window.state.step_tone_density(1), "斜線を太くする")
         add("薄く", lambda: window.state.step_tone_density(-1), "斜線を細くする")
         menu.addSeparator()
@@ -605,15 +621,16 @@ class ToneMenu:
             lambda: window.state.step_tone_thin(-1),
             "細さで選り分けるのをやめる。線画を持たない絵ではこちら",
         )
-        menu.addSeparator()
-        self.clear_area_action = add(
-            "範囲を全体に戻す",
-            window.state.clear_tone_area,
-            "矩形で絞るのをやめて、画像全体を対象に戻す",
-        )
 
-        # 右クリックのメニューが写して使う（→ `items_to_copy`）
-        self.copy_items = items_to_copy(menu, window._tool_actions.values())
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）。
+        #
+        # **範囲を調整する道具だけは写す。** 道具を外すのは「右クリック側は
+        # 押した場所が分かっているので『ここに〜』を別に出しており、同じことが
+        # 2通り並ぶ」ためだが、**この道具には『ここに〜』の相手がいない**。
+        # 外すと、右クリックからトーンを入れた直後に行き先が消える
+        self.copy_items = items_to_copy(
+            menu, set(window._tool_actions.values()) - {self.area_tool_action}
+        )
         parent_menu.addMenu(menu)
 
     def refresh(self) -> None:

@@ -18,7 +18,12 @@ from test_ui_context_menu import folded_labels, labels
 
 from manga_layout import Rect, tone as TN
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.state import TOOL_ROUGH, TOOL_SELECT, TOOL_TONE_AREA
+from manga_layout.ui.state import (
+    TOOL_LABELS,
+    TOOL_ROUGH,
+    TOOL_SELECT,
+    TOOL_TONE_AREA,
+)
 
 # 座標は px（要件定義 3章）
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
@@ -167,6 +172,35 @@ def test_右クリックに並ぶ_コマを選んでいるとき(window_with_ton
 def test_右クリックの畳みに中身が入っている(window_with_tone):
     menu = window_with_tone.context_menu.build(0.0, 0.0)
     assert "濃く" in folded_labels(menu, "トーン")
+
+
+def test_範囲の項目が入れるのすぐ下に並ぶ(window_with_tone):
+    """入れた直後に遠くのメニューへ移らせない（本人談 2026-08-06）。"""
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    names = folded_labels(menu, "トーン")
+    assert names[:3] == ["消す", TOOL_LABELS[TOOL_TONE_AREA], "範囲を全体に戻す"]
+
+
+def test_範囲を調整する道具は右クリックにも写る(window_with_tone):
+    """道具は普通は写さないが、この道具には「ここに〜」の相手がいない。"""
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    assert TOOL_LABELS[TOOL_TONE_AREA] in folded_labels(menu, "トーン")
+
+
+def test_他の道具は右クリックに写らない(window_with_tone):
+    """写すのはトーン範囲の道具だけ。他まで並ぶと「ここに〜」と2通りになる。"""
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    names = folded_labels(menu, "トーン")
+    assert TOOL_LABELS[TOOL_ROUGH] not in names
+
+
+def test_トーンが無いと道具の項目も押せない(window_with_image):
+    """掴めるものが無い道具へ持ち替えさせない（ラフと同じ → 6.23）。"""
+    window_with_image._refresh()
+    assert not window_with_image.tone_menu.area_tool_action.isEnabled()
+    window_with_image.state.add_tone()
+    window_with_image._refresh()
+    assert window_with_image.tone_menu.area_tool_action.isEnabled()
 
 
 def test_絵の無いコマでは右クリックに出さない(window):
