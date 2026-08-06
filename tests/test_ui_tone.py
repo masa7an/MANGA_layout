@@ -467,6 +467,80 @@ def test_引いた矩形が割合で入る(window_with_tone):
     assert area.w == pytest.approx(0.50, abs=0.02)
 
 
+# -- 離れたコマとの行き来（→ 6.27）------------------------------------------
+
+
+@pytest.fixture
+def two_panels(window_with_tone, dark_png):
+    """上下2コマ。上のコマの絵にトーンが入っていて、それが選ばれている状態。
+
+    **上下を行き来しながらトーンを合わせる使い方**（本人の要望 2026-08-06）。
+    この道具を持っている間は選び直せないので、下のコマを触ったつもりの
+    ドラッグが上の絵に効いてしまう経路がある。
+    """
+    state = window_with_tone.state
+    with state.edit("コマの追加") as project:
+        project.add_panel(project.pages[0], Rect(120.0, 800.0, 720.0, 540.0))
+    state.place_image(state.page.panels[1].id, dark_png)
+    # 上のコマの絵を選び直す（`place_image` で下の絵が選ばれている）
+    state.select(image(window_with_tone).id)
+    return window_with_tone
+
+
+def lower_panel(window) -> Rect:
+    return window.state.page.panels[1].bounds()
+
+
+def test_離れたコマの上で引いても効かない(two_panels):
+    """**弾かないと「上のコマのトーンが消えた」という見え方になる。**
+
+    範囲が絵の外へ飛ぶだけなので、絵は元のまま・トーンだけが消える。
+    原因の見当が付かない種類の事故（→ 6.27）。
+    """
+    state = two_panels.state
+    state.set_tool(TOOL_TONE_AREA)
+    box = lower_panel(two_panels)
+    before = len(state.history._undo)
+
+    drag(two_panels.view, box.x + 50, box.y + 50, box.x + 250, box.y + 250)
+
+    assert image(two_panels).tone.area is None, "上の絵の範囲は動かない"
+    assert len(state.history._undo) == before, "履歴にも積まない"
+
+
+def test_離れたコマの上で引いたら理由を伝える(two_panels):
+    """黙って何も起きないと、道具が壊れていると受け取られる（→ 6.15）。"""
+    state = two_panels.state
+    state.set_tool(TOOL_TONE_AREA)
+    box = lower_panel(two_panels)
+    said = []
+    state.message.connect(said.append)
+
+    drag(two_panels.view, box.x + 50, box.y + 50, box.x + 250, box.y + 250)
+
+    assert said and "選び直して" in said[-1]
+
+
+def test_はみ出す矩形は今までどおり入る(two_panels):
+    """**弾くのは重なりが1つも無いときだけ。** はみ出しは画像の縁で切れる。"""
+    state = two_panels.state
+    state.set_tool(TOOL_TONE_AREA)
+    box = image(two_panels).rect
+
+    # 絵の真ん中から、下のコマまで突き抜けるように引く
+    drag(
+        two_panels.view,
+        box.x + box.w * 0.5,
+        box.y + box.h * 0.5,
+        box.x + box.w * 0.5 + 300,
+        box.bottom + 400,
+    )
+
+    area = image(two_panels).tone.area
+    assert area is not None
+    assert area.y + area.h > 1.0, "下へはみ出したまま入る"
+
+
 def test_引くと1手だけ積む(window_with_tone):
     state = window_with_tone.state
     state.set_tool(TOOL_TONE_AREA)

@@ -2027,8 +2027,24 @@ class PageView(QGraphicsView):
 
         **潰れた矩形は捨てる。** 押しただけで動かさなかったときに幅 0 の
         範囲が入ると、トーンが丸ごと消えたように見えて戻し方が分からなくなる。
+
+        **絵に1画素も掛からない矩形も捨てる**（→ 要件定義 6.27）。この道具を
+        持っている間は選び直せないので、**離れたコマを触ったつもりのドラッグが、
+        選んでいる絵の範囲を絵の外へ飛ばす**。結果は「そのコマのトーンが消えた」
+        という見え方になり、原因の見当が付かない（本人の指摘 2026-08-06。
+        上下のコマを行き来しながらトーンを合わせる使い方）。
         """
         if final is None or final.w < 1.0 or final.h < 1.0 or final == origin:
+            return
+        # はみ出し自体は今までどおり通す。**弾くのは重なりが無いときだけ**
+        # （画像の縁で自然に切れるのが、はみ出しの扱い → `tone_area_ratio`）
+        overlap_w = min(final.right, image_rect.right) - max(final.x, image_rect.x)
+        overlap_h = min(final.bottom, image_rect.bottom) - max(final.y, image_rect.y)
+        if overlap_w < 1.0 or overlap_h < 1.0:
+            self.state.message.emit(
+                "選んでいる絵から外れています。別の絵を絞るには、"
+                "選択の道具（V）で選び直してから"
+            )
             return
         self.state.set_tone_area(image_id, self.tone_area_ratio(image_rect, final))
         self.state.message.emit(f"トーンの範囲: {final.w:.0f} × {final.h:.0f} px")
