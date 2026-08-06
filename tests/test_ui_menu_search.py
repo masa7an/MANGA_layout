@@ -127,13 +127,27 @@ class Test探す:
     def test_見つからないときは空(self, entries):
         assert search(entries, "そんな項目は無い") == []
 
-    def test_言い換えの表は持たない(self, entries):
-        """**わざと当たらない**（→ `menu_search` の説明）。
+    @pytest.mark.parametrize("written", ["吹き出し", "吹きだし", "ふきだし"])
+    def test_フキダシの言い換えで当たる(self, entries, written):
+        """本人が実際に打つ表記（→ `SYNONYMS`、本人の要望 2026-08-06）。"""
+        hits = trails(search(entries, written))
+        assert "フキダシ → 丸い_フキダシを追加 (B)" in hits  # 空同士の一致で通さない
+        assert hits == trails(search(entries, "フキダシ"))
 
-        表を持たない決まりを、後から黙って崩さないための歯止め。
+    def test_言い換えは語の一部でも効く(self, entries):
+        """「ふきだしを追加」のように、続けて打たれても読み替える。"""
+        assert trails(search(entries, "ふきだしを追加")) == trails(
+            search(entries, "フキダシを追加")
+        )
+
+    def test_表に無い言葉は読み替えない(self, entries):
+        """**先回りで網羅しない**（→ `menu_search` の説明）。
+
+        表を膨らませない決まりを、後から黙って崩さないための歯止め。
         崩すなら、この1件を落としてからにする。
         """
-        assert search(entries, "ふきだし") == []
+        assert search(entries, "ふきだしのしっぽ") == []
+        assert search(entries, "こま") == []
 
 
 class Test出しかた:

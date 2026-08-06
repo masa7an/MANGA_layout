@@ -9,9 +9,9 @@
 倒してあり（→ 6.12）、言葉で辿り着ける情報は説明のほう（カーソルを乗せた
 間だけ画面下に出るあの文）に寄っている。
 
-**言い換えの表は持たない。** 「ふきだし」と打っても「フキダシ」は出ない。
+**言い換えは、実際に出てこなかった言葉だけを足す**（→ `SYNONYMS`）。
 先回りで表を作ると、使われない言い換えまで抱え込んだうえ、項目を増やす
-たびに足す手間が残る。実際に出てこなかった言葉が分かってから足す。
+たびに足す手間が残る。表に無い言葉は今も単純な文字の一致だけで探す。
 
 押した項目については、**そのメニューを画面上端で四角く囲む**
 （→ `MainWindow.highlight_menu`）。実行はしないまま、最初に開く場所だけ
@@ -65,6 +65,24 @@ FIRST_PLACE_TOP_GAP = 120
 
 # アクセスキーの印（「ファイル(&F)」の `(&F)` の部分）
 _ACCESS_KEY = re.compile(r"\(&.\)")
+
+# 打ち込まれた言葉の言い換え（左）を、アプリが使っている表記（右）に読み替える。
+#
+# **表に載せるのは、実際に打って出てこなかった言葉だけ**（→ 上の説明）。
+# 先回りで網羅しようとすると、使われない言い換えを抱えたまま、項目を
+# 増やすたびに足す手間だけが残る。
+#
+# **アプリ側の表記は増やさない。** 表に出る「フキダシ」は
+# `BALLOON_STYLE_LABELS` と `BALLOON_PLACE_HERE_NAME` の2箇所だけという
+# 決まりがある（→ 6.12）。ここは**探すときだけの読み替え**で、
+# 画面に出る文言には触らない。
+#
+# 語の一部としても効く（「ふきだしを追加」→「フキダシを追加」）
+SYNONYMS = {
+    "吹き出し": "フキダシ",
+    "吹きだし": "フキダシ",
+    "ふきだし": "フキダシ",
+}
 
 
 def plain_label(text: str) -> str:
@@ -163,8 +181,15 @@ def _walk(
         )
 
 
+def read_as(word: str) -> str:
+    """言い換えをアプリの表記に読み替える（→ `SYNONYMS`）。表に無ければそのまま。"""
+    for written, used in SYNONYMS.items():
+        word = word.replace(written, used)
+    return word
+
+
 def search(entries: list[MenuEntry], query: str) -> list[MenuEntry]:
-    """打ち込んだ言葉を含む項目を返す。**単純な文字の一致だけ。**
+    """打ち込んだ言葉を含む項目を返す。**表に載せた言い換え以外は文字の一致だけ。**
 
     空白で区切ると、全部を含むものに絞る（「フキダシ しっぽ」）。
     全角の空白も区切りとして扱う——日本語を打っている最中に半角へ
@@ -173,7 +198,7 @@ def search(entries: list[MenuEntry], query: str) -> list[MenuEntry]:
     空のときは全部返す。**この窓をメニューの一覧としても使えるように
     するため**で、打ち始める前に何があるかを眺められる。
     """
-    words = [word.casefold() for word in query.replace("　", " ").split()]
+    words = [read_as(word).casefold() for word in query.replace("　", " ").split()]
     if not words:
         return list(entries)
     return [
