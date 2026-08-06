@@ -108,33 +108,8 @@ def default_tone() -> Tone:
     )
 
 
-# 絞る矩形をキーで伸縮させるときの、1回ぶんの倍率（要件定義 6.27）。
-#
-# **中心を動かさず、縦横比を保ったまま掛ける。** 上下左右へ同じ「割合」を
-# 足す形にすると、画像が正方形でないときに縦横で伸び方が変わる。
-#
-# 1.06 は連打で合わせる前提の刻み。12 回で約 2 倍になる
-TONE_AREA_ZOOM = 1.06
-# これより小さくはしない（画像に対する割合）。0 に潰れると、トーンが
-# 丸ごと消えたように見えて戻し方が分からなくなる
-TONE_AREA_MIN = 0.02
-
-
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
-
-
-def zoomed_area(area: Rect, steps: int) -> Rect:
-    """絞る矩形を、中心を動かさずに伸縮させた結果。
-
-    `steps` が正なら広げ、負なら狭める。**上限は設けない**——画像の外へ
-    はみ出しても絵が無いだけで、縁で自然に切れる（要件定義 6.27）。
-    """
-    factor = TONE_AREA_ZOOM**steps
-    w = max(TONE_AREA_MIN, area.w * factor)
-    h = max(TONE_AREA_MIN, area.h * factor)
-    cx, cy = area.center
-    return Rect(cx - w / 2.0, cy - h / 2.0, w, h)
 
 
 def stepped_threshold(threshold: int, steps: int) -> int:

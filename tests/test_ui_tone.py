@@ -447,7 +447,7 @@ def test_隅のつまみで広げ直せる(window_with_tone):
     assert area.w == pytest.approx(0.65, abs=0.03)
 
 
-# -- キーで伸縮させる -------------------------------------------------------
+# -- キーで拾う黒を合わせる ---------------------------------------------------
 
 
 def press_key(view, key) -> None:
@@ -462,135 +462,96 @@ def press_key(view, key) -> None:
     )
 
 
-def test_キーで広げられる(window_with_tone):
+def test_キーで拾う黒を増やせる(window_with_tone):
     from PySide6.QtCore import Qt
 
-    state = window_with_tone.state
-    state.set_tone_area(image(window_with_tone).id, Rect(0.25, 0.25, 0.5, 0.5))
-    state.set_tool(TOOL_TONE_AREA)
-
+    before = image(window_with_tone).tone.threshold
     press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
-    area = image(window_with_tone).tone.area
-    assert area.w > 0.5
-    assert area.center == pytest.approx((0.5, 0.5)), "中心は動かない"
+    assert image(window_with_tone).tone.threshold > before
 
 
-def test_キーで狭められる(window_with_tone):
+def test_キーで拾う黒を減らせる(window_with_tone):
     from PySide6.QtCore import Qt
 
-    state = window_with_tone.state
-    state.set_tone_area(image(window_with_tone).id, Rect(0.25, 0.25, 0.5, 0.5))
-    state.set_tool(TOOL_TONE_AREA)
-
+    before = image(window_with_tone).tone.threshold
     press_key(window_with_tone.view, Qt.Key.Key_BraceLeft)
-    assert image(window_with_tone).tone.area.w < 0.5
+    assert image(window_with_tone).tone.threshold < before
 
 
 def test_角括弧そのものでも効く(window_with_tone):
     """Shift を押した `[` `]` は配列によって `{` `}` にならないことがある。"""
     from PySide6.QtCore import Qt
 
-    state = window_with_tone.state
-    state.set_tone_area(image(window_with_tone).id, Rect(0.25, 0.25, 0.5, 0.5))
-    state.set_tool(TOOL_TONE_AREA)
-
+    before = image(window_with_tone).tone.threshold
     press_key(window_with_tone.view, Qt.Key.Key_BracketRight)
-    assert image(window_with_tone).tone.area.w > 0.5
+    assert image(window_with_tone).tone.threshold > before
+
+
+def test_コマを選んだ状態でも効く(window_with_tone):
+    """トーンの入り口を広げたのと揃える（→ `EditorState.tone_image`）。"""
+    from PySide6.QtCore import Qt
+
+    state = window_with_tone.state
+    state.select(state.page.panels[0].id)
+    before = image(window_with_tone).tone.threshold
+    press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
+    assert image(window_with_tone).tone.threshold > before
 
 
 def test_連打しても履歴は1手(window_with_tone):
-    """1回ずつ積むと、Undo を20回押しても1回ぶんずつしか戻らない。"""
+    """1回ずつ積むと、20回押した調整を戻すのに Undo を20回押すことになる。"""
     from PySide6.QtCore import Qt
 
     state = window_with_tone.state
-    state.set_tone_area(image(window_with_tone).id, Rect(0.25, 0.25, 0.5, 0.5))
-    state.set_tool(TOOL_TONE_AREA)
-    before = len(state.history._undo)
+    before_value = image(window_with_tone).tone.threshold
+    before_steps = len(state.history._undo)
 
-    for _ in range(10):
+    for _ in range(8):
         press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
-    assert len(state.history._undo) == before + 1
+    assert image(window_with_tone).tone.threshold > before_value
+    assert len(state.history._undo) == before_steps + 1
 
     state.undo()
-    assert image(window_with_tone).tone.area.w == pytest.approx(0.5)
+    assert image(window_with_tone).tone.threshold == before_value
 
 
-def test_道具を持ち替えると連打がそこで区切れる(window_with_tone):
+def test_別の項目を触ると連打が区切れる(window_with_tone):
+    """鍵に項目の名前を混ぜてあるので、濃さとしきい値は別の手になる。"""
     from PySide6.QtCore import Qt
 
     state = window_with_tone.state
-    state.set_tone_area(image(window_with_tone).id, Rect(0.25, 0.25, 0.5, 0.5))
-    state.set_tool(TOOL_TONE_AREA)
     press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
-
-    state.set_tool(TOOL_SELECT)
-    state.set_tool(TOOL_TONE_AREA)
+    state.step_tone_density(1)
     before = len(state.history._undo)
     press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
-    assert len(state.history._undo) == before + 1, "前の連打に吸い込まれない"
+    assert len(state.history._undo) == before + 1
 
 
-def test_道具を持っていなければ効かない(window_with_tone):
-    """常に効かせると、`Shift+]` が場面によって何をするか分からなくなる。"""
+def test_端まで来たらキーも効かない(window_with_tone):
     from PySide6.QtCore import Qt
 
     state = window_with_tone.state
-    state.set_tone_area(image(window_with_tone).id, Rect(0.25, 0.25, 0.5, 0.5))
-    state.set_tool(TOOL_SELECT)
-
-    press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
-    assert image(window_with_tone).tone.area.w == pytest.approx(0.5)
-
-
-def test_絞っていなければ狭める側だけ効く(window_with_tone):
-    from PySide6.QtCore import Qt
-
-    state = window_with_tone.state
-    state.set_tool(TOOL_TONE_AREA)
-    assert image(window_with_tone).tone.area is None
-
-    press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
-    assert image(window_with_tone).tone.area is None, "広げる先が無い"
-
-    press_key(window_with_tone.view, Qt.Key.Key_BraceLeft)
-    area = image(window_with_tone).tone.area
-    assert area is not None and area.w < 1.0, "狭めた時点で実体になる"
-
-
-def test_狭め続けても潰れない(window_with_tone):
-    """0 に潰れると、トーンが丸ごと消えたように見えて戻し方が分からない。"""
-    from PySide6.QtCore import Qt
-
-    state = window_with_tone.state
-    state.set_tool(TOOL_TONE_AREA)
-    for _ in range(200):
-        press_key(window_with_tone.view, Qt.Key.Key_BraceLeft)
-    area = image(window_with_tone).tone.area
-    assert area.w >= TN.TONE_AREA_MIN
-    assert area.center == pytest.approx((0.5, 0.5))
-
-
-def test_広げるほうは画像からはみ出してよい(window_with_tone):
-    from PySide6.QtCore import Qt
-
-    state = window_with_tone.state
-    state.set_tone_area(image(window_with_tone).id, Rect(0.0, 0.0, 1.0, 1.0))
-    state.set_tool(TOOL_TONE_AREA)
-    for _ in range(5):
+    for _ in range(60):
         press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
-    assert image(window_with_tone).tone.area.w > 1.0
+    assert image(window_with_tone).tone.threshold == TN.THRESHOLD_MAX
+    assert state.step_tone_threshold(1) is False
+
+
+def test_トーンが無ければ何も起きない(window_with_image):
+    """素通りさせるだけ。他の操作を塞がない。"""
+    from PySide6.QtCore import Qt
+
+    press_key(window_with_image.view, Qt.Key.Key_BraceRight)
+    assert image(window_with_image).tone is None
 
 
 def test_拡大縮小のキーは奪わない(window_with_tone):
-    """範囲を合わせるときこそ拡大したい（→ 要件定義 7章）。"""
+    """拾い具合を見るときこそ拡大したい（→ 要件定義 7章）。"""
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QKeyEvent
 
-    state = window_with_tone.state
-    state.set_tool(TOOL_TONE_AREA)
     view = window_with_tone.view
     before = view.view_scale
-
     view.keyPressEvent(
         QKeyEvent(
             QKeyEvent.Type.KeyPress,
@@ -599,6 +560,24 @@ def test_拡大縮小のキーは奪わない(window_with_tone):
         )
     )
     assert view.view_scale > before
+
+
+def test_セリフを打っている間は横取りしない(window_with_tone):
+    """メニューのショートカットにすると、Qt が入力欄より先に取ってしまう。
+
+    画面側で拾い、入力中は 1 つも横取りしないという規則に合わせてある
+    （→ 要件定義 7章の `+` / `-` と同じ扱い）。
+    """
+    from PySide6.QtCore import Qt
+
+    state = window_with_tone.state
+    text = state.add_text(Rect(200.0, 200.0, 200.0, 100.0))
+    window_with_tone.view.begin_text_edit(text.id)
+    assert window_with_tone.view.is_editing_text
+
+    before = image(window_with_tone).tone.threshold
+    press_key(window_with_tone.view, Qt.Key.Key_BraceRight)
+    assert image(window_with_tone).tone.threshold == before
 
 
 def test_矩形を画像全体に戻せる(window_with_tone):
