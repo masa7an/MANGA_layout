@@ -33,6 +33,7 @@ from ..storage import prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
+from .menu_search import MENU_SEARCH_HINT, MenuSearchDialog, collect_menu_entries
 from .menus import (
     TAIL_TURN_LABELS,
     BalloonMenu,
@@ -149,6 +150,8 @@ class MainWindow(QMainWindow):
         # 点検の結果の窓（→ 10.1）。**押されるまで作らない。**
         # 起動のたびに窓を1つ作るのは、一度も使わない場合に無駄が出る
         self._check_dialog: CheckResultDialog | None = None
+        # メニューを探す窓（→ 6.30）。こちらも押されるまで作らない
+        self._menu_search_dialog: MenuSearchDialog | None = None
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -172,6 +175,8 @@ class MainWindow(QMainWindow):
         self._build_tool_menu()
         self.page_menu = PageMenu(self)
         self._build_view_menu()
+        # ヘルプは一番右。**最後に組む**（生成順＝並び順）
+        self._build_help_menu()
 
         # `refresh()` を配って回る部品の一覧（→ `_refresh`）。
         # 部品を足したらここにも足す。足し忘れると、その部品のメニューが
@@ -350,6 +355,19 @@ class MainWindow(QMainWindow):
         )
         view_menu.addAction(self._act("原寸で表示", self.zoom_actual, "Ctrl+1"))
         view_menu.addAction(self._act("ページ全体を表示", self.view.fit_page, "Ctrl+0"))
+
+    def _build_help_menu(self) -> None:
+        """ヘルプ（→ 6.30）。いまは「メニューを探す」1つだけ。
+
+        キーは F1 と Ctrl+F の両方を通す。**探しに来る人が押すキーは
+        どちらか片方に決まらない**——ヘルプの慣習は F1、探すの慣習は
+        Ctrl+F で、どちらもこのアプリでは空いている（「やり直す」に
+        Ctrl+Y と Ctrl+Shift+Z の両方を通しているのと同じ形 → 7章）。
+        """
+        menu = self.menuBar().addMenu("ヘルプ(&H)")
+        action = self._act("メニューを探す...", self.search_menu, "F1", MENU_SEARCH_HINT)
+        action.setShortcuts([QKeySequence("F1"), QKeySequence("Ctrl+F")])
+        menu.addAction(action)
 
     def _build_toolbar(self) -> None:
         """道具箱。**一覧は `_tool_actions` から取る。**
@@ -1152,6 +1170,18 @@ class MainWindow(QMainWindow):
             self._check_dialog = CheckResultDialog(self)
         self._check_dialog.show_result(findings)
         self.state.message.emit(headline(findings))
+
+    def search_menu(self) -> None:
+        """メニューを探す窓を出す（→ 要件定義 6.30）。
+
+        **開くたびに一覧を取り直す。** メニューの文言は状態で変わるので
+        （調整中の名前、開いた作品のファイル名 → 6.27、6.6）、作り置きを
+        使い回すと古い名前で出る。数十項目を読むだけなので、毎回作っても
+        待たされない。
+        """
+        if self._menu_search_dialog is None:
+            self._menu_search_dialog = MenuSearchDialog(self)
+        self._menu_search_dialog.show_entries(collect_menu_entries(self))
 
     def add_full_page_panel(self) -> None:
         rect = full_page_rect(self.state.page, self.state.settings)
