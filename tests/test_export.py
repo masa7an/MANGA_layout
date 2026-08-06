@@ -116,9 +116,13 @@ class Test画像サイズ:
     def test_4つから選ぶ(self):
         assert SCALE_CHOICES == (HIGH_SCALE, 1.0, 0.75, 0.5)
 
-    def test_既定は拡大側(self):
-        """原寸のままだと、貼り込んだ画像素材の細かさを捨てて書き出す。"""
-        assert DEFAULT_SCALE == HIGH_SCALE
+    def test_既定は原寸(self):
+        """ページの px 寸法そのまま。画面の数字と書き出しが一致する。"""
+        assert DEFAULT_SCALE == 1.0
+
+    def test_拡大側は選べる所に残す(self):
+        """既定ではないが、原稿の下敷きに使うときのために選択肢には要る。"""
+        assert HIGH_SCALE in SCALE_CHOICES
         assert HIGH_DPI == 175
 
     def test_表示は百分率(self):

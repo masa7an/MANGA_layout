@@ -71,10 +71,11 @@ REFERENCE_DPI = 150
 HIGH_DPI = 175
 HIGH_SCALE = HIGH_DPI / REFERENCE_DPI
 
-# 書き出す画像サイズの倍率。既定は拡大側（クリスタの原稿に貼る下敷きを
-# きめ細かくするため）
+# 書き出す画像サイズの倍率。**既定は原寸**（ページの px 寸法そのまま）。
+# 拡大は「クリスタの原稿に貼る下敷きをきめ細かくしたい」ときだけの操作なので、
+# 選べる所には残し、押したときの既定にはしない（要件定義 6.7）
 SCALE_CHOICES = (HIGH_SCALE, FULL_SCALE, 0.75, 0.5)
-DEFAULT_SCALE = HIGH_SCALE
+DEFAULT_SCALE = FULL_SCALE
 
 # 1辺に許す画素数の上限。A4 相当を 600dpi で描いた 7016px を超える大きさは、
 # 確保できても待たされるだけになる
@@ -377,9 +378,9 @@ class ExportDialog(QDialog):
     ページの寸法そのものが「原寸」になる（要件定義 3章）。dpi を数字で
     指定させることはしない。
 
-    既定は原寸ではなく 117%（175dpi 相当）。原寸のままだと A4 相当で
-    長辺 1,754px にしかならず、貼り込んだ画像素材（長辺 2,048px 程度）の
-    細かさを捨てて書き出すことになる。
+    **既定は 100%（原寸）。** ページの寸法そのままで出るので、書き出した
+    ものと画面の数字が一致する。117%（175dpi 相当）は「クリスタの原稿に
+    貼る下敷きを、大きさは変えずにきめ細かくしたい」ときに選ぶ。
 
     紙に置き換えた大きさは**参考として1行出すだけ**。印刷しないので出力には
     関わらないが、「1240px と言われてもピンとこない」ときの手掛かりになる。
@@ -450,7 +451,8 @@ class ExportDialog(QDialog):
         for row in range(self.scale.count()):
             if self.scale.itemData(row) == scale:
                 return row
-        return 0  # 覚えていた値が選択肢から消えていたら原寸に戻す
+        # 覚えていた値が選択肢から消えていたら既定（原寸）に戻す
+        return SCALE_CHOICES.index(DEFAULT_SCALE)
 
     def _update_note(self) -> None:
         """書き出される画素数を出す。
