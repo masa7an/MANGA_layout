@@ -120,6 +120,7 @@ from .state import (
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
     TOOL_TEXT,
+    TOOL_TONE_AREA,
     EditorState,
 )
 
@@ -145,6 +146,15 @@ TEXT_ACCENT = QColor("#E53935")
 # **ラフの青（`images.ROUGH_BLUE`）は使わない。** 下敷きそのものと同じ色で
 # 枠を描くと、絵の中の線と枠の区別が付かない
 ROUGH_ACCENT = QColor("#B08968")
+# トーンの範囲を調整しているときの枠とつまみの色（→ 要件定義 10.1）。
+#
+# **赤系にしない。** 赤（`TEXT_ACCENT`）はセリフの選択色で、赤系
+# （`render.MISSING_IMAGE`）は欠けた画像の目印——しかもあちらは**矩形に
+# 対角線2本＝すでに「赤い×」**で、選択と無関係に用紙へ描かれる。トーンの
+# 範囲も矩形なので、隅に赤い×を出すと「この画像は壊れている」と同じ語彙に
+# なる。この道具の間は他のつまみが消えるので、他の色と見分ける必要は無く、
+# 避けるのは**下の絵**（黒い斜線と白）のほうだけ
+TONE_ACCENT = QColor("#00BCD4")
 
 # 画面上での大きさ（画面ピクセル）。表示倍率で割ってシーンの px に直して使う
 HANDLE_PX = 9.0
@@ -716,6 +726,77 @@ class RoughResizeDrag(Drag):
         )
 
 
+class ToneAreaDrag(Drag):
+    """トーンを掛ける範囲（矩形）を引く（→ 要件定義 10.1）。
+
+    **引くのは画像の傾きを外した座標**。矩形は画像に対する割合で持つので、
+    傾いた画像でも「絵のどこを囲ったか」が変わらない。マウスの位置は
+    `unrotate_point` で毎回戻す（回転を持ち込む境目 → 6.3）。
+
+    **吸着しない。** 揃える相手はコマの辺ではなく絵の中身（ラフと同じ）。
+
+    3つの引き方を1つの型にまとめてある。掴んだ場所で「隅を動かす／全体を
+    動かす／新しく囲い直す」に分かれるだけで、離したときにやることは同じ。
+    """
+
+    def __init__(
+        self,
+        image_id: str,
+        image_rect: Rect,
+        rotation: float,
+        frame: Rect,
+        origin: Rect | None,
+        handle: str | None,
+        grab: tuple[float, float],
+    ):
+        self.image_id = image_id
+        self.image_rect = image_rect
+        self.rotation = rotation
+        # 掴む前に見えていた枠。絞っていなければ画像いっぱいで、隅を掴んだ
+        # ときの出発点になる
+        self.frame = frame
+        # 実際に持っている範囲。**絞っていなければ None。**
+        # `frame` と分けてあるのが要で、同じものにすると「画像いっぱいの
+        # 矩形を持っている」ことになり、内側を押すたびに移動へ入って
+        # **新しく囲い直せなくなる**（実際にそうなった）
+        self.origin = origin
+        self.handle = handle
+        self.grab = grab
+        self.preview: Rect | None = origin
+
+    @classmethod
+    def begin(
+        cls, view: PageView, x: float, y: float, handle: str | None
+    ) -> ToneAreaDrag:
+        image = view.state.selected_image
+        local = unrotate_point(x, y, image.rect, image.rotation)
+        return cls(
+            image.id,
+            image.rect,
+            image.rotation,
+            view.tone_area_rect(image),
+            None if image.tone.area is None else view.tone_area_rect(image),
+            handle,
+            local,
+        )
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        lx, ly = unrotate_point(x, y, self.image_rect, self.rotation)
+        gx, gy = self.grab
+        if self.handle is not None:
+            # 隅を掴んでいる。**下限は 1px** ——絵の一部を囲うものなので、
+            # コマの最小寸法（吸着の都合で決めた値）を持ち込む理由が無い
+            self.preview = resize_rect(self.frame, self.handle, lx, ly, 1.0)
+        elif self.origin is not None and self.origin.contains(gx, gy):
+            self.preview = self.origin.translated(lx - gx, ly - gy)
+        else:
+            # 絞っていない画像の上か、範囲の外から引いた。新しく囲い直す
+            self.preview = Rect(gx, gy, lx - gx, ly - gy).normalized()
+
+    def commit(self, view: PageView) -> None:
+        view._apply_tone_area(self.image_id, self.image_rect, self.origin, self.preview)
+
+
 class PageScene(QGraphicsScene):
     """1ページぶんの描画。部品を持たず、その場で描く。"""
 
@@ -834,6 +915,13 @@ class PageScene(QGraphicsScene):
             self._draw_rough_frame(painter, scale)
             return
 
+        # トーンの範囲を直している間も、その枠だけを出す（→ 要件定義 10.1）。
+        # **他のつまみを全部消す**のがこの道具を作った理由そのもので、
+        # 残すと画像を選んだだけでつまみが9個並ぶ
+        if self.state.tool == TOOL_TONE_AREA:
+            self._draw_tone_area_frame(painter, scale)
+            return
+
         bounds = self.state.selected_bounds
         balloon = self.state.selected_balloon
         # 傾いた画像では、枠・つまみ・下書きの矩形をまとめて回す。
@@ -892,6 +980,61 @@ class PageScene(QGraphicsScene):
         self._draw_selection(painter, bounds, scale, ROUGH_ACCENT)
         if moving:
             self._draw_size_hint(painter, bounds)
+
+    def _draw_tone_area_frame(self, painter: QPainter, scale: float) -> None:
+        """トーンを掛ける範囲の枠と、×のつまみ（要件定義 10.1）。
+
+        絞っていない画像では**画像の縁いっぱいを枠として出す**。何も出さないと
+        「どこから引けばいいのか」が分からず、道具を持ったのに掴めるものが
+        無いように見える。
+        """
+        view = self._page_view()
+        image = self.state.selected_image
+        if image is None or image.tone is None:
+            return
+
+        preview = view.tone_area_preview() if view is not None else None
+        bounds = preview if preview is not None else view.tone_area_rect(image)
+
+        painter.save()
+        self._apply_rotation(painter, image.rect, image.rotation)
+        # 絞っていないときは点線。「今は画像全体が対象」と、枠の見た目で分ける
+        dashed = image.tone.area is None and preview is None
+        style = Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine
+        painter.setPen(cosmetic_pen(TONE_ACCENT, 1.5, style))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(qrect(bounds))
+        self._draw_cross_handles(painter, bounds, scale)
+        painter.restore()
+
+    def _draw_cross_handles(
+        self, painter: QPainter, bounds: Rect, scale: float
+    ) -> None:
+        """×のつまみ（要件定義 10.1）。
+
+        **記号の在庫が尽きているので新しい形を1つ足した**（四角＝大きさ・
+        丸＝回転・ひし形＝しっぽの付け根・十字＝集中線の中心）。集中線の
+        十字とは 45 度違うだけだが、**同時に画面に出ない**——あちらはコマを
+        選んでいるとき、こちらは道具を持っている間だけ。
+
+        **当たり判定は×の線ではなく、今までどおりの正方形**（→ `handle_at`）。
+        線そのものを判定にすると掴みにくい。ここで決めるのは見た目だけ。
+        """
+        size = HANDLE_PX / scale
+        half = size / 2.0
+        # 太字にするのは、線だけの記号は塗った四角より細く見えるため
+        painter.setPen(cosmetic_pen(TONE_ACCENT, 2.4))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        for name, (cx, cy) in handle_positions(bounds).items():
+            if len(name) != 2:
+                continue  # 隅の4つだけ。辺まで出すと×が8個並んで枠が読めない
+            painter.drawLine(QLineF(cx - half, cy - half, cx + half, cy + half))
+            painter.drawLine(QLineF(cx + half, cy - half, cx - half, cy + half))
+
+    def _page_view(self):
+        """このシーンを出している画面。下見の矩形を借りるためだけに使う。"""
+        views = self.views()
+        return views[0] if views else None
 
     def _accent(self) -> QColor:
         """選択枠の色。何を選んでいるかで変える。"""
@@ -1602,6 +1745,13 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # トーンの範囲（→ 要件定義 10.1）。ここも他の判定より先に打ち切る。
+        # 範囲はコマや画像の上に重なるので、下の判定を通すと必ず取られる
+        if tool == TOOL_TONE_AREA:
+            self._begin_tone_drag(x, y)
+            event.accept()
+            return
+
         # 吹き出し・マーク・セリフはコマの上に置くものなので、下に何があっても
         # 作れる。コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で
         # 作れない
@@ -1762,6 +1912,98 @@ class PageView(QGraphicsView):
         self.state.set_rough_rect(final, label)
         self.state.message.emit(f"ラフ: {final.w:.0f} × {final.h:.0f} px")
 
+    # -- トーンの範囲（→ 要件定義 10.1） ------------------------------------
+
+    @staticmethod
+    def tone_area_rect(image: ImageObject) -> Rect:
+        """絞る矩形を、**画像の傾きを外したページ座標**で返す。
+
+        絞っていなければ画像いっぱい。保存は割合なので、画像を動かしても
+        伸縮しても囲った場所が変わらない。
+        """
+        box = image.rect
+        area = image.tone.area if image.tone is not None else None
+        if area is None:
+            return box
+        return Rect(
+            box.x + area.x * box.w,
+            box.y + area.y * box.h,
+            area.w * box.w,
+            area.h * box.h,
+        )
+
+    @staticmethod
+    def tone_area_ratio(image_rect: Rect, rect: Rect) -> Rect:
+        """ページ座標の矩形を、画像に対する割合へ戻す。
+
+        **はみ出しても丸めない。** 0〜1 の外は絵が無いだけで、画像の縁で
+        自然に切れる（→ 要件定義 10.1）。
+        """
+        if image_rect.w <= 0 or image_rect.h <= 0:
+            return Rect(0.0, 0.0, 1.0, 1.0)
+        return Rect(
+            (rect.x - image_rect.x) / image_rect.w,
+            (rect.y - image_rect.y) / image_rect.h,
+            rect.w / image_rect.w,
+            rect.h / image_rect.h,
+        )
+
+    def tone_area_preview(self) -> Rect | None:
+        """引いている最中の矩形。引いていなければ None。
+
+        **モデルは離すまで触らない。** 触ると1動きごとにトーンを焼き直す
+        ことになり、1枚 40ms がフレームごとに乗る（→ 要件定義 10.1）。
+        """
+        return getattr(self._drag, "preview", None) if isinstance(
+            self._drag, ToneAreaDrag
+        ) else None
+
+    def _tone_handle_at(self, x: float, y: float) -> str | None:
+        """その位置にあるトーン範囲のつまみ。無ければ None。
+
+        **点を画像の中心まわりに戻してから見る。** `handle_at` の `rotation`
+        は矩形自身の中心を軸にするので、そのまま渡すと傾いた画像で軸がずれる
+        （範囲の矩形と画像とで中心が違う）。
+        """
+        image = self.state.selected_image
+        if image is None or image.tone is None:
+            return None
+        lx, ly = unrotate_point(x, y, image.rect, image.rotation)
+        return handle_at(
+            self.tone_area_rect(image), lx, ly, HANDLE_PX / self.view_scale, 0.0
+        )
+
+    def _begin_tone_drag(self, x: float, y: float) -> None:
+        """トーン範囲の道具で押された。つまみなら隅を動かし、それ以外は囲い直す。
+
+        **他には何も起きない。** 道具を持ち替えている間だけ範囲を掴める、
+        という切り分けそのもの（ラフと同じ → 6.23）。
+        """
+        image = self.state.selected_image
+        if image is None or image.tone is None:
+            self.state.message.emit(
+                "トーンの入った画像を選んでください（画像 → トーン → 入れる）"
+            )
+            return
+        # 隅の4つだけを見る。辺のつまみは出していない（→ `_draw_cross_handles`）
+        handle = self._tone_handle_at(x, y)
+        if handle is not None and len(handle) != 2:
+            handle = None
+        self._drag = ToneAreaDrag.begin(self, x, y, handle)
+
+    def _apply_tone_area(
+        self, image_id: str, image_rect: Rect, origin: Rect | None, final: Rect | None
+    ) -> None:
+        """離した時点で1手として積む。**変わっていなければ積まない。**
+
+        **潰れた矩形は捨てる。** 押しただけで動かさなかったときに幅 0 の
+        範囲が入ると、トーンが丸ごと消えたように見えて戻し方が分からなくなる。
+        """
+        if final is None or final.w < 1.0 or final.h < 1.0 or final == origin:
+            return
+        self.state.set_tone_area(image_id, self.tone_area_ratio(image_rect, final))
+        self.state.message.emit(f"トーンの範囲: {final.w:.0f} × {final.h:.0f} px")
+
     def _pick_at(self, x: float, y: float) -> str | None:
         """その位置で選ぶものの id。何も無ければ None。
 
@@ -1822,9 +2064,11 @@ class PageView(QGraphicsView):
 
         point = self.mapToScene(event.pos())
         x, y = point.x(), point.y()
-        # ラフの調整中は選び直さない（→ 6.23）。この道具では選択枠を出して
-        # いないので、裏で選ばれても見えないまま次の操作に効いてしまう
-        if self.state.tool != TOOL_ROUGH:
+        # ラフ・トーン範囲の調整中は選び直さない（→ 6.23、10.1）。どちらの
+        # 道具でも選択枠を出していないので、裏で選ばれても見えないまま次の
+        # 操作に効いてしまう。トーンは特に、選び直した時点で道具そのものが
+        # 外れる（→ `_leave_tone_tool_if_gone`）
+        if self.state.tool not in (TOOL_ROUGH, TOOL_TONE_AREA):
             self.state.select(self._pick_at(x, y))
         self.viewport().update()
         self.context_menu_requested.emit(x, y, event.globalPos())
@@ -1982,7 +2226,7 @@ class PageView(QGraphicsView):
 
         # ラフの調整中は踏み込まない（→ 6.23）。掴めないものが選ばれるだけで、
         # しかも枠を出していないので選ばれたことに気づけない
-        if self.state.tool == TOOL_ROUGH:
+        if self.state.tool in (TOOL_ROUGH, TOOL_TONE_AREA):
             event.accept()
             return
 
@@ -2211,6 +2455,18 @@ class PageView(QGraphicsView):
                 _HANDLE_CURSORS[rough_handle]
                 if rough_handle is not None
                 else Qt.CursorShape.OpenHandCursor
+            )
+            return
+
+        # トーンの範囲（→ 10.1）。ラフと同じ理由で、ここも先に打ち切る。
+        # **既定は十字**——絞っていない状態からはどこを押しても囲い直せるので、
+        # 「引いて囲う」に見える形にする（ラフの「掴んで動かす」とは違う）
+        if self.state.tool == TOOL_TONE_AREA:
+            tone_handle = self._tone_handle_at(x, y)
+            self.viewport().setCursor(
+                _HANDLE_CURSORS[tone_handle]
+                if tone_handle is not None and len(tone_handle) == 2
+                else Qt.CursorShape.CrossCursor
             )
             return
 

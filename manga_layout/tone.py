@@ -89,6 +89,12 @@ DENSITY_STEP = 0.05
 THIN_STEP = 0.001
 
 
+# 斜線の向きをメニューで回すときの1回ぶん（度）。
+# **つまみは作らない**（→ 要件定義 10.1。矩形のつまみだけで手一杯なので、
+# 向きまで掴めるようにすると×と丸が同じ場所に並ぶ）
+ANGLE_STEP = 15.0
+
+
 def default_tone() -> Tone:
     """設定の値でトーンを1つ作る。範囲は画像全体（絞らない）。"""
     s = DEFAULT_TONE_SETTINGS
@@ -100,6 +106,34 @@ def default_tone() -> Tone:
         thin=s.thin,
         area=None,
     )
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def stepped_threshold(threshold: int, steps: int) -> int:
+    """どこまでを黒と見るかを増減する。範囲の端で止める。"""
+    return int(_clamp(threshold + steps * THRESHOLD_STEP, THRESHOLD_MIN, THRESHOLD_MAX))
+
+
+def stepped_pitch(pitch: float, steps: int) -> float:
+    """斜線の間隔を増減する。範囲の端で止める。"""
+    return _clamp(pitch + steps * PITCH_STEP, PITCH_MIN, PITCH_MAX)
+
+
+def stepped_density(density: float, steps: int) -> float:
+    """線の太さ＝濃さを増減する。範囲の端で止める。"""
+    return _clamp(density + steps * DENSITY_STEP, DENSITY_MIN, DENSITY_MAX)
+
+
+def stepped_thin(thin: float, steps: int) -> float:
+    """どこまでを細いと見るかを増減する。範囲の端で止める。
+
+    下限は 0（＝何も落とさない）。線画を持たない絵ではここを 0 にしたほうが
+    輪郭が素直に出る。
+    """
+    return _clamp(thin + steps * THIN_STEP, THIN_MIN, THIN_MAX)
 
 
 # -- 中の4段 --------------------------------------------------------------

@@ -542,8 +542,92 @@ class FlowMenu:
             self.color_action.setText("黒に戻す" if flow.white else "白にする")
 
 
+class ToneMenu:
+    """トーンのメニュー（要件定義 10.1）。**集中線・流線と同じ形で畳む。**
+
+    項目名は短く保ち、**説明はステータスバーへ逃がす**。畳みの中で読む字数が
+    増えると、畳んだ意味が薄れる（→ 6.12、6.16）。
+
+    **キーは1つも割り当てない**（→ 7章。集中線・流線と同じ）。矩形を絞る
+    操作だけは道具（「トーン範囲を調整」）に出してある。
+    """
+
+    def __init__(self, window: MainWindow, parent_menu: QMenu) -> None:
+        self._state = window.state
+        menu = QMenu("トーン", window)
+        self.toggle_action = window._act(
+            "入れる",
+            window.toggle_tone,
+            None,
+            "選んだ画像の黒ベタを斜線のトーンに置き換える。元の画像は変わらない",
+        )
+        menu.addAction(self.toggle_action)
+        menu.addSeparator()
+
+        # ここから下はトーンの入った画像にだけ効く
+        self.actions: list[QAction] = []
+
+        def add(label: str, slot, tip: str = "") -> QAction:
+            action = window._act(label, slot, None, tip)
+            menu.addAction(action)
+            self.actions.append(action)
+            return action
+
+        add("濃く", lambda: window.state.step_tone_density(1), "斜線を太くする")
+        add("薄く", lambda: window.state.step_tone_density(-1), "斜線を細くする")
+        menu.addSeparator()
+        add("目を細かく", lambda: window.state.step_tone_pitch(-1), "斜線の間隔を狭める")
+        add("目を粗く", lambda: window.state.step_tone_pitch(1), "斜線の間隔を広げる")
+        add(
+            "15度回す",
+            lambda: window.state.step_tone_angle(1),
+            "斜線の向きを変える。つまみは無く、ここから回す",
+        )
+        menu.addSeparator()
+        add(
+            "拾う黒を増やす",
+            lambda: window.state.step_tone_threshold(1),
+            "より明るい灰色までトーンにする。黒ベタが拾われないときに上げる",
+        )
+        add(
+            "拾う黒を減らす",
+            lambda: window.state.step_tone_threshold(-1),
+            "本当に暗い所だけをトーンにする",
+        )
+        menu.addSeparator()
+        add(
+            "細い線を残す",
+            lambda: window.state.step_tone_thin(1),
+            "これより細いものはトーンにしない。線画の線が破線になるときに上げる",
+        )
+        add(
+            "細い線も塗る",
+            lambda: window.state.step_tone_thin(-1),
+            "細さで選り分けるのをやめる。線画を持たない絵ではこちら",
+        )
+        menu.addSeparator()
+        self.clear_area_action = add(
+            "範囲を全体に戻す",
+            window.state.clear_tone_area,
+            "矩形で絞るのをやめて、画像全体を対象に戻す",
+        )
+
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）
+        self.copy_items = items_to_copy(menu, window._tool_actions.values())
+        parent_menu.addMenu(menu)
+
+    def refresh(self) -> None:
+        tone = self._state.selected_tone
+        self.toggle_action.setEnabled(self._state.selected_image is not None)
+        self.toggle_action.setText("消す" if tone is not None else "入れる")
+        for action in self.actions:
+            action.setEnabled(tone is not None)
+        # 絞っていなければ戻す先が無い
+        self.clear_area_action.setEnabled(tone is not None and tone.area is not None)
+
+
 class ImageMenu:
-    """画像のメニュー。貼り付け・読み込み・フィット・回転リセット・整理。"""
+    """画像のメニュー。貼り付け・読み込み・フィット・回転リセット・トーン・整理。"""
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
@@ -571,6 +655,8 @@ class ImageMenu:
         )
         menu.addAction(self.reset_rotation_action)
         menu.addSeparator()
+        self.tone = ToneMenu(window, menu)
+        menu.addSeparator()
         menu.addAction(window._act("未使用ファイルを整理...", window.prune_assets))
 
     def refresh(self) -> None:
@@ -579,6 +665,7 @@ class ImageMenu:
         self.reset_rotation_action.setEnabled(
             image is not None and image.rotation != 0.0
         )
+        self.tone.refresh()
 
 
 class PageMenu:

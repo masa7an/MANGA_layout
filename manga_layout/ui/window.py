@@ -61,6 +61,7 @@ from .state import (
     TOOL_STICKER_EXCLAIM,
     TOOL_STICKER_EXCLAIM_QUESTION,
     TOOL_TEXT,
+    TOOL_TONE_AREA,
     EditorState,
     object_label,
 )
@@ -277,6 +278,9 @@ class MainWindow(QMainWindow):
             # ラフの調整（→ 6.23）にもキーは割り当てない。敷いたあとに
             # 何度も出入りするものではないので、メニューと右クリックで足りる
             (TOOL_ROUGH, None),
+            # トーンの範囲（→ 10.1）も同じ。しきい値と細さで足りなかった
+            # ときの手当てなので、頻繁に出入りするものではない
+            (TOOL_TONE_AREA, None),
         ):
             label = TOOL_LABELS[tool]
             action = QAction(f"{label} ({shortcut})" if shortcut else label, self)
@@ -607,6 +611,17 @@ class MainWindow(QMainWindow):
             self.state.add_flow_lines()
         elif self.state.remove_flow_lines():
             self.state.message.emit("流線を消しました")
+
+    def toggle_tone(self) -> None:
+        """選んだ画像のトーンを入れる／消す（要件定義 10.1）。
+
+        集中線・流線と同じ形。**持ち主が画像**なので、コマではなく中の絵を
+        選んでから使う。
+        """
+        if self.state.selected_tone is None:
+            self.state.add_tone()
+        elif self.state.remove_tone():
+            self.state.message.emit("トーンを消しました")
 
     def toggle_flow_color(self) -> None:
         """選んだコマの流線の色を黒⇄白で切り替える（要件定義 6.26）。"""

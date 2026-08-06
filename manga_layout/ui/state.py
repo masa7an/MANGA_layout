@@ -29,7 +29,7 @@ from ..focus import (
     stepped_count,
     stepped_width,
 )
-from ..geometry import Rect, Size
+from ..geometry import Rect, Size, normalize_angle
 from ..history import History
 from ..images import (
     ImageCache,
@@ -69,6 +69,7 @@ from ..model import (
     StickerObject,
     Tail,
     TextObject,
+    Tone,
     new_project,
 )
 from ..settings import ROUGH_OPACITY_DEFAULT
@@ -81,6 +82,14 @@ from ..storage import (
     load_project,
     save_project,
     write_autosave,
+)
+from ..tone import (
+    ANGLE_STEP as TONE_ANGLE_STEP,
+    default_tone,
+    stepped_density as tone_stepped_density,
+    stepped_pitch as tone_stepped_pitch,
+    stepped_thin as tone_stepped_thin,
+    stepped_threshold as tone_stepped_threshold,
 )
 
 # 道具（ツール）
@@ -103,6 +112,13 @@ TOOL_STICKER_EXCLAIM_QUESTION = "sticker_exclaim_question"
 # 普段の選択で掴めるようにすると、「コマを選んだつもりでラフが動く」経路が
 # できる。持ち替えている間だけ掴める形なら、その取り違えが起こらない
 TOOL_ROUGH = "rough"
+# トーンを掛ける範囲（矩形）を直す道具（→ 要件定義 10.1）。
+#
+# **道具にしたのは、つまみの記号が尽きているため。** 四角＝大きさ・丸＝回転・
+# ひし形＝しっぽの付け根・十字＝集中線の中心で在庫が無く、矩形の4隅にもう
+# 1種類足すと画像を選んだだけでつまみが9個並ぶ。持ち替えている間だけ出す形に
+# すれば、その間は他のつまみを全部消せる（ラフと同じ切り分け）
+TOOL_TONE_AREA = "tone_area"
 
 # どの道具がどの種類の吹き出しを作るか
 BALLOON_TOOLS = {
@@ -173,6 +189,7 @@ TOOL_LABELS = {
     },
     TOOL_TEXT: "セリフを追加",
     TOOL_ROUGH: "ラフを調整",
+    TOOL_TONE_AREA: "トーン範囲を調整",
 }
 
 # クリックだけでセリフを置いたときの大きさ（px）。
@@ -374,6 +391,9 @@ class EditorState(QObject):
         if panel_id == self._selected_id:
             return
         self._selected_id = panel_id
+        # トーンの範囲を直す道具は、その画像を選んでいる間だけのもの。
+        # 別のものへ移った時点で外す（→ `_leave_tone_tool_if_gone`）
+        self._leave_tone_tool_if_gone()
         self.selection_changed.emit()
 
     def set_page_index(self, index: int) -> None:
@@ -404,6 +424,16 @@ class EditorState(QObject):
         ページを移ったときと、Undo でラフが消えたときの両方から呼ぶ。
         """
         if self._tool == TOOL_ROUGH and self.page.rough is None:
+            self.set_tool(TOOL_SELECT)
+
+    def _leave_tone_tool_if_gone(self) -> None:
+        """トーンの入った画像を選んでいなければ、調整の道具から選択へ戻す。
+
+        理由はラフと同じ（→ `_leave_rough_tool_if_gone`）。掴めるものが
+        1つも無い道具を持ったまま残ると、押しても何も起きない。
+        **選択が変わったときと、Undo でトーンが消えたときの両方から呼ぶ。**
+        """
+        if self._tool == TOOL_TONE_AREA and self.selected_tone is None:
             self.set_tool(TOOL_SELECT)
 
     # -- 編集 --------------------------------------------------------------
@@ -446,8 +476,9 @@ class EditorState(QObject):
     def _after_history_move(self, message: str) -> None:
         # ページが減っていた場合に備えて番号を丸める
         self._page_index = max(0, min(self._page_index, self.page_count - 1))
-        # ラフが消えていることがある（→ `_leave_rough_tool_if_gone`）
+        # ラフやトーンが消えていることがある（→ `_leave_rough_tool_if_gone`）
         self._leave_rough_tool_if_gone()
+        self._leave_tone_tool_if_gone()
         self.changed.emit()
         self.selection_changed.emit()
         self.page_changed.emit()
@@ -1167,6 +1198,153 @@ class EditorState(QObject):
         panel_id = panel.id
         with self._edit_flow(panel_id, "流線の色") as target:
             target.flow_lines.white = not target.flow_lines.white
+        return True
+
+    # -- トーン（画像の黒の置き換え → 要件定義 10.1） ------------------------
+
+    @property
+    def selected_tone(self) -> Tone | None:
+        """選択中の画像に入っているトーン。無ければ None。"""
+        image = self.selected_image
+        return None if image is None else image.tone
+
+    def _edit_tone(self, image_id: str, label: str):
+        """id で引き直してから触るための小さな入れ物（`_edit_flow` と同じ）。"""
+
+        @contextlib.contextmanager
+        def scope():
+            with self.edit_page(label) as page:
+                target = page.find(image_id)
+                if not isinstance(target, ImageObject) or target.tone is None:
+                    raise KeyError(f"トーンの入った画像が見つかりません: {image_id}")
+                yield target
+
+        return scope()
+
+    def add_tone(self) -> bool:
+        """選択中の画像にトーンを入れる。入れたら True。
+
+        **範囲は絞らない状態で入る。** 絞るのは足りなかったときの手当てで、
+        まず全体に掛けて様子を見るほうが手数が少ない（→ 要件定義 10.1）。
+        """
+        image = self.selected_image
+        if image is None:
+            self.message.emit("トーンを入れる画像を選んでください")
+            return False
+        if image.tone is not None:
+            return False
+
+        image_id = image.id
+        with self.edit_page("トーンを入れる") as page:
+            target = page.find(image_id)
+            if isinstance(target, ImageObject):
+                target.tone = default_tone()
+        self.message.emit(
+            "黒ベタをトーンにしました。範囲を絞るには道具の「トーン範囲を調整」へ"
+        )
+        return True
+
+    def remove_tone(self) -> bool:
+        """選択中の画像からトーンを消す。消したら True。"""
+        image = self.selected_image
+        if image is None or image.tone is None:
+            return False
+
+        image_id = image.id
+        with self.edit_page("トーンを消す") as page:
+            target = page.find(image_id)
+            if isinstance(target, ImageObject):
+                target.tone = None
+        return True
+
+    def step_tone_threshold(self, steps: int) -> bool:
+        """どこまでを黒と見るかを増減する。変わったら True。"""
+        return self._step_tone(
+            "threshold",
+            tone_stepped_threshold,
+            steps,
+            lambda n: f"トーンにする明るさ: {n} 以下",
+        )
+
+    def step_tone_pitch(self, steps: int) -> bool:
+        """斜線の間隔を増減する。変わったら True。"""
+        return self._step_tone(
+            "pitch",
+            tone_stepped_pitch,
+            steps,
+            lambda v: f"斜線の間隔: {v * 100:.1f}%（画像の短辺に対する割合）",
+        )
+
+    def step_tone_density(self, steps: int) -> bool:
+        """濃さ（線の太さ）を増減する。変わったら True。"""
+        return self._step_tone(
+            "density",
+            tone_stepped_density,
+            steps,
+            lambda v: f"トーンの濃さ: {v * 100:.0f}%",
+        )
+
+    def step_tone_thin(self, steps: int) -> bool:
+        """どこまでを細いと見るかを増減する。変わったら True。"""
+        return self._step_tone(
+            "thin",
+            tone_stepped_thin,
+            steps,
+            lambda v: (
+                "細い線も全部トーンにする"
+                if v <= 0.0
+                else f"トーンにしない細さ: {v * 100:.1f}% 未満（画像の短辺に対する割合）"
+            ),
+        )
+
+    def step_tone_angle(self, steps: int) -> bool:
+        """斜線の向きを 15 度ずつ回す。**つまみは作らない**（→ 要件定義 10.1）。"""
+        image = self.selected_image
+        if image is None or image.tone is None:
+            return False
+
+        angle = normalize_angle(image.tone.angle + steps * TONE_ANGLE_STEP)
+        image_id = image.id
+        with self._edit_tone(image_id, "斜線の向き") as target:
+            target.tone.angle = angle
+        self.message.emit(f"斜線の向き: {angle:.0f}°")
+        return True
+
+    def _step_tone(self, field: str, step, steps: int, label) -> bool:
+        """しきい値・間隔・濃さ・細さの増減は、値の名前と刻み方だけが違う
+        （→ `_step_flow`）。
+        """
+        image = self.selected_image
+        if image is None or image.tone is None:
+            return False
+        value = step(getattr(image.tone, field), steps)
+        if value == getattr(image.tone, field):
+            # 端まで来ている。**履歴に積まない**（→ `_step_flow`）
+            return False
+
+        image_id = image.id
+        with self._edit_tone(image_id, "トーンの調整") as target:
+            setattr(target.tone, field, value)
+        self.message.emit(label(value))
+        return True
+
+    def set_tone_area(self, image_id: str, area: Rect | None) -> None:
+        """絞る矩形を差し替える。1回のドラッグで1手（流線の向きと同じ流儀）。
+
+        `area` は**画像に対する割合**。`None` で絞らない状態に戻す。
+        **はみ出していても直さない**——0〜1 の外は絵が無いだけで、画像の縁で
+        自然に切れる（→ 要件定義 10.1）。
+        """
+        with self._edit_tone(image_id, "トーンの範囲") as target:
+            target.tone.area = area
+
+    def clear_tone_area(self) -> bool:
+        """絞りを外して画像全体に戻す。戻したら True。"""
+        image = self.selected_image
+        if image is None or image.tone is None or image.tone.area is None:
+            return False
+        self.set_tone_area(image.id, None)
+        self.message.emit("トーンの範囲を画像全体に戻しました")
         return True
 
     # -- 吹き出し ----------------------------------------------------------
