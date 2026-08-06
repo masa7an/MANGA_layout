@@ -127,6 +127,11 @@ SYNONYMS = {
     # このアプリに `Ctrl+C` は無く、同じ用が足りるのは「複製」
     "コピー": "複製",
     "複写": "複製",
+    # キーの一覧（→ `shortcuts.py`）。「ショートカット」「キー」は項目名に
+    # 入っているので元から当たる。当たらない呼び名だけを足す
+    "ホットキー": "ショートカット",
+    "キーボード": "ショートカット",
+    "アクセラレータ": "ショートカット",
     # マンガの用語のゆれ
     "スピード線": "流線",
     "尻尾": "しっぽ",
@@ -313,6 +318,16 @@ class MenuEntry:
     text: str  # "読み込む..."
     tip: str
     shortcut: str
+    # 同じ項目に通してある2本目以降のキー（「やり直す」の Ctrl+Shift+Z、
+    # 「メニューを探す」の Ctrl+F → 7章）。**探すときには使わないが、
+    # ショートカットの一覧には全部出す**（→ `shortcuts.py`）。
+    # `shortcut` だけだと、2本通してあることが一覧に出ない
+    alt_shortcuts: tuple[str, ...] = ()
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """この項目に通してあるキー全部。無ければ空。"""
+        return (self.shortcut, *self.alt_shortcuts) if self.shortcut else ()
 
     @property
     def trail(self) -> str:
@@ -374,14 +389,20 @@ def _walk(
             continue
         if not label:
             continue
+        # **`shortcut()` ではなく `shortcuts()` を読む。** 前者は1本目しか
+        # 返さないので、2本通してある項目（→ `MenuEntry.alt_shortcuts`）の
+        # 片方が落ちる
+        keys = [
+            key.toString(QKeySequence.SequenceFormat.NativeText)
+            for key in action.shortcuts()
+        ]
         entries.append(
             MenuEntry(
                 path=path,
                 text=label,
                 tip=action.statusTip(),
-                shortcut=action.shortcut().toString(
-                    QKeySequence.SequenceFormat.NativeText
-                ),
+                shortcut=keys[0] if keys else "",
+                alt_shortcuts=tuple(keys[1:]),
             )
         )
 

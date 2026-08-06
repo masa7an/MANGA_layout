@@ -53,6 +53,7 @@ from .menus import (
     TextMenu,
 )
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
+from .shortcuts import SHORTCUTS_HINT, ShortcutsDialog, collect_groups
 from .project_io import ProjectIO
 from .state import (
     ADJUST_TOOLS,
@@ -162,6 +163,8 @@ class MainWindow(QMainWindow):
         self._menu_search_dialog: MenuSearchDialog | None = None
         self._menu_highlight: QRubberBand | None = None
         self._menu_highlight_timer: QTimer | None = None
+        # ショートカットキーの一覧（→ 7章）。こちらも押されるまで作らない
+        self._shortcuts_dialog: ShortcutsDialog | None = None
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -367,17 +370,27 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._act("ページ全体を表示", self.view.fit_page, "Ctrl+0"))
 
     def _build_help_menu(self) -> None:
-        """ヘルプ（→ 6.30）。いまは「メニューを探す」1つだけ。
+        """ヘルプ（→ 6.30、7章）。「メニューを探す」と「ショートカットキーの一覧」。
 
-        キーは F1 と Ctrl+F の両方を通す。**探しに来る人が押すキーは
-        どちらか片方に決まらない**——ヘルプの慣習は F1、探すの慣習は
-        Ctrl+F で、どちらもこのアプリでは空いている（「やり直す」に
-        Ctrl+Y と Ctrl+Shift+Z の両方を通しているのと同じ形 → 7章）。
+        「メニューを探す」のキーは F1 と Ctrl+F の両方を通す。**探しに来る
+        人が押すキーはどちらか片方に決まらない**——ヘルプの慣習は F1、
+        探すの慣習は Ctrl+F で、どちらもこのアプリでは空いている
+        （「やり直す」に Ctrl+Y と Ctrl+Shift+Z の両方を通しているのと
+        同じ形 → 7章）。
+
+        **一覧のほうにキーは付けない。** キーを覚えていない人が開く窓に
+        キーで入る道を作っても使われないし、キーを足せばそのぶん元から
+        通っていたものを塞ぐ（→ 7章）。
         """
         menu = self.menuBar().addMenu("ヘルプ(&H)")
         action = self._act("メニューを探す...", self.search_menu, "F1", MENU_SEARCH_HINT)
         action.setShortcuts([QKeySequence("F1"), QKeySequence("Ctrl+F")])
         menu.addAction(action)
+        menu.addAction(
+            self._act(
+                "ショートカットキーの一覧...", self.show_shortcuts, None, SHORTCUTS_HINT
+            )
+        )
 
     def _build_toolbar(self) -> None:
         """道具箱。**一覧は `_tool_actions` から取る。**
@@ -1193,6 +1206,17 @@ class MainWindow(QMainWindow):
             self._menu_search_dialog = MenuSearchDialog(self)
             self._menu_search_dialog.menu_chosen.connect(self.highlight_menu)
         self._menu_search_dialog.show_entries(collect_menu_entries(self))
+
+    def show_shortcuts(self) -> None:
+        """ショートカットキーの一覧を出す（→ 要件定義 7章）。
+
+        **開くたびに作り直す。** 一覧はメニューから作っているので
+        （→ `shortcuts.collect_groups`）、探す窓と同じく作り置きにすると
+        状態で変わる文言が古いまま残る。
+        """
+        if self._shortcuts_dialog is None:
+            self._shortcuts_dialog = ShortcutsDialog(self)
+        self._shortcuts_dialog.show_groups(collect_groups(self))
 
     def highlight_menu(self, name: str) -> None:
         """メニューバーの見出し1つを四角く囲む（→ 要件定義 6.30）。
