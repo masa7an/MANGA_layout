@@ -59,6 +59,24 @@ class Noise:
         return self.unit() * 2.0 - 1.0
 
 
+def seed_from_text(text: str) -> int:
+    """文字列から種を作る。**同じ文字列なら必ず同じ値。**
+
+    雲_フキダシのゆらぎ（→ `layout.cloud_points`）が使う。フキダシの ID を
+    そのまま種にすれば、**保存する項目を増やさずに**開き直しても同じ形へ
+    戻せる。
+
+    **Python の `hash()` を使わない。** あれは実行のたびに値が変わるので
+    （PYTHONHASHSEED）、開くたびにフキダシの形が変わってしまう。
+    FNV-1a を数行で持つ。
+    """
+    value = 0x811C9DC5
+    mask = (1 << 32) - 1
+    for byte in text.encode("utf-8"):
+        value = ((value ^ byte) * 0x01000193) & mask
+    return value
+
+
 def new_seed() -> int:
     """新しい形のための種。
 

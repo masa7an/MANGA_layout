@@ -26,6 +26,7 @@ from manga_layout.layout import (
     balloon_at,
     balloon_contains,
     balloon_outline,
+    cloud_max_depth,
     cloud_points,
     default_balloon_rect,
     default_tail_tip,
@@ -40,6 +41,7 @@ from manga_layout.layout import (
     wavy_points,
 )
 from manga_layout.model import TAIL_SHAPE_BUBBLES
+from manga_layout.noise import seed_from_text
 
 SETTINGS = BalloonSettings()
 RECT = Rect(20.0, 30.0, 40.0, 26.0)
@@ -474,7 +476,11 @@ class TestHitTest:
 
 
 class TestCloud:
-    """雲_フキダシ（心の声・回想 → 要件定義 6.22）。"""
+    """雲_フキダシ（心の声・回想 → 要件定義 6.22）。
+
+    狙いは綿ではなく**少しモコモコした楕円と楕円のつながり**
+    （2026-08-06 に描いて決めた）。
+    """
 
     def test_山と谷の間に収まる(self):
         for point in cloud_points(RECT, SETTINGS):
@@ -488,12 +494,20 @@ class TestCloud:
             assert len(points) % lobes == 0
 
     def test_くびれの数は膨らみの数と一致する(self):
-        """**尖りが頂点の上に乗ること。** 乗らないと谷が浅く丸められ、
-        膨らみの区切りが消えて「ふわふわを深くしただけ」になる。
+        """膨らみの区切りが数どおりに出ること。少ないと「ふわふわを深く
+        しただけ」になり、多いと綿へ寄る。
+
+        **谷は頂点の上にちょうど乗るとは限らない。** 弧の長さで等間隔に
+        置くようになった（→ `_arc_positions`）ので、区切りは線分の途中に
+        来る。いちばん内側の点だけを数えず、**へこんだ場所の数**を数える。
         """
-        floor = 1.0 - SETTINGS.cloud_depth
         ratios = [distance_ratio(RECT, p) for p in cloud_points(RECT, SETTINGS)]
-        assert sum(r == pytest.approx(floor) for r in ratios) == SETTINGS.cloud_lobes
+        dips = sum(
+            1
+            for i, ratio in enumerate(ratios)
+            if ratio < ratios[i - 1] and ratio <= ratios[(i + 1) % len(ratios)]
+        )
+        assert dips == SETTINGS.cloud_lobes
 
     def test_山は谷より数がずっと多い(self):
         """**山は丸く、谷は尖らせる**（→ 6.22）。丸い頂は点を多く使い、
@@ -522,12 +536,91 @@ class TestCloud:
         assert len(points) >= 3 * CLOUD_MIN_SEGMENTS_PER_LOBE
 
     def test_しっぽの付け根はくびれより内側(self, balloon):
-        """輪郭の上に置くと、くびれの位置で本体と離れて隙間が空く（→ 6.4）。"""
+        """輪郭の上に置くと、くびれの位置で本体と離れて隙間が空く（→ 6.4）。
+
+        **ゆらぎで深くなった谷まで含めて内側**でなければならない
+        （→ `cloud_max_depth`）。
+        """
         balloon.style = "cloud"
         balloon.tail.tip = default_tail_tip(RECT)
         root = tail_root_point(balloon, SETTINGS)
         assert root is not None
-        assert distance_ratio(RECT, root) <= 1.0 - SETTINGS.cloud_depth + 1e-9
+        limit = 1.0 - cloud_max_depth(SETTINGS)
+        assert distance_ratio(RECT, root) <= limit + 1e-9
+
+        deepest = min(distance_ratio(RECT, p) for p in balloon_outline(balloon, SETTINGS))
+        assert distance_ratio(RECT, root) <= deepest + 1e-9
+
+    def test_縦長でも膨らみが上下に偏らない(self):
+        """**角度ではなく弧の長さで等間隔に置く**（→ `_arc_positions`）。
+
+        角度で割ると、縦長のフキダシでは曲がりのきつい上下に膨らみが
+        密集し、長い左右の辺がのっぺり空く。
+        """
+        tall = Rect(0.0, 0.0, 100.0, 400.0)
+        ratios = [distance_ratio(tall, p) for p in cloud_points(tall, SETTINGS)]
+        count = len(ratios)
+
+        def dips_between(start: int, end: int) -> int:
+            return sum(
+                1
+                for i in range(start, end)
+                if ratios[i] < ratios[i - 1] and ratios[i] <= ratios[(i + 1) % count]
+            )
+
+        # 上下の1/4（媒介変数で 45〜135 度と 225〜315 度）に全部は寄らない
+        poles = dips_between(count // 8, 3 * count // 8) + dips_between(
+            5 * count // 8, 7 * count // 8
+        )
+        assert poles < SETTINGS.cloud_lobes
+
+    def test_ゆらぎでフキダシごとに形が変わる(self):
+        """手描きの気配。**全部同じ形だと型で抜いたように見える**（→ 6.22）。"""
+        assert cloud_points(RECT, SETTINGS, seed=1) != cloud_points(RECT, SETTINGS, seed=2)
+
+    def test_同じ種なら必ず同じ形(self):
+        """開くたびに形が変わっては困る。種はフキダシの ID から作る。"""
+        assert cloud_points(RECT, SETTINGS, seed=7) == cloud_points(RECT, SETTINGS, seed=7)
+
+    def test_ゆらぎを切れば種によらず同じ(self):
+        off = BalloonSettings(cloud_jitter=0.0)
+        assert cloud_points(RECT, off, seed=1) == cloud_points(RECT, off, seed=999)
+
+    def test_ゆらいでも外接矩形に収まる(self):
+        """はみ出すと、掴める範囲（楕円で判定 → 6.4）と見た目がずれる。"""
+        for seed in range(20):
+            for x, y in cloud_points(RECT, SETTINGS, seed=seed):
+                assert RECT.x - 1e-9 <= x <= RECT.right + 1e-9
+                assert RECT.y - 1e-9 <= y <= RECT.bottom + 1e-9
+
+    def test_ゆらいでも膨らみの数は変わらない(self):
+        """幅と深さだけをばらす。数まで変わると種によって別の形になる。"""
+        for seed in range(20):
+            ratios = [distance_ratio(RECT, p) for p in cloud_points(RECT, SETTINGS, seed=seed)]
+            dips = sum(
+                1
+                for i, ratio in enumerate(ratios)
+                if ratio < ratios[i - 1] and ratio <= ratios[(i + 1) % len(ratios)]
+            )
+            assert dips == SETTINGS.cloud_lobes
+
+    def test_ゆらぎ込みの深さが谷の深さと合う(self):
+        """`cloud_max_depth` はしっぽの付け根の位置を決める（→ 6.4）ので、
+        実際の谷より浅く見積もると隙間が空く。
+        """
+        limit = 1.0 - cloud_max_depth(SETTINGS)
+        for seed in range(50):
+            deepest = min(
+                distance_ratio(RECT, p) for p in cloud_points(RECT, SETTINGS, seed=seed)
+            )
+            assert deepest >= limit - 1e-9
+
+    def test_IDから種を作る(self, balloon):
+        """**保存する項目を増やさない。** ID は保存されるので開き直しても同じ。"""
+        balloon.style = "cloud"
+        assert balloon_outline(balloon, SETTINGS) == cloud_points(
+            RECT, SETTINGS, seed=seed_from_text(balloon.id)
+        )
 
 
 class TestBubbleTail:

@@ -34,6 +34,7 @@ from .model import (
     StickerObject,
     TextObject,
 )
+from .noise import Noise, seed_from_text
 
 # 8方向のつまみ。n=上 s=下 w=左 e=右
 HANDLES = ("nw", "n", "ne", "e", "se", "s", "sw", "w")
@@ -88,11 +89,25 @@ class BalloonSettings:
     # 波形の谷の深さ。半径に対する割合。**ギザギザより浅くする。**
     # 深くすると花びらのように見え、叫びとの差でなく別の物になる
     wavy_depth: float = 0.09
-    # 雲の膨らみの数。ギザギザ・波形より少なくして、1つ1つを大きく見せる
-    cloud_lobes: int = 9
+    # 雲の膨らみの数。ギザギザ・波形より少なくして、1つ1つを大きく見せる。
+    #
+    # **9 から 5 へ減らした**（2026-08-06）。狙いは綿ではなく「少しモコモコ
+    # した楕円と楕円のつながり」。4 以下まで減らすと落花生の殻に見え、
+    # つながった楕円に読めなくなる（描いて確かめた）
+    cloud_lobes: int = 5
     # 雲のくびれの深さ。半径に対する割合。**浅いと丸との差が出ない。**
-    # 深くしすぎると膨らみが指のように分かれて、綿ではなく花に見える
-    cloud_depth: float = 0.22
+    # 深くしすぎると膨らみが指のように分かれて、綿ではなく花に見える。
+    #
+    # 膨らみを減らすと1つ1つが大きくなるので、同じ深さでは彫りが深すぎる。
+    # 0.22 から 0.12 へ浅くしてある（2026-08-06）
+    cloud_depth: float = 0.12
+    # 雲の山の頂の平たさ。**小さいほど頂が広がり、膨らみ1つの半径が大きく
+    # 見える。** 1.0 でちょうど |sin| の山（尖った頂）になる
+    cloud_roundness: float = 0.55
+    # 雲の手描きのゆらぎ。膨らみ1つ1つの幅とくびれの深さをこの割合だけ
+    # ばらす。**0.0 で全部同じ形。** 種はフキダシの ID から作るので、
+    # 開き直しても同じ形に戻る（→ `cloud_points`）
+    cloud_jitter: float = 0.30
     # 楕円を何本の線分で近似するか。書き出しでも同じ値を使う
     ellipse_segments: int = 72
 
@@ -698,43 +713,108 @@ def wavy_points(
 
 # 雲の膨らみ1つを最低何本の線分で描くか（→ `cloud_points`）。
 # **波形（8本）より多くする。** 波形は「揺れていること」が伝わればよいが、
-# 雲は膨らみ1つ1つが丸いことがこの形の意味なので、角が立つと綿に見えない
-CLOUD_MIN_SEGMENTS_PER_LOBE = 12
+# 雲は膨らみ1つ1つが丸いことがこの形の意味なので、角が立つと綿に見えない。
+#
+# 膨らみを 9 個から 5 個へ減らした（2026-08-06）ぶん1つが大きくなるので、
+# 12 本では頂に角が立つ。24 本へ増やしてある
+CLOUD_MIN_SEGMENTS_PER_LOBE = 24
+
+# ゆらぎが、くびれの深さをどこまで動かすか。`cloud_jitter` に対する割合。
+# 幅ほど大きく振らない——深さまで同じだけ振ると、浅い谷と深い谷が混じって
+# 「同じフキダシの輪郭」に見えなくなる
+CLOUD_JITTER_DEPTH_RATIO = 0.8
+
+
+def _arc_positions(rect: Rect, count: int) -> list[float]:
+    """楕円を角度で `count` 等分したとき、各点が**一周の何割の位置**か。
+
+    角度そのものではなく、輪郭に沿って測った長さで数える。
+
+    **縦長のフキダシでは角度と長さが大きくずれる。** 角度で膨らみを等分
+    すると、上下（曲がりのきつい側）に膨らみが密集し、左右の長い辺が
+    のっぺり空く。実物の見た目は長さのほうに従うので、こちらを使う
+    （要件定義 6.22）。
+    """
+    a, b = rect.w / 2.0, rect.h / 2.0
+    cumulative = [0.0]
+    prev = (a, 0.0)
+    for i in range(1, count + 1):
+        angle = 2.0 * math.pi * i / count
+        point = (a * math.cos(angle), b * math.sin(angle))
+        cumulative.append(cumulative[-1] + math.hypot(point[0] - prev[0], point[1] - prev[1]))
+        prev = point
+    total = cumulative[-1]
+    if total <= EPS:
+        return [0.0] * count
+    return [value / total for value in cumulative[:count]]
+
+
+def _cloud_lobe_edges(lobes: int, jitter: float, seed: int | None) -> tuple[list[float], list[float]]:
+    """膨らみの境目（一周の何割の位置か）と、膨らみごとの深さの倍率。
+
+    ゆらぎは**幅**を変える。高さだけ振っても型で抜いたように見え、
+    手描きにならない（描いて確かめた → 要件定義 6.22）。
+    """
+    if seed is None or jitter <= 0.0:
+        return [i / lobes for i in range(lobes + 1)], [1.0] * lobes
+
+    noise = Noise(seed)
+    widths = [1.0 + noise.signed() * jitter for _ in range(lobes)]
+    scales = [1.0 + noise.signed() * jitter * CLOUD_JITTER_DEPTH_RATIO for _ in range(lobes)]
+
+    total = sum(widths)
+    edges = [0.0]
+    for width in widths:
+        edges.append(edges[-1] + width / total)
+    return edges, scales
 
 
 def cloud_points(
-    rect: Rect, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+    rect: Rect,
+    settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS,
+    seed: int | None = None,
 ) -> tuple[tuple[float, float], ...]:
     """雲（心の声・回想）の輪郭。
 
-    ギザギザ・波形と同じく楕円の半径を増減させて作るが、**山を丸く、谷を
-    尖らせる**。余弦波（波形）のまま深くすると花びらに見えて雲にならない
-    ——6.13 に「深くすると花びらや雲に見える」と書いた注意そのもの
-    （要件定義 6.22）。
+    「雲」と呼んでいるが、狙いは綿ではなく**少しモコモコした楕円と楕円の
+    つながり**（2026-08-06 に描いて決めた → 要件定義 6.22）。ふつうのセリフや
+    つぶやきに使うので、ホラーや不安の側へ寄せない。
 
-    `|sin|` は山の頂が丸く、ゼロ点で折れる。これを半径に乗せると
-    「丸い膨らみが、尖ったくびれで区切られる」形になる。
-    `|sin(lobes * t / 2)` は一周で `lobes` 個の膨らみを作る。
+    作りはギザギザ・波形と同じで、楕円の半径を増減させる。違うのは3つ。
 
-    **頂点数は膨らみの数の整数倍にする。** そうするとくびれが必ず頂点の上に
-    乗り、尖りが取れずに残る。半端だとくびれが線分の途中に来て丸められる
-    （波形で継ぎ目に角が出るのを防いでいるのと同じ理由 → 6.13）。
+    1. **膨らみを弧の長さで等間隔に置く**（→ `_arc_positions`）
+    2. **山の頂を平たくする**（`sin` を `cloud_roundness` 乗する）。
+       頂が広がるぶん膨らみ1つの半径が大きくなり、円弧に近づく
+    3. **数を減らす**（既定 5）。増やすと綿へ、減らしすぎると落花生になる
+
+    `seed` を渡すと手描きのゆらぎが乗る（→ `_cloud_lobe_edges`）。
+    **同じ種なら必ず同じ形。** フキダシの ID を種にすれば、保存する項目を
+    増やさずに開き直しても形が変わらない（→ `balloon_outline`）。
     """
     lobes = max(3, settings.cloud_lobes)
     depth = min(max(settings.cloud_depth, 0.0), 0.9)
+    roundness = max(settings.cloud_roundness, 0.05)
+    jitter = min(max(settings.cloud_jitter, 0.0), 1.0)
+
     per_lobe = max(
         CLOUD_MIN_SEGMENTS_PER_LOBE, -(-max(8, settings.ellipse_segments) // lobes)
     )
-    n = per_lobe * lobes
-    step = 2.0 * math.pi / n
-    return tuple(
-        _on_ellipse(
-            rect,
-            i * step,
-            1.0 - depth * (1.0 - abs(math.sin(lobes * i * step / 2.0))),
-        )
-        for i in range(n)
-    )
+    count = per_lobe * lobes
+    positions = _arc_positions(rect, count)
+    edges, scales = _cloud_lobe_edges(lobes, jitter, seed)
+
+    points = []
+    lobe = 0
+    for i, position in enumerate(positions):
+        while lobe + 1 < lobes and position >= edges[lobe + 1]:
+            lobe += 1
+        width = edges[lobe + 1] - edges[lobe]
+        # 膨らみ1つの中での位置（0.0〜1.0）。両端がくびれ、真ん中が頂
+        span = min(max((position - edges[lobe]) / width, 0.0), 1.0) if width > EPS else 0.0
+        hill = math.sin(math.pi * span) ** roundness
+        ratio = 1.0 - min(depth * scales[lobe], 0.9) * (1.0 - hill)
+        points.append(_on_ellipse(rect, 2.0 * math.pi * i / count, ratio))
+    return tuple(points)
 
 
 def rect_points(rect: Rect) -> tuple[tuple[float, float], ...]:
@@ -766,7 +846,11 @@ def balloon_outline(
     if balloon.style == "wavy":
         return wavy_points(balloon.rect, settings)
     if balloon.style == "cloud":
-        return cloud_points(balloon.rect, settings)
+        # **種はフキダシの ID から作る。** 保存する項目を増やさずに、
+        # 開き直しても同じ形へ戻せる（→ `noise.seed_from_text`）。
+        # 複製すると ID が変わるのでゆらぎ方も変わるが、手描きとしては
+        # そのほうが自然（同じ形が2つ並ばない）
+        return cloud_points(balloon.rect, settings, seed_from_text(balloon.id))
     if balloon.style == "rect":
         return rect_points(balloon.rect)
     return ellipse_points(balloon.rect, settings)
@@ -788,8 +872,21 @@ def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float
     if balloon.style == "wavy":
         return 1.0 - min(max(settings.wavy_depth, 0.0), 0.9)
     if balloon.style == "cloud":
-        return 1.0 - min(max(settings.cloud_depth, 0.0), 0.9)
+        return 1.0 - cloud_max_depth(settings)
     return 0.95
+
+
+def cloud_max_depth(settings: BalloonSettings) -> float:
+    """雲のくびれが、ゆらぎ込みでいちばん深くなったときの深さ。
+
+    ゆらぎは膨らみごとに深さを振る（→ `_cloud_lobe_edges`）ので、
+    設定値そのままではいちばん深い谷に届かない。**しっぽの付け根は
+    いちばん深い谷より内側**に置かないと、そこだけ本体と離れて
+    継ぎ目に隙間が空く（→ 6.4）。
+    """
+    depth = min(max(settings.cloud_depth, 0.0), 0.9)
+    jitter = min(max(settings.cloud_jitter, 0.0), 1.0)
+    return min(depth * (1.0 + jitter * CLOUD_JITTER_DEPTH_RATIO), 0.9)
 
 
 def _tail_auto_angle(balloon: BalloonObject) -> float | None:
