@@ -16,7 +16,13 @@ import pytest
 from PySide6.QtGui import QColor, QImage, QPainter
 
 from manga_layout import ProjectFormatError, Rect, tone as TN
-from manga_layout.model import ImageObject, Tone
+from manga_layout.model import (
+    TONE_KIND_GRAY as KIND_GRAY,
+    TONE_KIND_WHITE as KIND_WHITE,
+    TONE_KINDS,
+    ImageObject,
+    Tone,
+)
 
 WHITE = QColor("#FFFFFF")
 BLACK = QColor("#000000")
@@ -188,6 +194,112 @@ def test_向きを変えると絵が変わる():
     a = TN.apply_tone(image, make(angle=0.0))
     b = TN.apply_tone(image, make(angle=90.0))
     assert a.constBits() != b.constBits()
+
+
+# -- 種類（斜線・灰色・白抜き → 6.27）---------------------------------------
+
+
+def beta(out: QImage) -> list[int]:
+    """置き換えた所を横に読んだ明るさの並び。"""
+    return [QColor(out.pixel(x, 100)).red() for x in range(30, 170)]
+
+
+def test_灰色は置き換えた所が一様になる():
+    """斜線は白と黒が交互に出るが、灰色はどこを読んでも同じ値。"""
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    band = beta(TN.apply_tone(image, make(kind=KIND_GRAY)))
+    assert len(set(band)) == 1
+
+
+def test_灰色の濃さは濃さの値で決まる():
+    """`density` を斜線と共用する。0.35 なら 35% の黒（→ 6.27）。"""
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    light = beta(TN.apply_tone(image, make(kind=KIND_GRAY, density=0.1)))[0]
+    dark = beta(TN.apply_tone(image, make(kind=KIND_GRAY, density=0.8)))[0]
+    assert light == round(255 * 0.9)
+    assert dark == round(255 * 0.2)
+    assert light > dark, "濃くすると暗くなる"
+
+
+def test_白抜きは置き換えた所が白くなる():
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    band = beta(TN.apply_tone(image, make(kind=KIND_WHITE)))
+    assert set(band) == {255}
+
+
+def test_白抜きは濃さも向きも効かない():
+    """効かない値を持っていても絵は変わらない（メニューはグレーにする）。"""
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    a = TN.apply_tone(image, make(kind=KIND_WHITE, density=0.1, angle=0.0))
+    b = TN.apply_tone(image, make(kind=KIND_WHITE, density=0.8, angle=90.0))
+    assert a.constBits() == b.constBits()
+
+
+def test_種類が違えば選ぶ所は同じでも絵が変わる():
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    tone = make()
+    stripes = TN.apply_tone(image, tone)
+    assert TN.build_mask(image, tone).constBits() == TN.build_mask(
+        image, make(kind=KIND_GRAY)
+    ).constBits(), "どこを置き換えるかは種類で変わらない"
+    assert stripes.constBits() != TN.apply_tone(image, make(kind=KIND_GRAY)).constBits()
+
+
+def test_種類を変えても選ばれなかった所は元のまま():
+    image = canvas()
+    fill_box(image, 20, 20, 60, 60)
+    for kind in (KIND_GRAY, KIND_WHITE):
+        out = TN.apply_tone(image, make(kind=kind))
+        assert QColor(out.pixel(150, 150)).name() == "#ffffff"
+
+
+def test_種類には全部に日本語の名前がある():
+    """メニューの項目名と状態表示が同じ名前を使う（→ `KIND_LABELS`）。"""
+    assert set(TN.KIND_LABELS) == set(TONE_KINDS)
+
+
+# -- マスクをそのまま出す（PSD 用 → 6.28）-----------------------------------
+
+
+def test_マスクの中は黒く_外は透明():
+    image = canvas()
+    fill_box(image, 20, 20, 60, 60)
+    out = TN.mask_silhouette(image, make())
+    # **透明度は `pixelColor` で見る。** `QColor(image.pixel(...))` は
+    # 透明度を捨てて常に不透明として読むので、外側も 255 に見える
+    inside = out.pixelColor(50, 50)
+    assert (inside.red(), inside.alpha()) == (0, 255)
+    assert out.pixelColor(150, 150).alpha() == 0
+
+
+def test_マスクは絵と同じ大きさ():
+    """クリスタで位置を合わせ直さずに済む（→ 6.28）。"""
+    image = canvas(240, 160)
+    fill_box(image, 20, 20, 60, 60)
+    assert TN.mask_silhouette(image, make()).size() == image.size()
+
+
+def test_マスクは種類で変わらない():
+    """置き換えた先が違うだけで、選ぶ所は同じ（→ `build_mask` を共用）。"""
+    image = canvas()
+    fill_box(image, 20, 20, 60, 60)
+    a = TN.mask_silhouette(image, make())
+    b = TN.mask_silhouette(image, make(kind=KIND_WHITE))
+    assert a.constBits() == b.constBits()
+
+
+def test_マスクも矩形で絞られる():
+    """絵と同じ範囲を指す。ずれると、クリスタで貼ってから気づくことになる。"""
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    out = TN.mask_silhouette(image, make(area=Rect(0.0, 0.0, 0.5, 0.5)))
+    assert out.pixelColor(50, 50).alpha() == 255
+    assert out.pixelColor(150, 150).alpha() == 0
 
 
 # -- 保存形式 ---------------------------------------------------------------

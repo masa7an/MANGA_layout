@@ -1,10 +1,10 @@
-"""画像の暗い部分を斜線のトーンに置き換える（要件定義 10.1）。
+"""画像の暗い部分をトーン（斜線・灰色・白）に置き換える（要件定義 6.27）。
 
 **`images.py` と同じく Qt に依存する非 UI 層。** 画素を触るので `QImage`
 から離れられない。分けてあるのは、`images.py` が「展開して持つ」係で、
 こちらが「絵を作り替える」係だから。
 
-外から使うのは `apply_tone` 1つ。中は4段で、**どの段も画素を1つずつ
+外から使うのは `apply_tone` と `mask_silhouette` の2つ。中は4段で、**どの段も画素を1つずつ
 Python で触らない**——`bytes.translate` と `QImage.scaled` に任せる
 （2048×2048 で合計 40ms 程度。要件定義 10.1 の実測）。
 
@@ -26,7 +26,21 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen
 
 from .geometry import Rect
-from .model import Tone
+from .model import (
+    TONE_KIND_GRAY,
+    TONE_KIND_STRIPES,
+    TONE_KIND_WHITE,
+    TONE_KINDS,
+    Tone,
+)
+
+# 種類の日本語名。**メニューの項目名と状態表示で同じ名前を使う**ので、
+# 1か所に持つ（畳んだ親の名前を1か所に持つのと同じ理由 → 要件定義 6.27）
+KIND_LABELS = {
+    TONE_KIND_STRIPES: "斜線",
+    TONE_KIND_GRAY: "灰色",
+    TONE_KIND_WHITE: "白抜き",
+}
 
 # 斜線の色。白い紙の上の黒い線で、色は選べない。
 # **集中線・流線と違い白は用意しない**——ここは黒ベタの置き換えなので、
@@ -64,6 +78,9 @@ class ToneSettings:
     # これより細いものはトーンにしない。**画像の短辺に対する割合。**
     # 0.002 は 2048px で 4px 相当で、試作で線画が守れた値
     thin: float = 0.002
+    # 見た目（`model.TONE_KINDS`）。**入れた直後は斜線。**
+    # 灰色・白抜きはクリスタで貼り直す前提の絵なので、出発点にはしない
+    kind: str = TONE_KIND_STRIPES
 
 
 DEFAULT_TONE_SETTINGS = ToneSettings()
@@ -105,6 +122,7 @@ def default_tone() -> Tone:
         density=s.density,
         thin=s.thin,
         area=None,
+        kind=s.kind,
     )
 
 
@@ -318,23 +336,80 @@ def _stripes(size: QSize, tone: Tone) -> QImage:
     return out
 
 
+def _gray_of(density: float) -> QColor:
+    """濃さから灰色を作る（要件定義 6.27）。
+
+    **`density` を斜線と共用する。** 斜線では「線の太さ ÷ 間隔」がそのまま
+    黒の占める割合になっているので、同じ値を灰色の濃さとして読み替えると
+    **種類を切り替えても濃さの見た目が揃う**（0.35 なら 35% の黒）。
+
+    項目を別に持つ手もあったが、そうすると「濃く」を押したときにどちらが
+    動くかを種類ごとに覚えることになり、メニューにも2組並ぶ。
+    """
+    level = round(255 * (1.0 - _clamp(density, 0.0, 1.0)))
+    return QColor(level, level, level)
+
+
+def _pattern(size: QSize, tone: Tone) -> QImage:
+    """置き換えた先に敷く1枚。画像と同じ大きさ。
+
+    **どの種類でも「1枚敷いて、マスクで抜く」形は変わらない**（→ `apply_tone`）。
+    違うのはここで何を描くかだけなので、種類が増えても合成の側は触らずに済む。
+    """
+    if tone.kind == TONE_KIND_STRIPES:
+        return _stripes(size, tone)
+    out = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+    # 白抜きは「紙の色で塗り潰す」＝濃さ 0 の灰色にあたるが、`density` の
+    # 下限（0.05）が 5% の灰なので**別の種類として持つ**。クリスタで
+    # トーンを貼る前提なら、わずかな灰色も網点の隙間から見えてしまう
+    out.fill(TONE_PAPER if tone.kind == TONE_KIND_WHITE else _gray_of(tone.density))
+    return out
+
+
+def _as_alpha(mask: QImage) -> QImage:
+    """マスクの明るさを透明度として読み替えた1枚。
+
+    **`convertToFormat` でこれをやってはいけない。** `Format_Alpha8` へ
+    変換すると全画素 255 になり、マスクが「画像全部」を指す。生バイト列を
+    そのまま持ち直す（1画素1バイトで並びが同じ）→ `_raw_of` の注記。
+    """
+    raw, w, h, bpl = _raw_of(mask)
+    return QImage(raw, w, h, bpl, QImage.Format.Format_Alpha8).copy()
+
+
+def mask_silhouette(image: QImage, tone: Tone) -> QImage:
+    """トーンにする所だけを黒く塗った1枚（外は透明）。
+
+    **PSD 書き出しの「トーン範囲」レイヤーに使う**（→ 要件定義 6.28）。
+    クリスタ側で「レイヤーから選択範囲」を作れば、そこへ好きなトーンを
+    貼れる。位置を手で合わせずに済むよう、絵と同じ場所・同じ大きさで出す。
+
+    **`apply_tone` と同じ `build_mask` を通る。** 別に作ると、しきい値や
+    細さを動かしたときに絵とマスクがずれる——ずれても画面には出ないので、
+    クリスタで貼ってから気づくことになる。
+    """
+    mask = build_mask(image, tone)
+    out = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(TONE_INK)
+    painter = QPainter(out)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+    painter.drawImage(0, 0, _as_alpha(mask))
+    painter.end()
+    return out
+
+
 def apply_tone(image: QImage, tone: Tone) -> QImage:
-    """暗い所を斜線に置き換えた1枚を返す。元の画像は変えない。
+    """暗い所をトーン（斜線・灰色・白）に置き換えた1枚を返す。元の画像は変えない。
 
     **元のアルファは残る。** マスクが透明な所を外している（白地に載せて
-    から判定する）ので、斜線は不透明な所にしか乗らない。
+    から判定する）ので、トーンは不透明な所にしか乗らない。
     """
     mask = build_mask(image, tone)
 
-    layer = _stripes(image.size(), tone)
+    layer = _pattern(image.size(), tone)
     painter = QPainter(layer)
-    # 明るさを透明度として読み替える。`convertToFormat` では**できない**
-    # ので、生バイト列を `Format_Alpha8` として持ち直す（1画素1バイトで
-    # 並びが同じ）。→ `_raw_of` の注記
-    raw, w, h, bpl = _raw_of(mask)
-    alpha = QImage(raw, w, h, bpl, QImage.Format.Format_Alpha8).copy()
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-    painter.drawImage(0, 0, alpha)
+    painter.drawImage(0, 0, _as_alpha(mask))
     painter.end()
 
     out = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)

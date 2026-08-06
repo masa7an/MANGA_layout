@@ -75,6 +75,43 @@ def state(qapp, tmp_path, png_bytes):
 
 
 @pytest.fixture
+def dark_png(qapp) -> bytes:
+    """半分が黒ベタの画像。
+
+    **基準画像（`png_bytes`）にはしきい値より暗い画素が1つも無い**ので、
+    トーンを入れてもマスクが空になり、出た・出ないを見分けられない
+    （tests/test_ui_tone.py が同じ理由で持っているのと同じもの）。
+    """
+    from PySide6.QtGui import QColor, QPainter
+
+    from manga_layout.images import to_png_bytes
+
+    image = QImage(120, 120, QImage.Format.Format_ARGB32)
+    image.fill(QColor("#FFFFFF"))
+    painter = QPainter(image)
+    painter.fillRect(10, 10, 100, 50, QColor("#000000"))
+    painter.end()
+    return to_png_bytes(image)
+
+
+@pytest.fixture
+def with_tone(qapp, tmp_path, dark_png):
+    """黒ベタの絵にトーンを入れた作品（→ 要件定義 6.28 の「トーン範囲」）。"""
+    from manga_layout.tone import default_tone
+
+    editor = EditorState()
+    editor.save(tmp_path / "作品")
+    ref, px = editor.import_bytes(dark_png)
+    with editor.edit("材料") as project:
+        page = project.pages[0]
+        page.size = SMALL_PAGE
+        panel = project.add_panel(page, Rect(20.0, 20.0, 160.0, 140.0))
+        image = project.add_image(panel, ref, Rect(25.0, 25.0, 150.0, 130.0), px)
+        image.tone = default_tone()
+    return editor
+
+
+@pytest.fixture
 def with_focus(state):
     """集中線を入れる。"""
     from manga_layout.focus import default_focus
@@ -409,6 +446,63 @@ class Testレイヤーの持ち方:
             round(page.size.w),
             round(page.size.h),
         )
+
+
+# ---------------------------------------------------------------------------
+# 4-2. トーン範囲（クリスタで貼り直すためのマスク → 要件定義 6.28）
+# ---------------------------------------------------------------------------
+
+
+class Testトーン範囲:
+    """**絵と同じ経路で描いた1枚**であることを確かめる（→ `ToneMasks`）。
+
+    別に描くと、斜めのコマ・回した絵・絞った矩形でマスクだけがずれる。
+    ずれても画面には出ないので、**クリスタで貼ってから気づく**ことになる。
+    """
+
+    def test_トーンを入れると出る(self, with_tone):
+        names = flat_names(page_layers(with_tone, with_tone.project.pages[0], 1.0))
+        assert "トーン範囲" in names
+
+    def test_トーンが無ければ出ない(self, state):
+        names = flat_names(page_layers(state, state.project.pages[0], 1.0))
+        assert "トーン範囲" not in names
+
+    def test_非表示で入る(self, with_tone):
+        """作品の中身ではない（ラフと同じ扱い）。"""
+        page = with_tone.project.pages[0]
+        assert not layer_named(page_layers(with_tone, page, 1.0), "トーン範囲").visible
+
+    def test_絵のすぐ上に入る(self, with_tone):
+        """ここを選んだまま作った新しいレイヤーが、集中線とコマ枠の下に入る。"""
+        items = page_layers(with_tone, with_tone.project.pages[0], 1.0)
+        group = next(x for x in items if isinstance(x, PsdGroup))
+        assert [c.name for c in group.children] == ["絵", "トーン範囲", "コマ枠"]
+
+    def test_合成済みの1枚には出ない(self, with_tone):
+        """非表示なので、**PNG 書き出しと1画素も違わない**まま。"""
+        page = with_tone.project.pages[0]
+        width, height = round(page.size.w), round(page.size.h)
+        layers = page_layers(with_tone, page, 1.0)
+        merged = flatten(layers, width, height)
+        assert max_difference(merged, render_page(with_tone, page, 1.0)) <= 1
+
+    def test_黒ベタの所だけを指す(self, with_tone):
+        """白い所まで指していたら、クリスタで貼るときに使えない。"""
+        page = with_tone.project.pages[0]
+        mask = layer_named(page_layers(with_tone, page, 1.0), "トーン範囲")
+        art = layer_named(page_layers(with_tone, page, 1.0), "絵")
+        assert mask.image.width() < art.image.width(), "ベタは絵の一部"
+        assert mask.image.height() < art.image.height()
+
+    def test_絞ると狭くなる(self, with_tone):
+        """矩形で絞ったぶんは、マスクの側にも効く。"""
+        page = with_tone.project.pages[0]
+        before = layer_named(page_layers(with_tone, page, 1.0), "トーン範囲")
+        with with_tone.edit("範囲を絞る") as project:
+            project.pages[0].panels[0].children[0].tone.area = Rect(0.0, 0.0, 0.3, 1.0)
+        after = layer_named(page_layers(with_tone, page, 1.0), "トーン範囲")
+        assert after.image.width() < before.image.width()
 
 
 # ---------------------------------------------------------------------------

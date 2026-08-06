@@ -17,6 +17,11 @@ from test_ui_balloon import drag, move_to, press, release
 from test_ui_context_menu import folded_labels, labels
 
 from manga_layout import Rect, tone as TN
+from manga_layout.model import (
+    TONE_KIND_GRAY as KIND_GRAY,
+    TONE_KIND_STRIPES as KIND_STRIPES,
+    TONE_KIND_WHITE as KIND_WHITE,
+)
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import (
     TOOL_LABELS,
@@ -301,6 +306,96 @@ def test_絞っていなければ範囲を戻す項目は押せない(window_wit
     window_with_tone.state.set_tone_area(image(window_with_tone).id, Rect(0, 0, 0.5, 0.5))
     window_with_tone._refresh()
     assert menu.clear_area_action.isEnabled()
+
+
+# -- 種類（斜線・灰色・白抜き → 6.27）---------------------------------------
+
+
+def kind_action(window, kind: str):
+    for action, k in window.image_menu.tone.kind_actions:
+        if k == kind:
+            return action
+    raise AssertionError(f"{kind} の項目が無い")
+
+
+def test_入れた直後は斜線(window_with_tone):
+    """灰色・白抜きはクリスタで貼り直す前提の絵なので、出発点にしない。"""
+    assert image(window_with_tone).tone.kind == KIND_STRIPES
+
+
+def test_種類を切り替えられる(window_with_tone):
+    assert window_with_tone.state.set_tone_kind(KIND_GRAY) is True
+    assert image(window_with_tone).tone.kind == KIND_GRAY
+
+
+def test_同じ種類をもう一度押しても何も起きない(window_with_tone):
+    """履歴に積まない（端まで来た増減と同じ扱い）。"""
+    assert window_with_tone.state.set_tone_kind(KIND_STRIPES) is False
+
+
+def test_種類を戻せる(window_with_tone):
+    window_with_tone.state.set_tone_kind(KIND_WHITE)
+    window_with_tone.state.undo()
+    assert image(window_with_tone).tone.kind == KIND_STRIPES
+
+
+def test_今の種類にレ点が付く(window_with_tone):
+    """3つあるので、名前の書き換え（→ 流線の色）では今どれかが読めない。"""
+    window_with_tone._refresh()
+    assert kind_action(window_with_tone, KIND_STRIPES).isChecked()
+    assert not kind_action(window_with_tone, KIND_GRAY).isChecked()
+
+    window_with_tone.state.set_tone_kind(KIND_GRAY)
+    window_with_tone._refresh()
+    assert kind_action(window_with_tone, KIND_GRAY).isChecked()
+    assert not kind_action(window_with_tone, KIND_STRIPES).isChecked()
+
+
+def test_トーンが無ければどれにもレ点が付かない(window_with_image):
+    window_with_image._refresh()
+    assert all(not a.isChecked() for a, _k in window_with_image.image_menu.tone.kind_actions)
+
+
+def test_灰色では斜線だけの項目が押せない(window_with_tone):
+    """押しても絵が変わらない項目を押せるままにしない（→ 6.12）。"""
+    menu = window_with_tone.image_menu.tone
+    window_with_tone.state.set_tone_kind(KIND_GRAY)
+    window_with_tone._refresh()
+    assert all(not a.isEnabled() for a in menu.stripes_actions), "間隔と向き"
+    assert all(a.isEnabled() for a in menu.density_actions), "濃さは灰色でも効く"
+
+
+def test_白抜きでは濃さも押せない(window_with_tone):
+    menu = window_with_tone.image_menu.tone
+    window_with_tone.state.set_tone_kind(KIND_WHITE)
+    window_with_tone._refresh()
+    assert all(not a.isEnabled() for a in menu.density_actions)
+    assert all(not a.isEnabled() for a in menu.stripes_actions)
+
+
+def test_斜線に戻すと効かなかった項目が戻る(window_with_tone):
+    """**値を消していない**ので、調整もそのまま返る。"""
+    menu = window_with_tone.image_menu.tone
+    window_with_tone.state.step_tone_pitch(1)
+    before = image(window_with_tone).tone.pitch
+    window_with_tone.state.set_tone_kind(KIND_WHITE)
+    window_with_tone.state.set_tone_kind(KIND_STRIPES)
+    window_with_tone._refresh()
+    assert all(a.isEnabled() for a in menu.stripes_actions)
+    assert image(window_with_tone).tone.pitch == pytest.approx(before)
+
+
+def test_種類は右クリックにも並ぶ(window_with_tone):
+    """写しているのは同じ QAction なので、レ点も一緒に出る（→ 6.27）。"""
+    window_with_tone.state.set_tone_kind(KIND_GRAY)
+    window_with_tone._refresh()
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    assert {"斜線", "灰色", "白抜き"} <= set(folded_labels(menu, "トーン"))
+
+
+def test_トーンの無い画像では種類も押せない(window_with_image):
+    window_with_image._refresh()
+    assert all(not a.isEnabled() for a, _k in window_with_image.image_menu.tone.kind_actions)
 
 
 # -- Undo -------------------------------------------------------------------

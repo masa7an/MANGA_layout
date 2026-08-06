@@ -21,13 +21,19 @@ import pathlib
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QMenu
 
-from ..model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE
+from ..model import (
+    TAIL_SHAPE_BUBBLES,
+    TAIL_SHAPE_TRIANGLE,
+    TONE_KIND_GRAY,
+    TONE_KIND_STRIPES,
+    TONE_KIND_WHITE,
+)
 from ..recent_project import load_recent_project
 from ..storage import PROJECT_FILENAME
-from ..tone import level_label as tone_level_label
+from ..tone import KIND_LABELS as TONE_KIND_LABELS, level_label as tone_level_label
 from .export import EXPORT_DIRNAME
 from .state import (
     BALLOON_STYLE_LABELS,
@@ -665,26 +671,62 @@ class ToneMenu:
         )
         menu.addSeparator()
 
-        add_level(
-            "濃く", "density", lambda: window.state.step_tone_density(1), "斜線を太くする"
+        # **種類は「濃さ」より前。** 何を敷くかが決まってからでないと、
+        # 濃さや目を触っても効くかどうかが分からない（白抜きではどちらも
+        # 効かない → `refresh`）
+        #
+        # **レ点で示し、名前は書き換えない。** 3つあるので「灰色にする／
+        # 斜線に戻す」の形（→ 流線の色）では今どれなのかが読めない
+        self.kind_group = QActionGroup(window)
+        self.kind_group.setExclusionPolicy(
+            QActionGroup.ExclusionPolicy.ExclusiveOptional
         )
-        add_level(
-            "薄く", "density", lambda: window.state.step_tone_density(-1), "斜線を細くする"
-        )
+        self.kind_actions: list[tuple[QAction, str]] = []
+        for kind, tip in (
+            (TONE_KIND_STRIPES, "白地に黒い斜線を敷く。ネームで「ここはトーン」と読める"),
+            (TONE_KIND_GRAY, "斜線をやめて均一な灰色にする。濃さは「濃く」「薄く」で"),
+            (
+                TONE_KIND_WHITE,
+                "ベタを白く抜く。クリスタで本物のトーンを貼るならこれ"
+                "（PSD の「トーン範囲」から選択範囲を作れる）",
+            ),
+        ):
+            action = add(
+                TONE_KIND_LABELS[kind],
+                lambda _checked=False, k=kind: window.state.set_tone_kind(k),
+                tip,
+            )
+            action.setCheckable(True)
+            self.kind_group.addAction(action)
+            self.kind_actions.append((action, kind))
         menu.addSeparator()
-        add_level(
-            "目を細かく", "pitch", lambda: window.state.step_tone_pitch(-1), "斜線の間隔を狭める"
-        )
-        add_level(
-            "目を粗く", "pitch", lambda: window.state.step_tone_pitch(1), "斜線の間隔を広げる"
-        )
-        # **向きにだけ段数を付けない。** ぐるぐる回るだけで端が無く、
-        # 「あと何回押せるか」に意味が無い（→ 要件定義 6.27）
-        add(
-            "15度回す",
-            lambda: window.state.step_tone_angle(1),
-            "斜線の向きを変える。つまみは無く、ここから回す",
-        )
+
+        # 斜線でしか効かない項目には、下の `refresh` でグレーを掛ける。
+        # 値は消さないので、斜線に戻せば前の調整がそのまま返る
+        self.density_actions = [
+            add_level(
+                "濃く", "density", lambda: window.state.step_tone_density(1), "斜線を太くする（灰色では濃くする）"
+            ),
+            add_level(
+                "薄く", "density", lambda: window.state.step_tone_density(-1), "斜線を細くする（灰色では薄くする）"
+            ),
+        ]
+        menu.addSeparator()
+        self.stripes_actions = [
+            add_level(
+                "目を細かく", "pitch", lambda: window.state.step_tone_pitch(-1), "斜線の間隔を狭める"
+            ),
+            add_level(
+                "目を粗く", "pitch", lambda: window.state.step_tone_pitch(1), "斜線の間隔を広げる"
+            ),
+            # **向きにだけ段数を付けない。** ぐるぐる回るだけで端が無く、
+            # 「あと何回押せるか」に意味が無い（→ 要件定義 6.27）
+            add(
+                "15度回す",
+                lambda: window.state.step_tone_angle(1),
+                "斜線の向きを変える。つまみは無く、ここから回す",
+            ),
+        ]
         menu.addSeparator()
         # **この2つだけキーで連打できる**（`Shift+]` / `Shift+[`）。拾う黒は
         # 絵ごとに違い、行き過ぎたか足りないかを見ながら往復する値なので、
@@ -749,6 +791,16 @@ class ToneMenu:
             action.setEnabled(tone is not None)
         # 絞っていなければ戻す先が無い
         self.clear_area_action.setEnabled(tone is not None and tone.area is not None)
+        # 今の種類にレ点。**トーンが入っていなければどれも付けない**
+        for action, kind in self.kind_actions:
+            action.setChecked(tone is not None and tone.kind == kind)
+        # **効かない項目はグレーにする。** 押しても絵が変わらない項目が
+        # 押せるままだと、変わらない理由を探すことになる（→ 6.12）。
+        # 白抜きは「白く塗る」だけなので、濃さも間隔も向きも効かない
+        for action in self.density_actions:
+            action.setEnabled(tone is not None and tone.kind != TONE_KIND_WHITE)
+        for action in self.stripes_actions:
+            action.setEnabled(tone is not None and tone.kind == TONE_KIND_STRIPES)
         # 今が何段目かを項目名に出す（→ 要件定義 6.27）。**右クリック側にも
         # そのまま出る**——写しているのは同じ QAction そのものだから
         for action, name, field, key in self.level_actions:

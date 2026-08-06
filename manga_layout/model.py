@@ -459,9 +459,24 @@ class FlowLines:
         )
 
 
+# トーンの見た目（要件定義 6.27）。**置き換えた先に何を描くか**だけが違い、
+# どこを置き換えるか（しきい値・細さ・矩形）は3つとも同じ。
+#
+# `gray`（均一な灰色）と `white`（白抜き）は、**クリスタで本物のトーンを
+# 貼る前提の絵**でもある。斜線を敷いたままだと、網点の隙間から下の斜線が
+# 透ける（→ 6.27「マスクをそのまま出す」）。
+#
+# 網点はここに並べない。粒が細かく、画面の縮小表示でも書き出しの縮小でも
+# モアレが出る（→ 6.27）。
+TONE_KIND_STRIPES = "stripes"
+TONE_KIND_GRAY = "gray"
+TONE_KIND_WHITE = "white"
+TONE_KINDS = (TONE_KIND_STRIPES, TONE_KIND_GRAY, TONE_KIND_WHITE)
+
+
 @dataclass
 class Tone:
-    """画像の暗い所を斜線に置き換える設定（要件定義 10.1）。
+    """画像の暗い所を斜線・灰色・白に置き換える設定（要件定義 6.27）。
 
     **画像の属性として1つだけ持つ。** コマではなく画像に付けるのは、
     「この絵だけ黒ベタのまま残したい」が普通にあるため。
@@ -484,17 +499,27 @@ class Tone:
     density: float
     thin: float
     area: Rect | None = None
+    # 見た目（`TONE_KINDS`）。**斜線以外では `angle` と `pitch` が効かないが、
+    # 値は捨てずに持ち続ける。** 捨てると、斜線に戻したときに調整が消える
+    kind: str = TONE_KIND_STRIPES
 
     def key(self) -> tuple:
         """焼いた1枚を覚えておくときの鍵。**同じ設定なら同じ鍵になる。**
 
         `area` は `Rect` が dataclass なので、そのままでは辞書の鍵に
         できない。組にして畳んでおく。
+
+        **`kind` も混ぜる。** 混ぜずにいると、種類を切り替えても前の1枚が
+        引かれて絵が変わらない。効かない値（灰色のときの `angle`）まで
+        鍵に残るが、覚え直しが1枚増えるだけで害は無い。
         """
         area = None if self.area is None else (
             self.area.x, self.area.y, self.area.w, self.area.h
         )
-        return (self.threshold, self.angle, self.pitch, self.density, self.thin, area)
+        return (
+            self.threshold, self.angle, self.pitch, self.density, self.thin, area,
+            self.kind,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
@@ -503,6 +528,9 @@ class Tone:
             "pitch": self.pitch,
             "density": self.density,
             "thin": self.thin,
+            # **省かない。** 省いてよいのは「無い」に意味がある `area` だけで、
+            # 種類は必ず1つ決まっている
+            "kind": self.kind,
         }
         if self.area is not None:
             data["area"] = self.area.to_dict()
@@ -517,6 +545,9 @@ class Tone:
 
         `area` は**はみ出していても弾かない**。0〜1 の外は絵が無いだけで
         破綻せず、画像の縁で自然に切れる（要件定義 10.1）。
+
+        `kind` を省いたファイルは**斜線**として読む。種類を足す前に保存した
+        作品がそのまま開ける（セリフの `direction` と同じ扱い）。
         """
         d = v.req_mapping(data, where)
         threshold = v.integer(d, "threshold", where)
@@ -538,6 +569,7 @@ class Tone:
             density=v.number(d, "density", where),
             thin=v.number(d, "thin", where),
             area=None if area is None else Rect.from_dict(area, f"{where}.area"),
+            kind=v.choice(d, "kind", where, TONE_KINDS, TONE_KIND_STRIPES),
         )
 
 

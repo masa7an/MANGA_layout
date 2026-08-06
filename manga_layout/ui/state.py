@@ -85,6 +85,7 @@ from ..storage import (
 )
 from ..tone import (
     ANGLE_STEP as TONE_ANGLE_STEP,
+    KIND_LABELS as TONE_KIND_LABELS,
     default_tone,
     level_label as tone_level_label,
     stepped_density as tone_stepped_density,
@@ -1362,6 +1363,27 @@ class EditorState(QObject):
                 + ("（細さで選り分けない）" if v <= 0.0 else "")
             ),
         )
+
+    def set_tone_kind(self, kind: str) -> bool:
+        """トーンの見た目（斜線・灰色・白抜き）を切り替える。変わったら True。
+
+        **効かなくなる値を消さない。** 灰色にすると `angle` と `pitch` は
+        絵に出なくなるが、持ったままにしておけば斜線へ戻したときに前の
+        調整がそのまま返る（メニュー側はグレーにして「今は効かない」と
+        示す → `ToneMenu.refresh`）。
+
+        **連打をまとめない。** 3つを行き来して見比べる操作なので、1手ずつ
+        積んで Undo で1つずつ戻れるほうがよい（増減の連打とは別 → `_step_tone`）。
+        """
+        image = self.tone_image
+        if image is None or image.tone is None or image.tone.kind == kind:
+            return False
+
+        image_id = image.id
+        with self._edit_tone(image_id, "トーンの種類") as target:
+            target.tone.kind = kind
+        self.message.emit(f"トーンの種類: {TONE_KIND_LABELS[kind]}")
+        return True
 
     def step_tone_angle(self, steps: int) -> bool:
         """斜線の向きを 15 度ずつ回す。**つまみは作らない**（→ 要件定義 10.1）。"""

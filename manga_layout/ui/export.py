@@ -245,10 +245,15 @@ class FullImages:
         ref = image.asset
         tone = getattr(image, "tone", None)
         if tone is None:
-            return self._raw(ref)
-        return self._toned.get(ref, tone, lambda: self._raw(ref))
+            return self.base(ref)
+        return self._toned.get(ref, tone, lambda: self.base(ref))
 
-    def _raw(self, ref: str) -> Preview | None:
+    def base(self, ref: str) -> Preview | None:
+        """トーンを焼く前の1枚。
+
+        **PSD の「トーン範囲」（→ `psd_export.ToneMasks`）も同じ入れ物から
+        引く。** 別に持つと、同じ絵を1ページで2回展開することになる。
+        """
         return self._cache.get(ref, lambda: self.state.read_asset(ref))
 
 

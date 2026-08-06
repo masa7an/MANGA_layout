@@ -7,7 +7,7 @@
 ## 構成（下が奥）
 
     セリフ / マーク / フキダシ
-    [フォルダ] コマN ── 絵・集中線と流線・コマ枠
+    [フォルダ] コマN ── 絵・トーン範囲（非表示）・集中線と流線・コマ枠
       …（コマの数だけ）
     ラフ / 用紙
 
@@ -31,6 +31,19 @@
 フキダシ・マーク・セリフは**これまでどおり種類ごと1枚**。ページ直下に
 あってコマの子ではない（→ 4章）ので、コマに紐づけようがない。
 
+## トーンの範囲は、絵のすぐ上に非表示で入れる（要件定義 6.28）
+
+クリスタのトーンは種類がはるかに多く、こだわるなら結局そちらで貼り直す
+ことになる。**貼る場所を手で選び直さずに済むよう、マスクをそのまま
+1枚のレイヤーとして渡す**（→ `ToneMasks`）。「レイヤーから選択範囲」で
+そのまま選択範囲にできる。
+
+- **非表示。** 作品の中身ではない（ラフと同じ扱い）。合成済みの1枚には
+  入らないので、**PNG 書き出しと1画素も違わない**まま
+- **絵のすぐ上。** ここを選んだまま新しいレイヤーを作れば、集中線とコマ枠の
+  **下**に入る。一番上に置くと、貼ったトーンが枠線を覆う
+- トーンの入った絵が1枚も無いコマには出さない（下の「中身の無いレイヤー」）
+
 ## 中身の無いレイヤー・フォルダは出さない
 
 フキダシを1つも置いていないページに空の「フキダシ」レイヤーを残しても、
@@ -52,6 +65,7 @@ from PySide6.QtGui import QImage, QPainter, QPainterPath, QPainterPathStroker
 from ..images import ImageCache, Preview, full_from_bytes, full_rough_from_bytes
 from ..model import BalloonObject, Page, Panel, StickerObject, TextObject
 from ..psd import PsdGroup, PsdLayer, crop_to_content, write_psd
+from ..tone import mask_silhouette
 from .export import (
     DEFAULT_SCALE,
     FullImages,
@@ -66,6 +80,7 @@ from .render import PageRenderer, polygon_of
 PAPER = ("用紙", "paper")
 ROUGH = ("ラフ", "rough")
 ART = ("絵", "art")
+TONE_MASK = ("トーン範囲", "tonemask")
 EFFECTS = ("集中線・流線", "effects")
 FRAMES = ("コマ枠", "frames")
 BALLOONS = ("フキダシ", "balloons")
@@ -94,6 +109,48 @@ class FullRoughs:
     def __call__(self, ref: str, faded: bool) -> Preview | None:
         cache = self._blue if faded else self._plain
         return cache.get(ref, lambda: self.state.read_asset(ref))
+
+
+class ToneMasks:
+    """トーンにする所だけを黒く塗った1枚を返す置き場（→ 要件定義 6.28）。
+
+    **`PageRenderer` の画像を引く経路をそのまま差し替える。** こうすると
+    コマの形での切り抜き・画像の位置・回転が絵と完全に同じになる。
+    別に描くと、斜めのコマや回した絵でマスクだけがずれる。
+
+    **トーンの入っていない絵には `None` を返す。** 描く側は「その場所に
+    何も描かない」で進む（`aids=False` なので欠けた画像の目印も出ない）。
+    ページのどのコマにもトーンが無ければ、レイヤーごと出ない。
+
+    絵は `FullImages` と**同じ入れ物から引く**（`base`）。原寸から焼くのは
+    トーンを焼き直すのと同じ理由——縮小版から作ったマスクを引き伸ばすと、
+    縁が階段状になったまま貼ることになる。
+    """
+
+    def __init__(self, images: FullImages) -> None:
+        self._images = images
+        self._masks: dict[tuple[str, tuple], Preview] = {}
+
+    def __call__(self, image) -> Preview | None:
+        tone = getattr(image, "tone", None)
+        if tone is None:
+            return None
+        ref = image.asset
+        key = (ref, tone.key())
+        found = self._masks.get(key)
+        if found is not None:
+            return found
+
+        source = self._images.base(ref)
+        if source is None:
+            return None
+        made = Preview(
+            image=mask_silhouette(source.image, tone), source_px=source.source_px
+        )
+        # **上限を持たない**（`ToneCache` と違う）。1ページ書き出すあいだ
+        # だけの入れ物で、鍵は貼ってある絵の数で頭打ちになる
+        self._masks[key] = made
+        return made
 
 
 def reading_order(panels: list[Panel], gutter: float) -> list[Panel]:
@@ -165,7 +222,11 @@ def page_layers(
     同じ絵を何度も展開し直すことになる（同じ画像を2コマで使える）。
     """
     width, height = checked_page_px(page, scale)
-    renderer = PageRenderer(state, FullImages(state), aids=False)
+    images = FullImages(state)
+    renderer = PageRenderer(state, images, aids=False)
+    # トーンの範囲だけを描く写し。**描く手順は同じで、引く絵だけが違う**
+    # （→ `ToneMasks`）
+    masks = PageRenderer(state, ToneMasks(images), aids=False)
     roughs = FullRoughs(state)
 
     def build(label, draw, visible: bool = True) -> PsdLayer | None:
@@ -181,7 +242,9 @@ def page_layers(
     ordered = reading_order(page.panels, state.settings.gutter)
     numbers = {panel.id: i + 1 for i, panel in enumerate(ordered)}
     for panel in _stacking(page, ordered):
-        items.append(_panel_group(renderer, page, panel, numbers[panel.id], build))
+        items.append(
+            _panel_group(renderer, masks, page, panel, numbers[panel.id], build)
+        )
 
     items += [
         build(BALLOONS, lambda p: renderer.draw_floating(p, page, kinds=(BalloonObject,))),
@@ -210,23 +273,31 @@ def _stacking(page: Page, ordered: list[Panel]) -> list[Panel]:
 
 
 def _panel_group(
-    renderer: PageRenderer, page: Page, panel: Panel, number: int, build
+    renderer: PageRenderer, masks: PageRenderer, page: Page, panel: Panel,
+    number: int, build
 ) -> PsdGroup | None:
     """コマ1つぶんのフォルダ。中身が1つも無ければ None。
 
-    中身は**奥から手前**（絵 → 集中線・流線 → コマ枠）。`draw_panel` が
-    描く順そのままで、ここでも独自の順は持たない。
+    中身は**奥から手前**（絵 → トーン範囲 → 集中線・流線 → コマ枠）。
+    `draw_panel` が描く順そのままで、ここでも独自の順は持たない。
+
+    **トーン範囲だけが非表示**で、しかも絵と同じ「中身」を別の絵で描いた
+    もの（→ `ToneMasks`）。置き場所を絵のすぐ上にした理由はモジュールの
+    冒頭にある。
     """
+    art = {"contents": True, "effects": False, "border": False}
     plan = [
-        (ART, {"contents": True, "effects": False, "border": False}),
-        (EFFECTS, {"contents": False, "effects": True, "border": False}),
-        (FRAMES, {"contents": False, "effects": False, "border": True}),
+        (ART, renderer, art, True),
+        (TONE_MASK, masks, art, False),
+        (EFFECTS, renderer, {"contents": False, "effects": True, "border": False}, True),
+        (FRAMES, renderer, {"contents": False, "effects": False, "border": True}, True),
     ]
     children = []
-    for label, parts in plan:
+    for label, draws, parts, visible in plan:
         layer = build(
             label,
-            lambda p, parts=parts: renderer.draw_panel(p, page, panel, **parts),
+            lambda p, draws=draws, parts=parts: draws.draw_panel(p, page, panel, **parts),
+            visible,
         )
         if layer is not None:
             children.append(layer)
