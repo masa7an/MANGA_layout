@@ -31,7 +31,7 @@ from typing import Any
 
 from . import validation as v
 from .errors import ProjectFormatError, UnsupportedVersionError
-from .geometry import Polygon, Rect, Size
+from .geometry import Polygon, Rect, Size, normalize_angle
 
 # 2 で単位を mm から px に変えた（要件定義 3章）。version 1 の作品は
 # 読み込み時に換算する（`_scale_lengths`）
@@ -375,6 +375,90 @@ class FocusLines:
         )
 
 
+# 本数として読んでよい範囲。集中線と同じ値だが**定数は別に持つ**。
+# 片方の上限を変えたときに、もう片方まで巻き添えで変わらないようにする
+FLOW_COUNT_MIN = 4
+FLOW_COUNT_MAX = 400
+
+
+@dataclass
+class FlowLines:
+    """流線（要件定義 6.26）。**コマの属性として1つだけ持つ。**
+
+    `FocusLines`（集中線）とは**別の項目**で、混ぜない。集中線にしか無い
+    `center` / `hole` と、流線にしか無い `angle` / `length` が1つの型に
+    同居すると、**どの組み合わせが正しいのかを型が語れなくなる**。
+
+    集中線と同じく `id` も `z` も矩形も持たず、**常にコマいっぱいに
+    広がる**。長さも1つも絶対値で持たない（`width` は短辺、`length` は
+    対角線に対する割合）。
+
+    `angle` は線の向き（度）。0 が水平・右向きで、`-180`〜`180` に畳んで
+    持つ（画像の `rotation` と同じ → `geometry.normalize_angle`）。
+
+    `seed` は形のばらつきを決める数字。**保存しないと開くたびに形が変わり**、
+    書き出した PNG と画面が食い違う。形を作る側は `random` を使わず自前の
+    擬似乱数を回す（→ `manga_layout.noise`）。
+
+    **既定値を持たせていない。** 出発点の値は `FlowSettings` にあり、
+    2か所に持つと片方だけ古くなる。作るときは `flow.default_flow()` を通す。
+    """
+
+    angle: float
+    count: int
+    width: float
+    length: float
+    seed: int
+    white: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "angle": self.angle,
+            "count": self.count,
+            "width": self.width,
+            "length": self.length,
+            "seed": self.seed,
+        }
+        if self.white:
+            data["white"] = True
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Any, where: str) -> FlowLines:
+        """**範囲外は切り詰めずに弾く。** 理由は `FocusLines` と同じ。
+
+        ただし `angle` だけは弾かずに畳む。角度は周期的な量なので、
+        範囲外を弾くと -10 度のような正しい値まで読めなくなる。畳む操作は
+        何度かけても結果が変わらないので、書き出した値と読み戻した値が
+        食い違うこともない（要件定義 6.26）。
+        """
+        d = v.req_mapping(data, where)
+        width = v.number(d, "width", where)
+        length = v.number(d, "length", where)
+        count = v.integer(d, "count", where)
+        seed = v.integer(d, "seed", where)
+        if not 0.0 <= width <= 1.0:
+            raise ProjectFormatError(f"{where}.width: 0.0〜1.0 の範囲外です（{width}）")
+        if not 0.0 <= length <= 1.0:
+            raise ProjectFormatError(
+                f"{where}.length: 0.0〜1.0 の範囲外です（{length}）"
+            )
+        if not FLOW_COUNT_MIN <= count <= FLOW_COUNT_MAX:
+            raise ProjectFormatError(
+                f"{where}.count: {FLOW_COUNT_MIN}〜{FLOW_COUNT_MAX} の範囲外です（{count}）"
+            )
+        if seed < 0:
+            raise ProjectFormatError(f"{where}.seed: 0 以上が必要です（{seed}）")
+        return cls(
+            angle=normalize_angle(v.number(d, "angle", where, 0.0)),
+            count=count,
+            width=width,
+            length=length,
+            seed=seed,
+            white=v.flag(d, "white", where, False),
+        )
+
+
 # --------------------------------------------------------------------------
 # 配置オブジェクト
 # --------------------------------------------------------------------------
@@ -452,6 +536,8 @@ class Panel(SceneObject):
     children: list[ImageObject] = field(default_factory=list)
     # 集中線（→ 6.16）。**コマに1つだけ。** 入れていなければ None
     focus_lines: FocusLines | None = None
+    # 流線（→ 6.26）。集中線と**別の項目**。こちらもコマに1つだけ
+    flow_lines: FlowLines | None = None
     # 位置ロック（→ 6.17）。誤って動かさないためのもの。既定は False
     locked: bool = False
 
@@ -473,6 +559,9 @@ class Panel(SceneObject):
         # project.json が、この機能の追加前と同じ内容のままになる
         if self.focus_lines is not None:
             data["focus_lines"] = self.focus_lines.to_dict()
+        # 流線も同じ。**集中線とは別の項目**にしてある（→ 6.26）
+        if self.flow_lines is not None:
+            data["flow_lines"] = self.flow_lines.to_dict()
         # ロックしていない（False）コマでは項目ごと省く。理由は集中線と同じ
         if self.locked:
             data["locked"] = True
@@ -498,6 +587,12 @@ class Panel(SceneObject):
             focus_lines=(
                 FocusLines.from_dict(d["focus_lines"], f"{where}.focus_lines")
                 if d.get("focus_lines") is not None
+                else None
+            ),
+            # 項目が無い＝流線なし。この機能より前の作品がそのまま開ける
+            flow_lines=(
+                FlowLines.from_dict(d["flow_lines"], f"{where}.flow_lines")
+                if d.get("flow_lines") is not None
                 else None
             ),
             # 項目が無い＝ロックなし。この機能より前の作品がそのまま開ける
@@ -1314,10 +1409,10 @@ class Project:
         return copy
 
     def _duplicate_panel(self, page: Page, panel: Panel, dx: float, dy: float) -> Panel:
-        """コマを写す。中の画像も一緒に写り、集中線もそのまま乗る。
+        """コマを写す。中の画像も一緒に写り、集中線・流線もそのまま乗る。
 
-        集中線は長さを1つも持たない（中心も空きも割合 → 6.16）ので、
-        ずらしても直すところが無い。
+        どちらも長さを1つも持たない（集中線は中心も空きも割合 → 6.16、
+        流線は向きと割合だけ → 6.26）ので、ずらしても直すところが無い。
 
         **写しはロックしない**（→ 6.17 の「新しく作ったコマはロックしない」）。
         置き場所を決めるために作ったものなので、いきなり動かせないと
@@ -1476,8 +1571,8 @@ class Project:
         **割合と角度には触らない。** `SlantPair.ratio`（0〜1）、
         `Tail.root_y`（-1〜1）、`angle`（度）、`opacity` は単位を持たないので、
         掛けると意味が壊れる。`src_px` も元画像の実寸なので対象外。
-        **`FocusLines` は1つも長さを持たない**ので、まるごと対象外
-        （→ 6.16 で長さを持たせなかったことが、ここでも効いている）。
+        **`FocusLines` も `FlowLines` も1つも長さを持たない**ので、まるごと
+        対象外（→ 6.16、6.26 で長さを持たせなかったことが、ここでも効いている）。
         """
         self.default_page_size = self.default_page_size.scaled(factor)
         for page in self.pages:

@@ -15,6 +15,13 @@ from collections.abc import Iterator
 from PySide6.QtCore import QObject, Signal
 
 from ..assets import AssetStore, PendingAssets
+from ..flow import (
+    DEFAULT_FLOW_SETTINGS,
+    default_flow,
+    stepped_count as flow_stepped_count,
+    stepped_length as flow_stepped_length,
+    stepped_width as flow_stepped_width,
+)
 from ..focus import (
     DEFAULT_FOCUS_SETTINGS,
     default_focus,
@@ -48,6 +55,7 @@ from ..model import (
     TAIL_SHAPE_BUBBLES,
     TAIL_SHAPE_TRIANGLE,
     BalloonObject,
+    FlowLines,
     FocusLines,
     ImageObject,
     Page,
@@ -225,6 +233,7 @@ class EditorState(QObject):
         self.settings = LayoutSettings()
         self.balloon_settings = BalloonSettings()
         self.focus_settings = DEFAULT_FOCUS_SETTINGS
+        self.flow_settings = DEFAULT_FLOW_SETTINGS
         self._page_index = 0
         self._tool = TOOL_SELECT
         self._selected_id: str | None = None
@@ -1009,6 +1018,133 @@ class EditorState(QObject):
         panel_id = panel.id
         with self._edit_focus(panel_id, "集中線の色") as target:
             target.focus_lines.white = not target.focus_lines.white
+        return True
+
+    # -- 流線 --------------------------------------------------------------
+    #
+    # 集中線と同じく、独立したオブジェクトではなくコマの属性
+    # （→ 要件定義 6.26）。選択・削除・複製の経路には出てこない。
+    #
+    # **集中線の操作と1つにまとめていない。** 値の名前だけでなく、決まる
+    # ものが違う（中心と空き ⇄ 向きと長さ）ので、まとめると分岐だらけの
+    # 1本になる。`_step_flow` だけは形が同じなので、そちらでまとめてある。
+
+    @property
+    def selected_flow(self) -> FlowLines | None:
+        """選択中のコマに入っている流線。無ければ None。"""
+        panel = self.selected_panel
+        return None if panel is None else panel.flow_lines
+
+    def _edit_flow(self, panel_id: str, label: str):
+        """id で引き直してから触るための小さな入れ物（`_edit_focus` と同じ）。"""
+
+        @contextlib.contextmanager
+        def scope():
+            with self.edit_page(label) as page:
+                target = page.find(panel_id)
+                if not isinstance(target, Panel) or target.flow_lines is None:
+                    raise KeyError(f"流線の入ったコマが見つかりません: {panel_id}")
+                yield target
+
+        return scope()
+
+    def add_flow_lines(self) -> bool:
+        """選択中のコマに流線を入れる。入れたら True。
+
+        **1コマに1つまで。** 集中線が入っていても構わない（別の項目なので
+        両方持てる → 要件定義 6.26）。
+        """
+        panel = self.selected_panel
+        if panel is None:
+            self.message.emit("流線を入れるコマを選んでください")
+            return False
+        if panel.flow_lines is not None:
+            return False
+
+        panel_id = panel.id
+        with self.edit_page("流線を入れる") as page:
+            page.panel(panel_id).flow_lines = default_flow(self.flow_settings)
+        self.message.emit("流線を入れました。丸のつまみをドラッグすると向きが変わります")
+        return True
+
+    def remove_flow_lines(self) -> bool:
+        """選択中のコマから流線を消す。消したら True。"""
+        panel = self.selected_panel
+        if panel is None or panel.flow_lines is None:
+            return False
+
+        panel_id = panel.id
+        with self.edit_page("流線を消す") as page:
+            page.panel(panel_id).flow_lines = None
+        return True
+
+    def set_flow_angle(self, panel_id: str, angle: float) -> None:
+        """向きを差し替える。1回のドラッグで1手（集中線の中心と同じ流儀）。"""
+        with self._edit_flow(panel_id, "流線の向き") as panel:
+            panel.flow_lines.angle = angle
+
+    def step_flow_count(self, steps: int) -> bool:
+        """線の本数を増減する。変わったら True。"""
+        return self._step_flow(
+            "count", flow_stepped_count, steps, lambda n: f"流線: {n} 本"
+        )
+
+    def step_flow_width(self, steps: int) -> bool:
+        """線の太さを増減する。変わったら True。"""
+        return self._step_flow(
+            "width",
+            flow_stepped_width,
+            steps,
+            lambda w: f"流線の太さ: {w * 100:.1f}%（コマの短辺に対する割合）",
+        )
+
+    def step_flow_length(self, steps: int) -> bool:
+        """線の長さを増減する。変わったら True。"""
+        return self._step_flow(
+            "length",
+            flow_stepped_length,
+            steps,
+            lambda v: f"流線の長さ: コマの対角線の {v * 100:.0f}%",
+        )
+
+    def _step_flow(self, field: str, step, steps: int, label) -> bool:
+        """本数・太さ・長さの増減は、値の名前と刻み方だけが違う
+        （→ `_step_focus`）。
+        """
+        panel = self.selected_panel
+        if panel is None or panel.flow_lines is None:
+            return False
+        value = step(getattr(panel.flow_lines, field), steps)
+        if value == getattr(panel.flow_lines, field):
+            # 端まで来ている。**履歴に積まない**（→ `_step_focus`）
+            return False
+
+        panel_id = panel.id
+        with self._edit_flow(panel_id, "流線の調整") as target:
+            setattr(target.flow_lines, field, value)
+        self.message.emit(label(value))
+        return True
+
+    def reseed_flow(self) -> bool:
+        """ばらつきだけを作り直す。向き・本数・太さ・長さは変えない。"""
+        panel = self.selected_panel
+        if panel is None or panel.flow_lines is None:
+            return False
+
+        panel_id = panel.id
+        with self._edit_flow(panel_id, "流線の形を振り直す") as target:
+            target.flow_lines.seed = new_seed()
+        return True
+
+    def toggle_flow_color(self) -> bool:
+        """線の色を黒⇄白で切り替える（集中線と同じ形 → 6.19）。"""
+        panel = self.selected_panel
+        if panel is None or panel.flow_lines is None:
+            return False
+
+        panel_id = panel.id
+        with self._edit_flow(panel_id, "流線の色") as target:
+            target.flow_lines.white = not target.flow_lines.white
         return True
 
     # -- 吹き出し ----------------------------------------------------------

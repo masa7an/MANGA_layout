@@ -146,8 +146,9 @@ class MainWindow(QMainWindow):
         self.file_menu = FileMenu(self)
         self.edit_menu = EditMenu(self)
         self.panel_menu = PanelMenu(self)
-        # 平らな別名。右クリックとテストが「集中線」を直に指すときに使う
+        # 平らな別名。右クリックとテストが「集中線」「流線」を直に指すときに使う
         self.focus_menu = self.panel_menu.focus
+        self.flow_menu = self.panel_menu.flow
         self.image_menu = ImageMenu(self)
         self.balloon_menu = BalloonMenu(self)
         self.sticker_menu = StickerMenu(self)
@@ -162,7 +163,7 @@ class MainWindow(QMainWindow):
         self._menus = [
             self.file_menu,  # ラフの項目のぶん（→ 6.23）
             self.edit_menu,
-            self.panel_menu,  # 集中線（focus_menu）のぶんも面倒を見る
+            self.panel_menu,  # 集中線・流線（focus_menu / flow_menu）のぶんも面倒を見る
             self.image_menu,
             self.balloon_menu,
             self.sticker_menu,
@@ -420,12 +421,15 @@ class MainWindow(QMainWindow):
             b = panel.shape.bounds()
             count = len(panel.children)
             inside = f" / 画像 {count} 枚" if count else ""
-            # 集中線はつまみ以外に見分ける手がかりが無いので、本数を添える
+            # 集中線・流線はつまみ以外に見分ける手がかりが無いので、本数を
+            # 添える。流線は向きも出す（つまみの位置だけでは角度が読めない）
             lines = (
                 f" / 集中線 {panel.focus_lines.count} 本"
                 if panel.focus_lines is not None
                 else ""
             )
+            if panel.flow_lines is not None:
+                lines += f" / 流線 {panel.flow_lines.count} 本 {panel.flow_lines.angle:.0f}°"
             # ロック中は見た目を変えないので、気づける手がかりはここだけ
             # （つまみを出さないのと合わせて → 要件定義 6.17）
             locked = " / ロック中" if self.state.is_locked_selection else ""
@@ -592,6 +596,24 @@ class MainWindow(QMainWindow):
             focus = self.state.selected_focus
             color = "白" if focus is not None and focus.white else "黒"
             self.state.message.emit(f"集中線の色: {color}")
+
+    def toggle_flow_lines(self) -> None:
+        """選んだコマの流線を入れる／消す（要件定義 6.26）。
+
+        集中線と同じ形。**両方入れても構わない**（別の項目なので、
+        止めるほうがコードが増える → 6.26）。
+        """
+        if self.state.selected_flow is None:
+            self.state.add_flow_lines()
+        elif self.state.remove_flow_lines():
+            self.state.message.emit("流線を消しました")
+
+    def toggle_flow_color(self) -> None:
+        """選んだコマの流線の色を黒⇄白で切り替える（要件定義 6.26）。"""
+        if self.state.toggle_flow_color():
+            flow = self.state.selected_flow
+            color = "白" if flow is not None and flow.white else "黒"
+            self.state.message.emit(f"流線の色: {color}")
 
     def delete_image(self, image_id: str | None = None) -> None:
         """画像だけ消す。入っていたコマは残り、そのコマを選び直す。

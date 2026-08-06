@@ -191,6 +191,7 @@ class ContextMenu:
             # 各部品の `refresh()` が1か所で面倒を見たままになる（→ 6.12）。
             # ここで作り直すと、メニューバー側が古い項目を持ったまま残る
             self._copy_actions(menu.addMenu("集中線"), window.focus_menu.copy_items)
+            self._copy_actions(menu.addMenu("流線"), window.flow_menu.copy_items)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()

@@ -310,7 +310,7 @@ class EditMenu:
 
 
 class PanelMenu:
-    """コマのメニュー。割る道具・斜めの反転・ロック・集中線（畳み）。"""
+    """コマのメニュー。割る道具・斜めの反転・ロック・集中線／流線（畳み）。"""
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
@@ -372,6 +372,7 @@ class PanelMenu:
         menu.addAction(self.unlock_all_action)
         menu.addSeparator()
         self.focus = FocusMenu(window, menu)
+        self.flow = FlowMenu(window, menu)
 
     def refresh(self) -> None:
         self.slant_flip_action.setEnabled(self._state.selected_slant_pair is not None)
@@ -400,6 +401,7 @@ class PanelMenu:
         self.unlock_all_action.setEnabled(any(p.locked for p in page_panels))
 
         self.focus.refresh()
+        self.flow.refresh()
 
 
 class FocusMenu:
@@ -470,6 +472,74 @@ class FocusMenu:
             action.setEnabled(focus is not None)
         if focus is not None:
             self.color_action.setText("黒に戻す" if focus.white else "白にする")
+
+
+class FlowMenu:
+    """流線のメニュー（要件定義 6.26）。**集中線と同じ形で畳む。**
+
+    コマのメニューの下に畳みが2つ並ぶことになるが、どちらも入れていない
+    コマでは「入れる」1つしか使えないので、開いたときに読む字数は増えない
+    （→ 6.16、6.12）。
+
+    **「向きを 15 度回す」の項目は作らない。** 丸のつまみで足りるうえ、
+    項目が2つ増えて読む字数が増える。**キーも1つも割り当てない**
+    （→ 7章。集中線と同じ）。
+    """
+
+    def __init__(self, window: MainWindow, parent_menu: QMenu) -> None:
+        self._state = window.state
+        menu = QMenu("流線", window)
+        self.toggle_action = window._act(
+            "入れる",
+            window.toggle_flow_lines,
+            None,
+            "選んだコマに平行な効果線を引く。向きはあとから変えられる",
+        )
+        menu.addAction(self.toggle_action)
+        menu.addSeparator()
+
+        # ここから下は流線の入ったコマにだけ効く
+        self.actions: list[QAction] = []
+
+        def add(label: str, slot, tip: str = "") -> QAction:
+            action = window._act(label, slot, None, tip)
+            menu.addAction(action)
+            self.actions.append(action)
+            return action
+
+        add("線を増やす", lambda: window.state.step_flow_count(1))
+        add("線を減らす", lambda: window.state.step_flow_count(-1))
+        menu.addSeparator()
+        add("線を太く", lambda: window.state.step_flow_width(1))
+        add("線を細く", lambda: window.state.step_flow_width(-1))
+        menu.addSeparator()
+        add("線を長く", lambda: window.state.step_flow_length(1))
+        add("線を短く", lambda: window.state.step_flow_length(-1))
+        menu.addSeparator()
+        self.color_action = add(
+            "白にする",
+            window.toggle_flow_color,
+            "線の色を黒と白で切り替える。暗いコマの上で使う",
+        )
+        menu.addSeparator()
+        add(
+            "形を振り直す",
+            window.state.reseed_flow,
+            "向き・本数・太さ・長さはそのままで、線のばらつきだけを作り直す",
+        )
+
+        # 右クリックのメニューが写して使う（→ `items_to_copy`）
+        self.copy_items = items_to_copy(menu, window._tool_actions.values())
+        parent_menu.addMenu(menu)
+
+    def refresh(self) -> None:
+        flow = self._state.selected_flow
+        self.toggle_action.setEnabled(self._state.selected_panel is not None)
+        self.toggle_action.setText("消す" if flow is not None else "入れる")
+        for action in self.actions:
+            action.setEnabled(flow is not None)
+        if flow is not None:
+            self.color_action.setText("黒に戻す" if flow.white else "白にする")
 
 
 class ImageMenu:

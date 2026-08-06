@@ -38,6 +38,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import MangaLayoutError
+from ..flow import (
+    angle_at as flow_angle_at,
+    handle_point as flow_handle_point,
+)
 from ..focus import (
     center_at as focus_center_at,
     center_point as focus_center_point,
@@ -79,6 +83,7 @@ from ..layout import (
 from ..model import (
     SLANT_RIGHT,
     BalloonObject,
+    FlowLines,
     FocusLines,
     ImageObject,
     Panel,
@@ -173,6 +178,10 @@ FOCUS_CENTER_HANDLE_PX = 18.0
 # 集中線の内側の空き（四角）を掴める範囲（ピクセル）。
 # 左右にしか動かないので、しっぽの付け根と同じくらい広く取る
 FOCUS_HOLE_HANDLE_PX = 16.0
+# 流線の向き（丸）を掴める範囲（ピクセル）。画像の回転つまみ
+# （`ROTATE_HANDLE_HIT_PX`）と揃える。**同じ丸で同じ操作**なので、
+# 掴み心地まで揃えておく（→ 要件定義 6.26）
+FLOW_ANGLE_HANDLE_PX = 16.0
 
 # これ以下の大きさで離した場合、ドラッグではなくクリックとみなして
 # 既定の大きさのコマを置く
@@ -313,6 +322,7 @@ class Drag:
     slant_preview: tuple[str, float] | None = None
     rotate_preview: tuple[str, float] | None = None
     focus_preview: tuple[str, FocusLines] | None = None
+    flow_preview: tuple[str, FlowLines] | None = None
 
     def update(self, view: PageView, x: float, y: float, event) -> None:
         raise NotImplementedError
@@ -611,6 +621,40 @@ class FocusDrag(Drag):
         view._apply_focus(panel_id, focus, self.kind)
 
 
+class FlowDrag(Drag):
+    """流線の向きのつまみ（丸）。**Shift を押している間は15度刻み。**
+
+    刻み方も刻み幅も画像の回転（`RotateDrag`）と同じにしてある。同じ形の
+    つまみで同じ操作なので、片方だけ違うと覚え直しが要る（→ 要件定義 6.26）。
+
+    掴んだ点とつまみの位置がずれていても構わない。**距離は使わず向きだけ
+    見る**ので、押した瞬間に線が飛ぶことがない。
+    """
+
+    def __init__(self, panel_id: str, flow: FlowLines):
+        self.panel_id = panel_id
+        self.flow_preview = (panel_id, flow)
+
+    @classmethod
+    def begin(cls, view: PageView) -> FlowDrag:
+        panel, flow = view._scene.flow_of_selection()
+        return cls(panel.id, dataclasses.replace(flow))
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        panel = view.state.selected_panel
+        if panel is None:
+            return
+        angle = flow_angle_at(panel.bounds(), x, y)
+        if view._shift_held(event):
+            angle = normalize_angle(round(angle / ROTATE_STEP_DEG) * ROTATE_STEP_DEG)
+        _, flow = self.flow_preview
+        self.flow_preview = (self.panel_id, dataclasses.replace(flow, angle=angle))
+
+    def commit(self, view: PageView) -> None:
+        panel_id, flow = self.flow_preview
+        view._apply_flow_angle(panel_id, flow.angle)
+
+
 class RoughMoveDrag(Drag):
     """ラフ（下敷き）を動かす（→ 要件定義 6.23）。**吸着しない。**
 
@@ -723,6 +767,10 @@ class PageScene(QGraphicsScene):
     def focus_preview(self) -> tuple[str, FocusLines] | None:
         return self.active_drag.focus_preview if self.active_drag else None
 
+    @property
+    def flow_preview(self) -> tuple[str, FlowLines] | None:
+        return self.active_drag.flow_preview if self.active_drag else None
+
     def update_scene_rect(self) -> None:
         size = self.state.page.size
         pad = max(size.w, size.h) * 0.25
@@ -738,6 +786,7 @@ class PageScene(QGraphicsScene):
             root=self.root_preview,
             rotate=self.rotate_preview,
             focus=self.focus_preview,
+            flow=self.flow_preview,
             editing_text_id=self.editing_text_id,
         )
 
@@ -806,6 +855,10 @@ class PageScene(QGraphicsScene):
         if balloon is not None:
             self._draw_tail_handle(painter, balloon, scale)
         self._draw_slant_handle(painter, scale)
+        # 流線のつまみは集中線より**先に**描く。掴む順は集中線が先なので、
+        # 描く順は逆にしないと、上に見えているほうが掴めないことになる
+        # （→ `mousePressEvent`、要件定義 6.26）
+        self._draw_flow_handle(painter, scale)
         self._draw_focus_handles(painter, scale)
 
         if self.preview_rect is not None:
@@ -972,6 +1025,26 @@ class PageScene(QGraphicsScene):
             focus = self.focus_preview[1]
         return (panel, focus)
 
+    def flow_of_selection(self) -> tuple[Panel, FlowLines] | None:
+        """つまみを出す相手。選択中のコマと、そこに入っている流線。
+
+        動かしている最中は下見の値を返す（`focus_of_selection` と同じ）。
+        """
+        panel = self.state.selected_panel
+        if panel is None or panel.flow_lines is None:
+            return None
+        flow = panel.flow_lines
+        if self.flow_preview is not None and self.flow_preview[0] == panel.id:
+            flow = self.flow_preview[1]
+        return (panel, flow)
+
+    def flow_angle_handle(self) -> tuple[float, float] | None:
+        found = self.flow_of_selection()
+        if found is None:
+            return None
+        panel, flow = found
+        return flow_handle_point(flow, panel.bounds())
+
     def focus_center_handle(self) -> tuple[float, float] | None:
         found = self.focus_of_selection()
         if found is None:
@@ -1014,6 +1087,31 @@ class PageScene(QGraphicsScene):
         painter.setPen(cosmetic_pen(ACCENT, 1.2))
         painter.setBrush(QBrush(QColor("#FFFFFF")))
         painter.drawRect(QRectF(hx - half, hy - half, size, size))
+
+    def _draw_flow_handle(self, painter: QPainter, scale: float) -> None:
+        """流線の向きのつまみ（丸）。中心から軸を1本引いて出す。
+
+        **丸は画像の回転から借りた形**（要件定義 6.26）。記号の在庫が
+        尽きていたが、どちらも「掴んで回す」なので意味は一致している。
+
+        軸を添えるのも回転つまみと同じ理由で、線が無いと**どこを中心に
+        回るのか**が分からない。流線では軸そのものが線の向きを表すので、
+        つまみを掴む前に向きが読める。
+        """
+        found = self.flow_of_selection()
+        if found is None:
+            return
+        panel, flow = found
+        bounds = panel.bounds()
+        cx, cy = bounds.center
+        hx, hy = flow_handle_point(flow, bounds)
+        size = HANDLE_PX / scale
+
+        painter.setPen(cosmetic_pen(ACCENT, 1.2))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawLine(QLineF(cx, cy, hx, hy))
+        painter.setBrush(QBrush(QColor("#FFFFFF")))
+        painter.drawEllipse(QPointF(hx, hy), size / 2.0, size / 2.0)
 
     def _draw_selection(
         self,
@@ -1600,6 +1698,19 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # 流線のつまみ。**集中線のつまみより後、コマ本体より先。**
+        #
+        # 集中線より後にするのは、あちらの中心が**動かせる＝どこにでも
+        # 来る**ため。流線の丸は決まった場所にしか出ないので、重なった
+        # ときに逃げられるのは集中線の側だけ（→ 要件定義 6.26）
+        if self._flow_angle_at(x, y):
+            self._drag = FlowDrag.begin(self)
+            self.state.message.emit(
+                "ドラッグすると、流線の向きが変わります（Shift で15度ずつ）"
+            )
+            event.accept()
+            return
+
         self.state.select(self._pick_at(x, y))
         if self.state.selected_id is not None and self.state.is_locked_selection:
             # ロックしたコマは選べるが動かせない（→ 要件定義 6.17）。
@@ -1824,6 +1935,10 @@ class PageView(QGraphicsView):
         """集中線の内側の空きのつまみを掴んでいるか。"""
         return self._near(self._scene.focus_hole_handle(), x, y, FOCUS_HOLE_HANDLE_PX)
 
+    def _flow_angle_at(self, x: float, y: float) -> bool:
+        """流線の向きのつまみを掴んでいるか。"""
+        return self._near(self._scene.flow_angle_handle(), x, y, FLOW_ANGLE_HANDLE_PX)
+
     def _near(
         self, point: tuple[float, float] | None, x: float, y: float, size_px: float
     ) -> bool:
@@ -1984,6 +2099,16 @@ class PageView(QGraphicsView):
         self.state.set_focus_shape(panel_id, hole=focus.hole)
         self.state.message.emit(f"集中線の内側: コマの短辺の {focus.hole * 100:.0f}%")
 
+    def _apply_flow_angle(self, panel_id: str, angle: float) -> None:
+        """離した時点で1手として積む。**変わっていなければ積まない。**"""
+        panel = self.state.page.find(panel_id)
+        if not isinstance(panel, Panel) or panel.flow_lines is None:
+            return
+        if panel.flow_lines.angle == angle:
+            return
+        self.state.set_flow_angle(panel_id, angle)
+        self.state.message.emit(f"流線の向き: {angle:.0f}°")
+
     def _handle_at_point(self, x: float, y: float) -> str | None:
         """その位置にある、選択中のもののつまみ。無ければ None。
 
@@ -2122,6 +2247,10 @@ class PageView(QGraphicsView):
             self.viewport().setCursor(Qt.CursorShape.SizeHorCursor)
         elif self._focus_center_at(x, y):
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
+        elif self._flow_angle_at(x, y):
+            # 回転つまみと同じ形にする。回る向きを表すカーソルは Qt の
+            # 標準に無いので、掴めることだけを示す（→ `_rotate_handle_at`）
+            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
         elif image is not None and rotated_rect_contains(
             image.rect, x, y, image.rotation
         ):

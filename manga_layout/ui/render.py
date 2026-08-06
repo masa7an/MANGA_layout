@@ -26,11 +26,13 @@ from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 
 from .. import vertical
+from ..flow import flow_polygons
 from ..focus import focus_triangles
 from ..geometry import Rect
 from ..layout import balloon_outline, tail_bubbles, tail_triangle
 from ..model import (
     BalloonObject,
+    FlowLines,
     FocusLines,
     Font,
     ImageObject,
@@ -54,6 +56,10 @@ MISSING_IMAGE = QColor("#D9534F")
 # 集中線の色。既定は黒。`FocusLines.white` が立っていれば白（要件定義 6.19）
 FOCUS_INK = QColor("#000000")
 FOCUS_INK_WHITE = QColor("#FFFFFF")
+# 流線の色。集中線と同じ2色（要件定義 6.26）。**定数は分けて持つ。**
+# 片方の色を試しに変えたときに、もう片方まで変わらないようにする
+FLOW_INK = QColor("#000000")
+FLOW_INK_WHITE = QColor("#FFFFFF")
 
 TEXT_ALIGN_FLAGS = {
     "left": Qt.AlignmentFlag.AlignLeft,
@@ -135,6 +141,8 @@ class DragPreview:
     # 中心と空きで分けていないのは、どちらも `FocusLines` を1つ差し替える
     # だけで表せるため。増やすと下見の経路が種類ぶん増える
     focus: tuple[str, FocusLines] | None = None
+    # 向きを変えている最中の (コマの id, 流線)。集中線と同じ形で持つ
+    flow: tuple[str, FlowLines] | None = None
     # その場編集中のセリフ。二重に見えないよう、下地を描かない
     editing_text_id: str | None = None
 
@@ -306,11 +314,14 @@ class PageRenderer:
             painter.drawPolygon(polygon)
 
         focus = self._focus_of(panel, preview)
-        if panel.children or focus is not None:
-            # 集中線の基準は、**いま描いている形**の外接矩形。斜めの境界を
-            # ずらしている最中はモデルと形が違うので、`panel` から取り直すと
-            # 線だけ前の位置に残る
-            self._draw_inside(painter, panel, polygon, shape.bounds(), focus, preview)
+        flow = self._flow_of(panel, preview)
+        if panel.children or focus is not None or flow is not None:
+            # 集中線・流線の基準は、**いま描いている形**の外接矩形。斜めの
+            # 境界をずらしている最中はモデルと形が違うので、`panel` から
+            # 取り直すと線だけ前の位置に残る
+            self._draw_inside(
+                painter, panel, polygon, shape.bounds(), focus, flow, preview
+            )
 
         if panel.border.visible and panel.border.width > 0:
             # 枠線は作品の一部なので、太さは px のまま（表示倍率で見た目が変わる）
@@ -326,6 +337,13 @@ class PageRenderer:
             return preview.focus[1]
         return panel.focus_lines
 
+    @staticmethod
+    def _flow_of(panel: Panel, preview: DragPreview) -> FlowLines | None:
+        """描くときの流線。回している最中は下見の値を使う。"""
+        if preview.flow is not None and preview.flow[0] == panel.id:
+            return preview.flow[1]
+        return panel.flow_lines
+
     def _draw_inside(
         self,
         painter: QPainter,
@@ -333,6 +351,7 @@ class PageRenderer:
         polygon: QPolygonF,
         bounds: Rect,
         focus: FocusLines | None,
+        flow: FlowLines | None = None,
         preview: DragPreview = NO_PREVIEW,
     ) -> None:
         """コマの中身を、コマの形で切り抜いて描く。
@@ -343,9 +362,14 @@ class PageRenderer:
         **切り抜きは画像の回転より外側に掛かる。** 絵を回してもコマの形は
         回らない、という当たり前の見え方になる。
 
-        集中線は**画像より手前**。絵に乗せるものなので、下に潜られては
+        集中線と流線は**画像より手前**。絵に乗せるものなので、下に潜られては
         用を成さない。一方**コマ枠より奥**に置く（枠線は呼ぶ側があとから
         描く）。線が枠線を覆うと、コマの輪郭が途切れて見える。
+
+        両方入っているときは**流線が奥、集中線が手前**（要件定義 6.26）。
+        流線は面を流す背景側、集中線は一点へ集める前景側なので、集中が
+        上に乗るほうが意味と合う。z は持たない（各1つずつなので、順を
+        決める相手が最初から1つしかいない）。
         """
         path = QPainterPath()
         path.addPolygon(polygon)
@@ -355,6 +379,8 @@ class PageRenderer:
         painter.setClipPath(path, Qt.ClipOperation.IntersectClip)
         for image in sorted(panel.children, key=lambda i: i.z):
             self._draw_image(painter, image, preview)
+        if flow is not None:
+            self._draw_flow(painter, bounds, flow)
         if focus is not None:
             self._draw_focus(painter, bounds, focus)
         painter.restore()
@@ -378,6 +404,21 @@ class PageRenderer:
         painter.setBrush(QBrush(FOCUS_INK_WHITE if focus.white else FOCUS_INK))
         for triangle in focus_triangles(focus, bounds):
             painter.drawPolygon(polygon_of(triangle))
+
+    def _draw_flow(self, painter: QPainter, bounds: Rect, flow: FlowLines) -> None:
+        """流線（要件定義 6.26）。紡錘形を本数ぶん塗る。
+
+        **抜き（主役を残す領域）は持たない。** 集中線に空きが要るのは線が
+        1点へ集まって中心が潰れるためで、平行線には潰れる場所が無い。
+
+        直交方向にはみ出した線は切り抜きで落ちるが、**線に沿った方向の端は
+        画面に見える**。そこが集中線と違うところで、長さは値として持つ
+        （形を作る側は `manga_layout.flow`）。
+        """
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(FLOW_INK_WHITE if flow.white else FLOW_INK))
+        for line in flow_polygons(flow, bounds):
+            painter.drawPolygon(polygon_of(line))
 
     @staticmethod
     def _rotation_of(
