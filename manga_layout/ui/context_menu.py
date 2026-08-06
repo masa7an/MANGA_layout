@@ -18,7 +18,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
 from ..layout import image_at
-from .menus import BALLOON_STYLE_MENU_LABEL
+from .menus import BALLOON_STYLE_MENU_LABEL, TONE_MENU_LABEL, fold_label
 from .state import (
     BALLOON_STYLE_LABELS,
     STICKER_KIND_LABELS,
@@ -27,6 +27,7 @@ from .state import (
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
+    TOOL_TONE_AREA,
 )
 
 if TYPE_CHECKING:
@@ -110,6 +111,15 @@ class ContextMenu:
         # 押した場所を覚えている項目があるので使い回せない。毎回捨てる
         menu.deleteLater()
 
+    def _tone_label(self) -> str:
+        """トーンの畳みの見出し。**調整中は名前で名乗る**（→ 6.27）。
+
+        メニューバー側は同じ QMenu を持ち続けて名前を差し替えているが
+        （`ToneMenu.refresh`）、こちらは右クリックのたびに組み直すので、
+        組む時点の道具を見る。名前そのものは `menus.py` に1つだけ持つ。
+        """
+        return fold_label(TONE_MENU_LABEL, self._state.tool == TOOL_TONE_AREA)
+
     def build(self, x: float, y: float) -> QMenu:
         """右クリックのメニューを組む。`x`, `y` は押した場所（シーンの px）。"""
         window = self._window
@@ -176,7 +186,7 @@ class ContextMenu:
             )
             menu.addAction(window.image_menu.open_image_action)
             menu.addSeparator()
-            self._copy_actions(menu.addMenu("トーン"), window.tone_menu.copy_items)
+            self._copy_actions(menu.addMenu(self._tone_label()), window.tone_menu.copy_items)
 
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
@@ -199,7 +209,9 @@ class ContextMenu:
             # コマを右クリックした利用者には行き先が無い（本人談 2026-08-06）。
             # 絵が1枚のコマならそのまま効き、複数なら押したときに断る
             if state.panel_images:
-                self._copy_actions(menu.addMenu("トーン"), window.tone_menu.copy_items)
+                self._copy_actions(
+                    menu.addMenu(self._tone_label()), window.tone_menu.copy_items
+                )
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()

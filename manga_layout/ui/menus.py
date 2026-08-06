@@ -70,6 +70,26 @@ BALLOON_STYLE_MENU_LABEL = "種類を変える"
 # フキダシの種類と同じ畳み方 → 6.12）
 ROUGH_MENU_LABEL = "ラフ"
 
+# トーン（→ 6.27）を畳んだメニューの見出し。**メニューバーと右クリックの
+# 2種類（絵の上・コマの上）で同じ名前を出す**ので、ここに1つだけ持つ。
+TONE_MENU_LABEL = "トーン"
+
+# 調整の道具（→ `ADJUST_TOOLS`）を持っている間の見出し。
+#
+# **畳んだ親の名前で状態を出す**（本人の要望 2026-08-06）。レ点は畳みを
+# 開いた先にあるので、**閉じたままでは調整中かどうかが分からない**。
+# 名前は短いまま——**説明は状態表示へ逃がす**という決まりは変えていない
+# （あちらには「トーン範囲を調整中: 今は画像全体 / …」と長く出す → 6.12）
+ADJUSTING_MENU_LABELS = {
+    ROUGH_MENU_LABEL: "ラフ調整中",
+    TONE_MENU_LABEL: "トーン調整中",
+}
+
+
+def fold_label(base: str, adjusting: bool) -> str:
+    """畳んだメニューの見出し。調整中だけ名前を差し替える（→ 6.27）。"""
+    return ADJUSTING_MENU_LABELS[base] if adjusting else base
+
 # 色の切り替えは**1項目の文言を入れ替える**（集中線の白 → 6.19 と同じ形）。
 # 「どちらに変わるか」を名前に出す。今の状態を書いても、押した結果が分からない
 ROUGH_FADED_LABELS = {
@@ -193,9 +213,10 @@ class FileMenu:
 
         **畳んだ見出しの QAction を控えない。** この QAction は下位の QMenu が
         持っているもので、控えて有効・無効を触ると実体ごと消える
-        （→ `items_to_copy`、PySide6の落とし穴.md の 1）。
+        （→ `items_to_copy`、PySide6の落とし穴.md の 1）。**QMenu そのものは
+        控えてよい**（調整中に名前を差し替えるので控える → 6.27）。
         """
-        menu = QMenu(ROUGH_MENU_LABEL, parent_menu)
+        self.rough_menu = menu = QMenu(ROUGH_MENU_LABEL, parent_menu)
         menu.addAction(
             window._act(
                 "読み込む...",
@@ -232,6 +253,11 @@ class FileMenu:
         （→ 6.12）。
         """
         rough = self._state.page.rough
+        # 畳んだままでも調整中だと分かるように、親の名前を差し替える
+        # （トーンと揃える → 6.27）
+        self.rough_menu.setTitle(
+            fold_label(ROUGH_MENU_LABEL, self._state.tool == TOOL_ROUGH)
+        )
         # 「どちらに変わるか」を出す。いま淡いなら「ラフの色を戻す」
         self.rough_faded_action.setText(
             ROUGH_FADED_LABELS[not (rough is not None and rough.faded)]
@@ -573,7 +599,10 @@ class ToneMenu:
 
     def __init__(self, window: MainWindow, parent_menu: QMenu) -> None:
         self._state = window.state
-        menu = QMenu("トーン", window)
+        # **見出しの QMenu は控えてよい。** 控えてはいけないのは畳みの見出しの
+        # QAction のほうで、あちらは触ると実体ごと消える（→ `items_to_copy`、
+        # PySide6の落とし穴.md の 1）
+        self.menu = menu = QMenu(TONE_MENU_LABEL, window)
         self.toggle_action = window._act(
             "入れる",
             window.toggle_tone,
@@ -691,6 +720,10 @@ class ToneMenu:
 
     def refresh(self) -> None:
         tone = self._state.selected_tone
+        # 畳んだままでも調整中だと分かるように、親の名前を差し替える（→ 6.27）
+        self.menu.setTitle(
+            fold_label(TONE_MENU_LABEL, self._state.tool == TOOL_TONE_AREA)
+        )
         # **絵が複数あるコマでもグレーにしない。** 押したら状態表示で
         # 「絵を選んでから」と断る（→ `EditorState.tone_ambiguous`、6.15）
         self.toggle_action.setEnabled(

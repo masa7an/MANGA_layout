@@ -430,6 +430,49 @@ def test_作る道具は2回押しても解除されない(window_with_tone):
     assert window_with_tone.state.tool == TOOL_PANEL
 
 
+def test_道具を持ち替えただけで名乗りが変わる(window_with_tone):
+    """**`_refresh` を自分で呼ばない。** 道具の持ち替えは選択も編集も伴わない
+    ので、`tool_changed` を繋いでいないと次に何かを選ぶまで前の文言が残る
+    （実際に漏れていた → 6.27）。
+    """
+    window_with_tone.state.set_tool(TOOL_TONE_AREA)
+    assert window_with_tone.hint_label.text().startswith("トーン範囲を調整中")
+    assert window_with_tone.image_menu.tone.menu.title() == "トーン調整中"
+
+
+def test_調整中は畳んだ親の名前が変わる(window_with_tone):
+    """**レ点は畳みを開いた先にある。** 閉じたままでも分かるように
+    （本人の要望 2026-08-06）。
+    """
+    menu = window_with_tone.image_menu.tone
+    window_with_tone._refresh()
+    assert menu.menu.title() == "トーン"
+
+    window_with_tone.state.set_tool(TOOL_TONE_AREA)
+    window_with_tone._refresh()
+    assert menu.menu.title() == "トーン調整中"
+
+    window_with_tone.state.set_tool(TOOL_SELECT)
+    window_with_tone._refresh()
+    assert menu.menu.title() == "トーン"
+
+
+def test_右クリックの畳みも調整中を名乗る(window_with_tone):
+    """右クリックは組み直しなので、メニューバーとは別の経路（→ 6.27）。"""
+    window_with_tone.state.set_tool(TOOL_TONE_AREA)
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    assert "トーン調整中" in labels(menu)
+
+
+def test_コマの上の右クリックでも名乗る(window_with_tone):
+    """絵の上とコマの上で、トーンの畳みを出す所が2か所ある。"""
+    state = window_with_tone.state
+    state.select(state.page.panels[0].id)
+    state.set_tool(TOOL_TONE_AREA)
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    assert "トーン調整中" in labels(menu)
+
+
 def test_調整中は状態表示で名乗る(window_with_tone):
     """**「クリックしても選べない」としか見えないのが躓きの中身**（→ 6.27）。"""
     window_with_tone.state.set_tool(TOOL_TONE_AREA)

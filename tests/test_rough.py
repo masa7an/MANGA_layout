@@ -414,6 +414,16 @@ class Test調整の道具:
         assert window_with_rough.state.tool == TOOL_SELECT
         assert not action.isChecked()
 
+    def test_調整中は畳んだ親の名前が変わる(self, window_with_rough):
+        """トーンと揃える（→ 6.27）。レ点は畳みを開かないと見えない。"""
+        menu = window_with_rough.file_menu
+        window_with_rough._refresh()
+        assert menu.rough_menu.title() == "ラフ"
+
+        window_with_rough.state.set_tool(TOOL_ROUGH)
+        window_with_rough._refresh()
+        assert menu.rough_menu.title() == "ラフ調整中"
+
     def test_調整中は状態表示で名乗る(self, window_with_rough):
         window_with_rough.state.set_tool(TOOL_ROUGH)
         window_with_rough._refresh()

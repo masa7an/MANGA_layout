@@ -190,6 +190,10 @@ class MainWindow(QMainWindow):
         self.state.selection_changed.connect(self._refresh)
         self.state.page_changed.connect(self._refresh)
         self.state.tool_changed.connect(self._sync_tool_actions)
+        # **道具の持ち替えでも文言を組み直す。** 調整中は状態表示と畳んだ
+        # 親の名前がそれを名乗るので（→ 6.27）、ここを繋がないと、次に何かを
+        # 選ぶまで前の文言が残る（2026-08-06。名乗りを足したとき配線が漏れていた）
+        self.state.tool_changed.connect(self._refresh)
         self.state.message.connect(lambda text: self.statusBar().showMessage(text, 6000))
         self.view.context_menu_requested.connect(self.context_menu.show)
 
