@@ -26,6 +26,7 @@ from PySide6.QtGui import QColor, QImage, QPainter
 from manga_layout import ExportError
 from manga_layout.psd import (
     MAX_SIDE_PX,
+    PsdGroup,
     PsdLayer,
     content_bounds,
     crop_to_content,
@@ -165,6 +166,7 @@ def _parse_extra(extra: bytes) -> dict:
     pos += -(1 + size) % 4 + 1 + size
 
     name = None
+    section = None
     while pos + 12 <= len(extra):
         key = extra[pos + 4 : pos + 8]
         (length,) = struct.unpack_from(">I", extra, pos + 8)
@@ -172,8 +174,29 @@ def _parse_extra(extra: bytes) -> dict:
         if key == b"luni":
             (chars,) = struct.unpack_from(">I", body, 0)
             name = body[4 : 4 + chars * 2].decode("utf-16-be")
+        elif key == b"lsct":
+            (section,) = struct.unpack_from(">I", body, 0)
         pos += 12 + length + length % 2
-    return {"alias": alias, "name": name}
+    return {"alias": alias, "name": name, "section": section}
+
+
+def layer_tree(parsed: dict) -> list:
+    """読み返したレイヤーを、フォルダの入れ子に組み直す。**上から下の順**。
+
+    PSD は下から上に並んでいるので、後ろから見ていく。フォルダの
+    名前を持つ1枚が先に出てきて、区切りが出るまでが中身になる。
+    """
+    stack = [[]]
+    for layer in reversed(parsed["layers"]):
+        if layer["section"] in (1, 2):
+            children = []
+            stack[-1].append({"name": layer["name"], "children": children})
+            stack.append(children)
+        elif layer["section"] == 3:
+            stack.pop()
+        else:
+            stack[-1].append(layer["name"])
+    return stack[0]
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +396,89 @@ def test_レイヤーの画素が元に戻る():
         for x in range(10):
             color = source.pixelColor(x, y)
             assert got[y][x] == (color.red(), color.green(), color.blue(), color.alpha())
+
+
+class Testレイヤーフォルダ:
+    """コマ1つ＝フォルダ1つにするための土台（→ 要件定義 10.1 の第2段階）。
+
+    PSD のフォルダは入れ物ではなく、**前後を挟む2枚の目印**。下端に
+    区切り、上端に名前を持つ1枚を置き、その間が中身になる。挟み方を
+    取り違えると、中身が外へこぼれるか、フォルダが開かなくなる。
+    """
+
+    def test_中身がフォルダに入る(self):
+        image = solid(4, 4, "#FFFFFF")
+        group = PsdGroup(
+            name="コマ1",
+            alias="panel1",
+            children=[
+                PsdLayer(name="絵", alias="art", image=image),
+                PsdLayer(name="コマ枠", alias="frame", image=image),
+            ],
+        )
+        parsed = parse_psd(psd_bytes([group], image, 150.0))
+        assert layer_tree(parsed) == [
+            {"name": "コマ1", "children": ["コマ枠", "絵"]}
+        ]
+
+    def test_フォルダの外と中が混ざらない(self):
+        image = solid(4, 4, "#FFFFFF")
+        items = [
+            PsdLayer(name="用紙", alias="paper", image=image),
+            PsdGroup(
+                name="コマ1",
+                alias="panel1",
+                children=[PsdLayer(name="絵", alias="art", image=image)],
+            ),
+            PsdLayer(name="セリフ", alias="text", image=image),
+        ]
+        parsed = parse_psd(psd_bytes(items, image, 150.0))
+        assert layer_tree(parsed) == [
+            "セリフ",
+            {"name": "コマ1", "children": ["絵"]},
+            "用紙",
+        ]
+
+    def test_フォルダが2つ並ぶ(self):
+        image = solid(4, 4, "#FFFFFF")
+        items = [
+            PsdGroup(name="コマ1", alias="panel1",
+                     children=[PsdLayer(name="絵", alias="art", image=image)]),
+            PsdGroup(name="コマ2", alias="panel2",
+                     children=[PsdLayer(name="絵", alias="art", image=image)]),
+        ]
+        parsed = parse_psd(psd_bytes(items, image, 150.0))
+        assert [g["name"] for g in layer_tree(parsed)] == ["コマ2", "コマ1"]
+
+    def test_目印は大きさ0で入る(self):
+        """フォルダの2枚は画素を持たない。持たせると開けないファイルになる。"""
+        image = solid(4, 4, "#FFFFFF")
+        group = PsdGroup(name="コマ1", alias="panel1",
+                         children=[PsdLayer(name="絵", alias="art", image=image)])
+        parsed = parse_psd(psd_bytes([group], image, 150.0))
+        marks = [x for x in parsed["layers"] if x["section"] is not None]
+        assert len(marks) == 2
+        assert all(x["rect"] == (0, 0, 0, 0) for x in marks)
+        # 面は4つとも「圧縮の種類」の2バイトだけ
+        assert all(length == 2 for x in marks for _id, length in x["channels"])
+
+    def test_既定は閉じたフォルダ(self):
+        """コマの数だけ並ぶので、開いていると一覧が縦に伸びる。"""
+        image = solid(4, 4, "#FFFFFF")
+        closed = PsdGroup(name="コマ1", alias="p", children=[])
+        opened = PsdGroup(name="コマ2", alias="p", children=[], expanded=True)
+        parsed = parse_psd(psd_bytes([closed, opened], image, 150.0))
+        sections = [x["section"] for x in parsed["layers"] if x["section"] != 3]
+        assert sections == [2, 1]
+
+    def test_フォルダ名も化けない(self):
+        image = solid(4, 4, "#FFFFFF")
+        parsed = parse_psd(
+            psd_bytes([PsdGroup(name="コマ1", alias="panel1", children=[])], image, 150.0)
+        )
+        top = [x for x in parsed["layers"] if x["section"] in (1, 2)][0]
+        assert top["name"] == "コマ1"
+        assert top["alias"] == "panel1"
 
 
 def test_合成済みの1枚が入る():

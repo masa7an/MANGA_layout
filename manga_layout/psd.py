@@ -7,12 +7,10 @@
 
 ## 扱う範囲
 
-8bit RGB のラスターレイヤーだけ（要件定義 10.1）。調整レイヤー・
-スマートオブジェクト・ベクター・編集できるテキスト・レイヤーマスクは
-書かない。**クリスタ側で作れるものを、こちらで持つ意味が無い。**
-
-レイヤーフォルダは第2段階（コマごとに割るとき）に足す。いまは平らに
-並べるだけ。
+8bit RGB のラスターレイヤーと、それを束ねるフォルダだけ（要件定義
+10.1）。調整レイヤー・スマートオブジェクト・ベクター・編集できる
+テキスト・レイヤーマスクは書かない。**クリスタ側で作れるものを、
+こちらで持つ意味が無い。**
 
 ## 外部のライブラリを使わない理由
 
@@ -94,6 +92,41 @@ class PsdLayer:
     y: int = 0
     visible: bool = True
     opacity: float = 1.0
+
+
+@dataclass(frozen=True)
+class PsdGroup:
+    """レイヤーフォルダ（要件定義 10.1 の第2段階）。
+
+    `children` は**下から上**の順。入れ子にもできるが、この道具が使うのは
+    1段だけ（コマ1つ＝フォルダ1つ）。
+
+    `expanded` はクリスタで開いた状態にするか。**既定は閉じておく。**
+    コマの数だけフォルダが並ぶので、全部開いていると一覧が長くなり、
+    「どのコマか」を探すのに縦に流すことになる。
+
+    PSD のフォルダは**入れ物ではなく、前後を挟む2枚の目印**で表す。
+    下端に区切り（`</Layer group>`）を、上端に名前を持つ1枚を置き、
+    その間に挟まったものが中身になる。どちらも大きさ0のレイヤー。
+    """
+
+    name: str
+    alias: str
+    children: list[PsdLayer | PsdGroup]
+    expanded: bool = False
+    visible: bool = True
+    opacity: float = 1.0
+
+
+#: `lsct`（フォルダの目印）に書く値。1 は開いたフォルダ、2 は閉じた
+#: フォルダ、3 はフォルダの下端を示す区切り
+SECTION_OPEN = 1
+SECTION_CLOSED = 2
+SECTION_DIVIDER = 3
+
+#: 区切りの1枚に付ける名前。**Photoshop が書くものと同じ綴りにする。**
+#: 中身を持たない目印なので、画面に出ることは無い
+DIVIDER_NAME = "</Layer group>"
 
 
 # -- 画素を取り出す ----------------------------------------------------------
@@ -296,53 +329,119 @@ def _unicode_name(name: str) -> bytes:
     return _additional(b"luni", struct.pack(">I", len(encoded) // 2) + encoded)
 
 
-def _layer_record(layer: PsdLayer, lengths: list[int]) -> bytes:
+@dataclass
+class _Record:
+    """PSD に1行ぶんとして並ぶもの。
+
+    **フォルダも「大きさ0のレイヤー」として並ぶ**ので、普通のレイヤーと
+    同じ入れ物で扱える。違うのは `section`（`lsct` に書く値）を持つか
+    どうかだけ。
+    """
+
+    left: int
+    top: int
+    right: int
+    bottom: int
+    channels: list[bytes]
+    name: str
+    alias: str
+    visible: bool = True
+    opacity: float = 1.0
+    section: int | None = None
+
+
+def _empty_channels() -> list[bytes]:
+    """大きさ0のレイヤーの中身。圧縮の種類を書く2バイトだけ。"""
+    empty = _rle_channel([])
+    return [empty, empty, empty, empty]
+
+
+def _records(items: list[PsdLayer | PsdGroup]) -> list[_Record]:
+    """並べるものを、PSD に書く順（下から上）の一列にほどく。
+
+    フォルダは**下端の区切りと、上端の名前付き1枚**に化け、その間に
+    中身が挟まる。この形にしておけば、書く側はフォルダを知らなくてよい。
+    """
+    out: list[_Record] = []
+    for item in items:
+        if isinstance(item, PsdGroup):
+            out.append(
+                _Record(
+                    0, 0, 0, 0, _empty_channels(),
+                    DIVIDER_NAME, "divider", section=SECTION_DIVIDER,
+                )
+            )
+            out.extend(_records(item.children))
+            out.append(
+                _Record(
+                    0, 0, 0, 0, _empty_channels(),
+                    item.name, item.alias,
+                    visible=item.visible,
+                    opacity=item.opacity,
+                    section=SECTION_OPEN if item.expanded else SECTION_CLOSED,
+                )
+            )
+            continue
+
+        r, g, b, a = _planes(item.image)
+        out.append(
+            _Record(
+                item.x,
+                item.y,
+                item.x + item.image.width(),
+                item.y + item.image.height(),
+                [_rle_channel(rows) for rows in (a, r, g, b)],
+                item.name,
+                item.alias,
+                visible=item.visible,
+                opacity=item.opacity,
+            )
+        )
+    return out
+
+
+def _layer_record(record: _Record) -> bytes:
     """1枚ぶんの見出し。**画素そのものはここには入らない**（後ろにまとめて置く）。
 
-    `lengths` は面ごとのデータの長さで、順は透明度・R・G・B。圧縮の
-    種類を書く2バイトを**含んだ**長さを渡す。
+    面ごとの長さには、圧縮の種類を書く2バイトを**含める**。
     """
-    top = layer.y
-    left = layer.x
-    bottom = layer.y + layer.image.height()
-    right = layer.x + layer.image.width()
-
-    parts = [struct.pack(">4i", top, left, bottom, right), struct.pack(">H", 4)]
-    for channel_id, length in zip((-1, 0, 1, 2), lengths, strict=True):
-        parts.append(struct.pack(">hI", channel_id, length))
+    parts = [
+        struct.pack(">4i", record.top, record.left, record.bottom, record.right),
+        struct.pack(">H", 4),
+    ]
+    for channel_id, data in zip((-1, 0, 1, 2), record.channels, strict=True):
+        parts.append(struct.pack(">hI", channel_id, len(data)))
 
     # 8BIM + 重ね方（通常）+ 不透明度 + 切り抜き + 目印 + 詰めもの。
     # 目印の 2 のビットが立っていると**非表示**（0 が表示）。ラフを
     # 非表示で入れるのにこれを使う（→ 要件定義 10.1）
-    flags = 0 if layer.visible else 2
-    opacity = max(0, min(255, round(layer.opacity * 255)))
+    flags = 0 if record.visible else 2
+    opacity = max(0, min(255, round(record.opacity * 255)))
     parts.append(b"8BIMnorm" + bytes([opacity, 0, flags, 0]))
 
     extra = (
         struct.pack(">I", 0)  # レイヤーマスク（使わない）
         + struct.pack(">I", 0)  # 重ねる範囲の指定（使わない）
-        + _pascal(layer.alias, 4)
-        + _unicode_name(layer.name)
+        + _pascal(record.alias, 4)
+        + _unicode_name(record.name)
     )
+    if record.section is not None:
+        extra += _additional(b"lsct", struct.pack(">I", record.section))
     parts.append(struct.pack(">I", len(extra)) + extra)
     return b"".join(parts)
 
 
-def _layer_section(layers: list[PsdLayer]) -> bytes:
+def _layer_section(items: list[PsdLayer | PsdGroup]) -> bytes:
     """レイヤーの見出しと画素をまとめた一区画。
 
     見出しには面ごとの長さが入るので、**先に全部の画素を圧縮してから**
-    見出しを組む。
+    見出しを組む（`_records` がそこまで済ませている）。
     """
-    records: list[bytes] = []
-    pixels: list[bytes] = []
-    for layer in layers:
-        r, g, b, a = _planes(layer.image)
-        channels = [_rle_channel(rows) for rows in (a, r, g, b)]
-        records.append(_layer_record(layer, [len(c) for c in channels]))
-        pixels.extend(channels)
+    records = _records(items)
+    heads = b"".join(_layer_record(r) for r in records)
+    pixels = b"".join(data for r in records for data in r.channels)
 
-    info = struct.pack(">h", len(layers)) + b"".join(records) + b"".join(pixels)
+    info = struct.pack(">h", len(records)) + heads + pixels
     info += b"\x00" * (len(info) % 2)
 
     section = struct.pack(">I", len(info)) + info + struct.pack(">I", 0)
@@ -365,11 +464,14 @@ def _merged(image: QImage) -> bytes:
 # -- 書き出す ----------------------------------------------------------------
 
 
-def psd_bytes(layers: list[PsdLayer], merged: QImage, dpi: float) -> bytes:
+def psd_bytes(
+    layers: list[PsdLayer | PsdGroup], merged: QImage, dpi: float
+) -> bytes:
     """PSD 1つぶんのバイト列。
 
-    `layers` は**下から上**の順（最初が一番奥）。`merged` は全部を
-    重ねた結果で、キャンバスの大きさもここから取る。
+    `layers` は**下から上**の順（最初が一番奥）。`PsdGroup` を混ぜると
+    レイヤーフォルダになる。`merged` は全部を重ねた結果で、キャンバスの
+    大きさもここから取る。
     """
     width, height = merged.width(), merged.height()
     if width < 1 or height < 1:
@@ -395,7 +497,10 @@ def _with_length(data: bytes) -> bytes:
 
 
 def write_psd(
-    path: pathlib.Path, layers: list[PsdLayer], merged: QImage, dpi: float
+    path: pathlib.Path,
+    layers: list[PsdLayer | PsdGroup],
+    merged: QImage,
+    dpi: float,
 ) -> None:
     """1つ書く。**別名で書き切ってから置き換える。**
 

@@ -4,33 +4,39 @@
 だけを決める。** 分けておくと、PSD の細かい決まりと、この道具にとって
 何が1枚かの判断が混ざらない。
 
-## 第1段階は8枚で固定（下が奥）
+## 構成（下が奥）
 
-    セリフ / マーク / フキダシ / コマ枠 / 集中線・流線 / 絵 / ラフ / 用紙
+    セリフ / マーク / フキダシ
+    [フォルダ] コマN ── 絵・集中線と流線・コマ枠
+      …（コマの数だけ、奥から手前の順に）
+    ラフ / 用紙
 
 並びは `render.PageRenderer.draw` の描く順そのまま。**ここで独自の順を
 持たない。** 持つと、画面と書き出しで重なりが食い違ったときに、どちらが
 正なのか決める相手がいなくなる。
 
-コマごとに割るのは第2段階。**先に種類ごとで出すのは、クリスタが期待
-どおり開くかを本人が開くまで確かめられないため**（自動テストで言えるのは
-「PSD の構造として正しい」までで、そこまでは下の突き合わせで見ている）。
+## コマをフォルダにまとめる理由（要件定義 10.1 の第2段階）
 
-## 中身の無いレイヤーは出さない
+第1段階では枠線・集中線・絵を種類ごとに1枚ずつまとめていた。すると
+**枠線が全部の絵より手前**に来るので、コマを重ねたページで**下のコマの
+枠線が上のコマの絵を貫いて出た**。
+
+コマごとのフォルダにすれば、上のコマの絵が下のコマの枠線より手前に来る。
+**隠れる線はレイヤーの重なりが自動で隠す**ので、幾何の計算は要らない。
+6.24 が持っている重なり順をそのまま並びに移すだけ。
+
+フキダシ・マーク・セリフは**これまでどおり種類ごと1枚**。ページ直下に
+あってコマの子ではない（→ 4章）ので、コマに紐づけようがない。
+
+## 中身の無いレイヤー・フォルダは出さない
 
 フキダシを1つも置いていないページに空の「フキダシ」レイヤーを残しても、
-クリスタ側では邪魔になるだけ。**大きさ0のレイヤーという例外的な形を
-書かずに済む**という実務上の得もある。
+クリスタ側では邪魔になるだけ。中身の無いコマも、フォルダごと出さない。
 
-## コマが重なっているページでは、重ね方が PNG と変わる
+## 合成済みの1枚はレイヤーから作る
 
-種類でまとめる以上これは避けられない。PNG では「コマ1の枠線 → コマ2の絵」
-の順に描かれるが、レイヤーに分けると枠線が全部まとめて絵の上に乗る。
-**コマが重なっていないページ（普通のコマ割り）では起きない。** 第2段階で
-コマごとのフォルダに割れば解消する。
-
-なお**合成済みの1枚（merged image）はレイヤーを重ねた結果から作る**ので、
-ファイルの中で食い違うことはない。
+`render_page` を呼び直さない。**ファイルの中で食い違わない**うえ、同じ絵を
+2回展開せずに済む（→ `flatten`）。
 """
 
 from __future__ import annotations
@@ -41,8 +47,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter
 
 from ..images import ImageCache, Preview, full_from_bytes, full_rough_from_bytes
-from ..model import BalloonObject, Page, StickerObject, TextObject
-from ..psd import PsdLayer, crop_to_content, write_psd
+from ..model import BalloonObject, Page, Panel, StickerObject, TextObject
+from ..psd import PsdGroup, PsdLayer, crop_to_content, write_psd
 from .export import (
     DEFAULT_SCALE,
     FullImages,
@@ -87,41 +93,96 @@ class FullRoughs:
         return cache.get(ref, lambda: self.state.read_asset(ref))
 
 
-def page_layers(state, page: Page, scale: float = DEFAULT_SCALE) -> list[PsdLayer]:
-    """1ページぶんのレイヤー。**下から上の順**で返す。
+def reading_order(panels: list[Panel], gutter: float) -> list[Panel]:
+    """読み順（上から下・右から左）に並べた一覧。
 
-    画像を引く経路は1ページで1つだけ作って使い回す。レイヤーごとに
-    作ると、同じ絵を何度も展開し直すことになる（絵とマークの2枚が
-    同じ経路を通る）。
+    **フォルダに振る番号を決めるためだけに使う。** このアプリはコマに
+    番号を持っておらず（→ 要件定義 10.1）、ここで初めて振る。
+
+    段の切れ目は**上端の差が隙間（`gutter`）より小さいかどうか**で見る。
+    同じ段に並べたコマは上端が揃っているのが普通で、揃っていない縦の
+    ずれは隙間より大きい。
+
+    **番号はラベルでしかない。** 変わったコマ割りで直感と合わないことは
+    ありうるが、中身が入れ替わるわけではない。
+    """
+    rows: list[tuple[float, list[Panel]]] = []
+    for panel in sorted(panels, key=lambda p: p.bounds().y):
+        top = panel.bounds().y
+        if rows and top - rows[-1][0] < gutter:
+            rows[-1][1].append(panel)
+        else:
+            rows.append((top, [panel]))
+
+    ordered: list[Panel] = []
+    for _top, row in rows:
+        ordered.extend(sorted(row, key=lambda p: -p.bounds().x))
+    return ordered
+
+
+def page_layers(
+    state, page: Page, scale: float = DEFAULT_SCALE
+) -> list[PsdLayer | PsdGroup]:
+    """1ページぶんのレイヤーとフォルダ。**下から上の順**で返す。
+
+    画像を引く経路は1ページで1つだけ作って使い回す。コマごとに作ると、
+    同じ絵を何度も展開し直すことになる（同じ画像を2コマで使える）。
     """
     width, height = checked_page_px(page, scale)
     renderer = PageRenderer(state, FullImages(state), aids=False)
     roughs = FullRoughs(state)
-    panels = sorted(page.panels, key=lambda p: p.z)
 
-    def draw_panels(painter: QPainter, **parts: bool) -> None:
-        for panel in panels:
-            renderer.draw_panel(painter, page, panel, **parts)
+    def build(label, draw, visible: bool = True) -> PsdLayer | None:
+        return _build(label, draw, page, width, height, visible)
 
-    plan = [
-        (PAPER, lambda p: renderer.draw_paper(p, page, shadow=False, edge=False), True),
+    items: list[PsdLayer | PsdGroup] = [
+        build(PAPER, lambda p: renderer.draw_paper(p, page, shadow=False, edge=False)),
         # ラフは**非表示**で入れる（→ 要件定義 10.1）。なぞる相手であって
         # 作品の中身ではないので、開いた直後に見えていては困る
-        (ROUGH, lambda p: renderer.draw_rough(p, page, images=roughs), False),
-        (ART, lambda p: draw_panels(p, contents=True, effects=False, border=False), True),
-        (EFFECTS, lambda p: draw_panels(p, contents=False, effects=True, border=False), True),
-        (FRAMES, lambda p: draw_panels(p, contents=False, effects=False, border=True), True),
-        (BALLOONS, lambda p: renderer.draw_floating(p, page, kinds=(BalloonObject,)), True),
-        (MARKS, lambda p: renderer.draw_floating(p, page, kinds=(StickerObject,)), True),
-        (TEXTS, lambda p: renderer.draw_floating(p, page, kinds=(TextObject,)), True),
+        build(ROUGH, lambda p: renderer.draw_rough(p, page, images=roughs), False),
     ]
 
-    layers = []
-    for label, draw, visible in plan:
-        layer = _build(label, draw, page, width, height, visible)
+    numbers = {
+        panel.id: i + 1
+        for i, panel in enumerate(reading_order(page.panels, state.settings.gutter))
+    }
+    # 並べる順は**読み順ではなく重なり順**（奥から手前）。読み順は
+    # 名前に付ける番号だけに使う
+    for panel in sorted(page.panels, key=lambda p: p.z):
+        items.append(_panel_group(renderer, page, panel, numbers[panel.id], build))
+
+    items += [
+        build(BALLOONS, lambda p: renderer.draw_floating(p, page, kinds=(BalloonObject,))),
+        build(MARKS, lambda p: renderer.draw_floating(p, page, kinds=(StickerObject,))),
+        build(TEXTS, lambda p: renderer.draw_floating(p, page, kinds=(TextObject,))),
+    ]
+    return [item for item in items if item is not None]
+
+
+def _panel_group(
+    renderer: PageRenderer, page: Page, panel: Panel, number: int, build
+) -> PsdGroup | None:
+    """コマ1つぶんのフォルダ。中身が1つも無ければ None。
+
+    中身は**奥から手前**（絵 → 集中線・流線 → コマ枠）。`draw_panel` が
+    描く順そのままで、ここでも独自の順は持たない。
+    """
+    plan = [
+        (ART, {"contents": True, "effects": False, "border": False}),
+        (EFFECTS, {"contents": False, "effects": True, "border": False}),
+        (FRAMES, {"contents": False, "effects": False, "border": True}),
+    ]
+    children = []
+    for label, parts in plan:
+        layer = build(
+            label,
+            lambda p, parts=parts: renderer.draw_panel(p, page, panel, **parts),
+        )
         if layer is not None:
-            layers.append(layer)
-    return layers
+            children.append(layer)
+    if not children:
+        return None
+    return PsdGroup(name=f"コマ{number}", alias=f"panel{number}", children=children)
 
 
 def _build(
@@ -165,7 +226,9 @@ def _build(
     return PsdLayer(name=name, alias=alias, image=image, x=x, y=y, visible=visible)
 
 
-def flatten(layers: list[PsdLayer], width: int, height: int) -> QImage:
+def flatten(
+    layers: list[PsdLayer | PsdGroup], width: int, height: int
+) -> QImage:
     """レイヤーを下から重ねた1枚。
 
     PSD には合成済みのものも入れる決まりで、**これが無いと開けない
@@ -180,13 +243,27 @@ def flatten(layers: list[PsdLayer], width: int, height: int) -> QImage:
     out = QImage(width, height, QImage.Format.Format_ARGB32)
     out.fill(Qt.GlobalColor.transparent)
     painter = QPainter(out)
-    for layer in layers:
-        if not layer.visible:
-            continue
-        painter.setOpacity(layer.opacity)
-        painter.drawImage(layer.x, layer.y, layer.image)
+    _paint(painter, layers)
     painter.end()
     return out
+
+
+def _paint(painter: QPainter, items: list[PsdLayer | PsdGroup]) -> None:
+    """下から順に重ねる。フォルダは中身をそのまま続けて描く。
+
+    **フォルダの不透明度は掛けない。** PSD では中身を合成してから
+    フォルダの不透明度が掛かるが、この道具は 1.0 しか使わないので
+    区別が出ない。使うようになったら、フォルダごとに別の1枚へ描いてから
+    重ねる形が要る。
+    """
+    for item in items:
+        if not item.visible:
+            continue
+        if isinstance(item, PsdGroup):
+            _paint(painter, item.children)
+            continue
+        painter.setOpacity(item.opacity)
+        painter.drawImage(item.x, item.y, item.image)
 
 
 def export_psd_pages(
