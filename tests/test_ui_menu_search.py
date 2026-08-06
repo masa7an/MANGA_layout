@@ -21,9 +21,11 @@ import pytest
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.menu_search import (
     HIGHLIGHT_SECONDS,
+    MISSING_FEATURES,
     MenuEntry,
     collect_menu_entries,
     item_text,
+    missing_notes,
     plain_label,
     search,
 )
@@ -175,6 +177,67 @@ class Test探す:
         assert search(entries, "こま") == []
 
 
+class Test無い機能に無いと答える:
+    """絵を描くソフトの定番機能で探した人に、0件とだけ返さない（→ 6.30）。"""
+
+    @pytest.mark.parametrize(
+        ("asked", "expected"),
+        [
+            ("ペン", "ペン入れ機能はありません。ペイントソフト側で行ってください"),
+            ("消しゴム", "消しゴム機能はありません。ペイントソフト側で行ってください"),
+            ("オノマトペ", "擬音機能はありません。ペイントソフト側で行ってください"),
+            ("ぼかし", "その機能はありません。ペイントソフト側で行ってください"),
+        ],
+    )
+    def test_定番の機能には無いと答える(self, asked, expected):
+        assert missing_notes(asked) == [expected]
+
+    @pytest.mark.parametrize("asked", ["擬音", "オノマトペ", "描き文字", "効果音"])
+    def test_呼び名が違っても同じ答えに行き着く(self, asked):
+        """4つとも「擬音機能はありません」に集める。"""
+        assert missing_notes(asked) == missing_notes("擬音")
+
+    def test_同じ答えは1回しか出さない(self):
+        """「効果音のオノマトペ」でも、同じ文が2行並ばない。"""
+        assert len(missing_notes("効果音のオノマトペ")) == 1
+
+    def test_別の答えは並べて出す(self):
+        assert len(missing_notes("ペンと消しゴム")) == 2
+
+    @pytest.mark.parametrize(
+        "asked",
+        [
+            "psd入力",
+            "PSD読み込み",
+            "psd読み込ませる",
+            "PSDを入力するには？",
+            "ｐｓｄを入力するには？",
+        ],
+    )
+    def test_PSDは片道だけあると答える(self, asked):
+        """大文字・全角の違いは潰す。**無いとは言わず、どちら向きかを答える。**"""
+        assert missing_notes(asked) == ["PSD 機能は、【書き出し】のみとなっています"]
+
+    def test_探す言葉でなく文で打たれても拾う(self):
+        assert missing_notes("ペンはどこですか") == missing_notes("ペン")
+
+    def test_表に無い言葉には何も答えない(self):
+        """**言い換え表と同じ歯止め**。先回りで機能名を並べない。"""
+        assert missing_notes("コマ") == []
+        assert missing_notes("フキダシ") == []
+        assert missing_notes("") == []
+
+    def test_あるものを無いと言わない(self, entries):
+        """表の言葉がメニューに実在したら、案内と矛盾する（→ 6.30）。
+
+        トーンのように**実際にある機能**を後から表へ入れてしまうと、
+        窓が嘘をつく。足すときはここで気づける。
+        """
+        for word in MISSING_FEATURES:
+            found = [e for e in search(entries, word) if word in e.trail]
+            assert not found, f"「{word}」はメニューに実在する: {trails(found)}"
+
+
 class Test出しかた:
     def test_道順と説明を2段に分ける(self):
         entry = MenuEntry(("ファイル",), "開く...", "説明", "Ctrl+O")
@@ -208,6 +271,35 @@ class Test出しかた:
         dialog._field.setText("抜け")
         assert dialog._list.count() == 1
         assert "抜けチェック..." in dialog._list.item(0).text()
+        dialog.close()
+
+    def test_無い機能は案内を出し別の言葉で探せと言わない(self, window):
+        """0件のまま「別の言葉で探して」と返すと、無いものを探し続けさせる。"""
+        window.search_menu()
+        dialog = window._menu_search_dialog
+        dialog._field.setText("消しゴム")
+        assert dialog._list.count() == 0
+        assert "消しゴム機能はありません" in dialog._missing.text()
+        assert "別の言葉" not in dialog._count.text()
+        dialog.close()
+
+    def test_案内は打ち直すと消える(self, window):
+        window.search_menu()
+        dialog = window._menu_search_dialog
+        dialog._field.setText("ペン")
+        assert dialog._missing.text()
+        dialog._field.setText("コマ")
+        assert dialog._missing.text() == ""
+        assert dialog._list.count() > 0
+        dialog.close()
+
+    def test_案内を出しても一覧は消さない(self, window):
+        """「PSD」は書き出しの説明に出てくる。案内は上に足すだけ。"""
+        window.search_menu()
+        dialog = window._menu_search_dialog
+        dialog._field.setText("PSD")
+        assert "【書き出し】" in dialog._missing.text()
+        assert dialog._list.count() > 0
         dialog.close()
 
 

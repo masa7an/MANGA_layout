@@ -13,6 +13,11 @@
 先回りで表を作ると、使われない言い換えまで抱え込んだうえ、項目を増やす
 たびに足す手間が残る。表に無い言葉は今も単純な文字の一致だけで探す。
 
+**無い機能は、無いと答える**（→ `MISSING_FEATURES`）。絵を描くソフトなら
+必ずある言葉（「ペン」「消しゴム」など）で探した人に、項目が0件だとしか
+返さないと、**無いのか呼び名が違うだけなのかが分からない**まま探し続ける
+ことになる。
+
 押した項目については、**そのメニューを画面上端で四角く囲む**
 （→ `MainWindow.highlight_menu`）。実行はしないまま、最初に開く場所だけ
 名指しする。
@@ -21,6 +26,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -96,6 +102,70 @@ SYNONYMS = {
     "コマ割": "コマ",
     "コマわり": "コマ",
 }
+
+
+# 無い機能を尋ねられたときの答え。**言い換え表とは別に持つ。**
+#
+# `SYNONYMS` は「同じものの別の呼び名」を結ぶ表で、こちらは**結ぶ先が無い**
+# ことを答える表。混ぜると、読み替えた結果がたまたま当たらなかっただけの
+# 場合と、そもそも機能が無い場合を区別できなくなる。
+#
+# **並ぶのは、README を読まずに触った人が最初に打つ言葉**（本人の要望
+# 2026-08-07）。このアプリはコマ割りとフキダシの配置だけを受け持ち、絵は
+# 描かないが、**そう書いてあるのは README のほう**で、探した人には届かない。
+# 0件とだけ返すと「無いのか、呼び名が違うだけなのか」が分からず探し続ける。
+#
+# **当たっても項目の一覧は消さない。** 案内は上に足すだけで、文字が
+# たまたま一致した項目はそのまま並べる（「PSD」は書き出しの説明に出てくる）。
+PAINT_SOFT = "ペイントソフト側で行ってください"
+_NO_FEATURE = f"その機能はありません。{PAINT_SOFT}"
+
+MISSING_FEATURES = {
+    "ペン": f"ペン入れ機能はありません。{PAINT_SOFT}",
+    "消しゴム": f"消しゴム機能はありません。{PAINT_SOFT}",
+    # 呼び名が4つあるが、答えは1つ（同じ文面は1回しか出さない → `missing_notes`）
+    "擬音": f"擬音機能はありません。{PAINT_SOFT}",
+    "オノマトペ": f"擬音機能はありません。{PAINT_SOFT}",
+    "描き文字": f"擬音機能はありません。{PAINT_SOFT}",
+    "効果音": f"擬音機能はありません。{PAINT_SOFT}",
+    "ブラシ": _NO_FEATURE,
+    "レイヤー効果": _NO_FEATURE,
+    "レイヤー結合": _NO_FEATURE,
+    "AI生成": _NO_FEATURE,
+    "ベクター": _NO_FEATURE,
+    "フィルター": _NO_FEATURE,
+    "色調補正": _NO_FEATURE,
+    "印刷": _NO_FEATURE,
+    "グラデーション": _NO_FEATURE,
+    "図形": _NO_FEATURE,
+    "ぼかし": _NO_FEATURE,
+    "シャープ": _NO_FEATURE,
+    # PSD は**片道だけある**ので、無いとは言わずにどちら向きかを答える。
+    # 大文字・全角は下で潰すので、この1件で「PSD」「ｐｓｄ」まで届く
+    "psd": "PSD 機能は、【書き出し】のみとなっています",
+}
+
+
+def missing_notes(query: str) -> list[str]:
+    """打った言葉に含まれる「無い機能」の案内（→ `MISSING_FEATURES`）。
+
+    **文の中に混じっていても拾う。**「psdを入力するには？」のように、
+    探す言葉ではなく質問の形で打たれることを見込んでいる。
+
+    大文字小文字と全角半角は区別しない（「PSD」「ｐｓｄ」も同じ）。
+    同じ答えが2つ並ばないよう、**文面**で重複を落とす。
+    """
+    asked = _fold(query)
+    notes: list[str] = []
+    for word, note in MISSING_FEATURES.items():
+        if _fold(word) in asked and note not in notes:
+            notes.append(note)
+    return notes
+
+
+def _fold(text: str) -> str:
+    """大文字小文字・全角半角の違いを潰す。"""
+    return unicodedata.normalize("NFKC", text).casefold()
 
 
 def plain_label(text: str) -> str:
@@ -271,6 +341,13 @@ class MenuSearchDialog(QDialog):
 
         self._count = QLabel()
 
+        # 無い機能の案内（→ `MISSING_FEATURES`）。**一覧の上に置く。**
+        # 下に置くと、0件の一覧を見た時点で窓を閉じられて読まれない。
+        # **灰色にしない**（下の `note` と違い、これは読ませたい答え）
+        self._missing = QLabel()
+        self._missing.setWordWrap(True)
+        self._missing.hide()
+
         self._list = QListWidget()
         # 説明が長い項目があるので折り返す。横スクロールで読ませない
         self._list.setWordWrap(True)
@@ -294,6 +371,7 @@ class MenuSearchDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self._field)
         layout.addWidget(self._count)
+        layout.addWidget(self._missing)
         layout.addWidget(self._list)
         layout.addWidget(note)
         layout.addWidget(buttons)
@@ -336,15 +414,24 @@ class MenuSearchDialog(QDialog):
         )
 
     def _filter(self) -> None:
-        self._hits = search(self._entries, self._field.text())
+        query = self._field.text()
+        self._hits = search(self._entries, query)
         self._list.clear()
         for entry in self._hits:
             self._list.addItem(item_text(entry))
-        self._count.setText(
-            f"{len(self._hits)} 件"
-            if self._hits
-            else "見つかりません（別の言葉で探してください）"
-        )
+
+        notes = missing_notes(query)
+        self._missing.setText("\n".join(notes))
+        self._missing.setVisible(bool(notes))
+
+        if self._hits:
+            self._count.setText(f"{len(self._hits)} 件")
+        else:
+            # **無いと答えたときは「別の言葉で探して」と言わない。**
+            # 言い直しても出てこないものを、探し続けさせることになる
+            self._count.setText(
+                "見つかりません" if notes else "見つかりません（別の言葉で探してください）"
+            )
 
     def _announce(self, item: QListWidgetItem) -> None:
         """押された行の、いちばん上のメニュー名を知らせる。"""
