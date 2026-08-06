@@ -175,6 +175,13 @@ class Test窓:
 
         assert load_settings(path).jpg_quality == 70
 
+    def test_項目と項目の間を1行ぶん空ける(self, path, qapp):
+        """説明が入力欄の真下に数行続くので、詰めると次の項目とくっついて
+        どこまでが1つの項目か読めない（本人の指摘 2026-08-06）。"""
+        editor = SettingsEditor(path)
+
+        assert editor.form.verticalSpacing() >= editor.fontMetrics().height()
+
     def test_設定が無くても開ける(self, path, qapp):
         """初めて使うとき、まだアプリを起動していない場合。"""
         editor = SettingsEditor(path)

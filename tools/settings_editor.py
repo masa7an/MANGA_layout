@@ -216,7 +216,14 @@ class SettingsEditor(QDialog):
         self.opacity.setSingleStep(ROUGH_OPACITY_STEP)
         self.opacity.setValue(settings.rough_opacity)
 
-        form = QFormLayout()
+        self.form = QFormLayout()
+        form = self.form
+        # **項目と項目の間を1行ぶん空ける。** 説明が入力欄の真下に数行続くので、
+        # 既定の詰まった間隔だと、下の説明が次の項目の見出しとくっついて
+        # 見え、どこまでが1つの項目なのか読み取れない（本人の指摘 2026-08-06）。
+        # 固定の px ではなく文字の高さから取るのは、表示の拡大率や文字の
+        # 大きさが変わっても「1行ぶん」であり続けるようにするため
+        form.setVerticalSpacing(self.fontMetrics().height())
         form.addRow(
             "最初に開くフォルダ",
             self._field(
