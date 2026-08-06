@@ -89,6 +89,12 @@ SYNONYMS = {
     "ふきだし": "フキダシ",
     "テキスト": "セリフ",
     "びっくり": "ビックリ",
+    # 「コマ」だけなら元から当たるが、日本語IMEは「コマ割り」までを
+    # ひとまとまりで確定するので、送り仮名が付いた形が打ち込まれる
+    # （本人の要望 2026-08-07）。**送り仮名を落とすだけの読み替え**
+    "コマ割り": "コマ",
+    "コマ割": "コマ",
+    "コマわり": "コマ",
 }
 
 
@@ -189,9 +195,15 @@ def _walk(
 
 
 def read_as(word: str) -> str:
-    """言い換えをアプリの表記に読み替える（→ `SYNONYMS`）。表に無ければそのまま。"""
-    for written, used in SYNONYMS.items():
-        word = word.replace(written, used)
+    """言い換えをアプリの表記に読み替える（→ `SYNONYMS`）。表に無ければそのまま。
+
+    **長い言い換えから先に当てる。** 短いほうを先に当てると、長いほうの
+    前半だけが持っていかれる（「コマ割り」に「コマ割」が先に当たると
+    「コマり」になって、どこにも当たらなくなる）。表に書いた順に
+    引きずられないよう、ここで並べ替える。
+    """
+    for written in sorted(SYNONYMS, key=len, reverse=True):
+        word = word.replace(written, SYNONYMS[written])
     return word
 
 

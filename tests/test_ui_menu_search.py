@@ -149,6 +149,16 @@ class Test探す:
         """
         assert "マーク → ビックリマークを追加 (M)" in trails(search(entries, written))
 
+    @pytest.mark.parametrize("written", ["コマ割", "コマ割り", "コマわり"])
+    def test_コマの送り仮名付きでも当たる(self, entries, written):
+        """日本語IMEが「コマ割り」までを一括で確定するため（本人の要望 2026-08-07）。
+
+        長い言い換えを先に当てないと、「コマ割り」が「コマり」になって
+        どこにも当たらない（→ `read_as`）。
+        """
+        assert trails(search(entries, written)) == trails(search(entries, "コマ"))
+        assert "コマ → コマ追加 (P)" in trails(search(entries, written))
+
     def test_言い換えは語の一部でも効く(self, entries):
         """「ふきだしを追加」のように、続けて打たれても読み替える。"""
         assert trails(search(entries, "ふきだしを追加")) == trails(
