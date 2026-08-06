@@ -21,6 +21,7 @@ from manga_layout import Rect, new_project
 from manga_layout.check import (
     GROUP_FIX,
     GROUP_LEFTOVER,
+    KIND_BLANK_PAGE,
     KIND_EMPTY_PANEL,
     KIND_EMPTY_TEXT,
     KIND_MISSING_ASSET,
@@ -33,7 +34,7 @@ from manga_layout.check import (
 )
 from manga_layout.focus import default_focus
 from manga_layout.layout import outside_page
-from manga_layout.model import PageNote
+from manga_layout.model import PageNote, PageRough
 
 # フキダシは用紙の真ん中あたりに置く。半径 200px の円
 BALLOON_RECT = Rect(300.0, 300.0, 400.0, 400.0)
@@ -54,10 +55,40 @@ def project_with_balloon_text(content: str, rect: Rect, direction: str = "vertic
     return project, balloon, text
 
 
-class Test何も無ければ何も出ない:
-    def test_作った直後の作品は空(self):
-        assert inspect_project(new_project()) == []
+class Test何も置いていないページ:
+    """空のコマ1つは拾うのに白紙は素通り、では判定が逆立ちしている。"""
 
+    def test_作った直後の白紙を拾う(self):
+        project = new_project()
+        found = inspect_project(project)
+        assert kinds(found) == [KIND_BLANK_PAGE]
+        assert found[0].object_id is None
+
+    def test_コマが1つでもあれば白紙ではない(self):
+        project = new_project()
+        project.add_panel(project.pages[0], Rect(100.0, 100.0, 400.0, 400.0))
+        assert KIND_BLANK_PAGE not in kinds(inspect_project(project))
+
+    def test_フキダシだけでも白紙ではない(self):
+        project = new_project()
+        project.add_balloon(project.pages[0], BALLOON_RECT)
+        assert KIND_BLANK_PAGE not in kinds(inspect_project(project))
+
+    def test_ラフだけのページは白紙(self):
+        """ラフは書き出しでは切られる（→ 6.23）ので、出るのは白紙のまま。"""
+        project = new_project()
+        project.pages[0].rough = PageRough(
+            asset="assets/rough.png", rect=Rect(0.0, 0.0, 1240.0, 1754.0), src_px=(620, 877)
+        )
+        assert kinds(inspect_project(project)) == [KIND_BLANK_PAGE]
+
+    def test_付箋を貼っただけでは中身にならない(self):
+        project = new_project()
+        project.pages[0].note = PageNote(color="blue")
+        assert set(kinds(inspect_project(project))) == {KIND_BLANK_PAGE, KIND_NOTE_LEFT}
+
+
+class Test何も無ければ何も出ない:
     def test_絵もセリフも入ったページで何も出ない(self):
         project = new_project()
         page = project.pages[0]
@@ -238,6 +269,8 @@ class Test実体の見つからない画像:
 class Test付箋の残り:
     def test_貼ってあれば拾う(self):
         project = new_project()
+        # 白紙として拾われないよう、中身を1つ置いておく
+        project.add_balloon(project.pages[0], BALLOON_RECT)
         project.pages[0].note = PageNote(color="yellow", text="あとで直す")
         found = inspect_project(project)
         assert kinds(found) == [KIND_NOTE_LEFT]
@@ -250,6 +283,7 @@ class Test並びと印:
         """1ページ目に軽いもの、2ページ目に重いものを置く。"""
         project = new_project()
         first = project.pages[0]
+        project.add_balloon(first, BALLOON_RECT)  # 白紙にはしない
         first.note = PageNote(color="blue")
 
         second = project.add_page()

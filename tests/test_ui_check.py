@@ -15,6 +15,7 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import Rect
+from manga_layout.focus import default_focus
 from manga_layout.model import PageNote
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.pages import (
@@ -35,12 +36,27 @@ def window(qapp):
 
 @pytest.fixture
 def dirty_pages(window):
-    """2ページ。1ページ目だけに直し忘れ（空のコマ）を置く。"""
+    """2ページ。1ページ目だけに直し忘れ（空のコマ）を置く。
+
+    **2ページ目にもフキダシを1つ置く。** 何も無いページは「何も置いていない
+    ページ」として拾われるので、置かないと2ページとも印が付いてしまう。
+    """
     with window.state.edit("下ごしらえ") as project:
         project.add_panel(project.pages[0], Rect(100.0, 100.0, 400.0, 400.0))
-        project.add_page()
+        second = project.add_page()
+        project.add_balloon(second, Rect(300.0, 300.0, 400.0, 400.0))
     window.state.history.mark_saved()
     return window
+
+
+def fix_the_page(window) -> None:
+    """1ページ目の直し忘れを直す。
+
+    **コマを消すのではなく、中身を入れる。** 消すと、こんどは「何も置いて
+    いないページ」として拾われる（集中線だけのコマは空ではない）。
+    """
+    with window.state.edit("集中線を入れる") as project:
+        project.pages[0].panels[0].focus_lines = default_focus()
 
 
 def page_ids(window) -> list[str]:
@@ -99,8 +115,7 @@ class Test紫の印:
         window.run_check()
         assert window.state.check_marks
 
-        with window.state.edit("空のコマを消す") as project:
-            project.pages[0].panels.clear()
+        fix_the_page(window)
         window.run_check()
 
         assert window.state.check_marks == set()
@@ -227,8 +242,7 @@ class Test結果の窓:
         window.run_check()
         assert "絵の入っていないコマ" in result_text(window)
 
-        with window.state.edit("空のコマを消す") as project:
-            project.pages[0].panels.clear()
+        fix_the_page(window)
         window.run_check()
 
         assert "見つかりませんでした" in result_text(window)
@@ -249,7 +263,9 @@ class Test件数の知らせ:
         window.run_check()
         assert seen and "1 件" in seen[-1]
 
-    def test_見つからなければそう言う(self, window):
+    def test_見つからなければそう言う(self, dirty_pages):
+        window = dirty_pages
+        fix_the_page(window)
         seen: list[str] = []
         window.state.message.connect(seen.append)
         window.run_check()

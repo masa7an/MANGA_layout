@@ -28,6 +28,7 @@ from .vertical import COLUMN_PITCH
 
 # 拾うものの種類（→ 要件定義 6.29）
 KIND_MISSING_ASSET = "missing_asset"
+KIND_BLANK_PAGE = "blank_page"
 KIND_TEXT_OVERFLOW = "text_overflow"
 KIND_EMPTY_TEXT = "empty_text"
 KIND_EMPTY_PANEL = "empty_panel"
@@ -35,6 +36,7 @@ KIND_NOTE_LEFT = "note_left"
 
 KIND_LABELS = {
     KIND_MISSING_ASSET: "実体の見つからない画像",
+    KIND_BLANK_PAGE: "何も置いていないページ",
     KIND_TEXT_OVERFLOW: "フキダシからはみ出したセリフ",
     KIND_EMPTY_TEXT: "空のままのセリフ",
     KIND_EMPTY_PANEL: "絵の入っていないコマ",
@@ -44,6 +46,7 @@ KIND_LABELS = {
 # 重い順。**この順で窓に出す**（→ 要件定義 6.29「重さの違い」）
 KIND_ORDER = (
     KIND_MISSING_ASSET,
+    KIND_BLANK_PAGE,
     KIND_TEXT_OVERFLOW,
     KIND_EMPTY_TEXT,
     KIND_EMPTY_PANEL,
@@ -109,6 +112,14 @@ def inspect_page(
         return Finding(page_index, page.id, kind, object_id)
 
     found: list[Finding] = []
+
+    # **何も置いていないページ**（2026-08-06 に追加）。書き出すと白紙が1枚出る。
+    #
+    # 空のコマ1つは拾うのに白紙は素通り、では判定が逆立ちしている。
+    # **ラフ（→ 6.23）は数えない。** 書き出しでは切られる（`PageRenderer`）ので、
+    # 敷いてあっても書き出した結果は白紙のまま
+    if not page.panels and not page.floating:
+        found.append(hit(KIND_BLANK_PAGE))
 
     if has_asset is not None:
         # **コマの中の画像とマークの両方を見る。** マークはコマの子ではないが
