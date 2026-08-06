@@ -152,14 +152,20 @@ class Test縞:
     """
 
     def test_明るい配色では地より暗い(self):
-        stripe = stripe_color(QColor("white"), QColor("black"))
+        stripe = stripe_color(QColor("white"))
         assert stripe.lightness() < QColor("white").lightness()
 
-    def test_暗い配色では地より明るい(self):
-        """**ここが白い帯になっていないこと。** 地の隣に留まる。"""
+    def test_暗い配色でも地より暗い(self):
+        """**明るい帯にしない。** 暗い配色で背景が光ると、読む先である
+        文字より背景が目立つ（本人の指摘 2026-08-07）。"""
         base = QColor("#2d2d2d")
-        stripe = stripe_color(base, QColor("white"))
-        assert base.lightness() < stripe.lightness() < QColor("white").lightness()
+        stripe = stripe_color(base)
+        assert 0 < stripe.lightness() < base.lightness()
+
+    def test_真っ黒な地では明るい側へ逃がす(self):
+        """下げる先が無い。そのまま下げると縞が消える。"""
+        stripe = stripe_color(QColor("black"))
+        assert stripe.lightness() > 0
 
     def test_1行おきに付く(self, window):
         window.show_shortcuts()
@@ -206,7 +212,7 @@ class Test縞:
 
         after = tree.topLevelItem(0).child(1).background(0).color()
         assert after != before
-        assert after.lightness() > QColor("#2d2d2d").lightness()
+        assert after.lightness() < QColor("#2d2d2d").lightness()
 
 
 class Testメニューから辿れる:

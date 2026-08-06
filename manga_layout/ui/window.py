@@ -53,8 +53,8 @@ from .menus import (
     TextMenu,
 )
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
-from .shortcuts import SHORTCUTS_HINT, ShortcutsDialog, collect_groups
 from .project_io import ProjectIO
+from .shortcuts import SHORTCUTS_HINT, ShortcutsDialog, collect_groups
 from .state import (
     ADJUST_TOOLS,
     BALLOON_STYLE_LABELS,
