@@ -62,6 +62,7 @@ from .state import (
     TOOL_BALLOON_CLOUD,
     TOOL_BALLOON_JAGGED,
     TOOL_BALLOON_RECT,
+    TOOL_BALLOON_SPIKY,
     TOOL_BALLOON_WAVY,
     TOOL_LABELS,
     TOOL_PANEL,
@@ -302,6 +303,9 @@ class MainWindow(QMainWindow):
             (TOOL_SPLIT_SLANT, "K"),
             (TOOL_BALLOON, "B"),
             (TOOL_BALLOON_JAGGED, "G"),
+            # トゲトゲ（ギザギザの曲線版 → 6.32）にキーは割り当てない。
+            # ギザギザと二者択一で、作風を決めたあとは片方しか使わない
+            (TOOL_BALLOON_SPIKY, None),
             (TOOL_BALLOON_WAVY, "W"),
             # 雲と四角にキーは割り当てない。**キーを足すこと自体に値打ちは
             # 無く、元から通っていたものを塞ぐ副作用は必ず付く**

@@ -102,6 +102,7 @@ TOOL_SPLIT_V = "split_v"
 TOOL_SPLIT_SLANT = "split_slant"
 TOOL_BALLOON = "balloon"
 TOOL_BALLOON_JAGGED = "balloon_jagged"
+TOOL_BALLOON_SPIKY = "balloon_spiky"
 TOOL_BALLOON_WAVY = "balloon_wavy"
 TOOL_BALLOON_CLOUD = "balloon_cloud"
 TOOL_BALLOON_RECT = "balloon_rect"
@@ -132,6 +133,7 @@ ADJUST_TOOLS = (TOOL_ROUGH, TOOL_TONE_AREA)
 BALLOON_TOOLS = {
     TOOL_BALLOON: "ellipse",
     TOOL_BALLOON_JAGGED: "jagged",
+    TOOL_BALLOON_SPIKY: "spiky",
     TOOL_BALLOON_WAVY: "wavy",
     TOOL_BALLOON_CLOUD: "cloud",
     TOOL_BALLOON_RECT: "rect",
@@ -173,6 +175,9 @@ NOTE_COLOR_LABELS = {
 BALLOON_STYLE_LABELS = {
     "ellipse": "丸い_フキダシ",
     "jagged": "ギザギザ_フキダシ",
+    # ギザギザの曲線版（→ 6.32）。**ギザギザの隣に並べる。** 同じ叫びの
+    # 直線版・曲線版なので、離すと見比べられない
+    "spiky": "トゲトゲ_フキダシ",
     "wavy": "ふわふわ_フキダシ",
     "cloud": "雲_フキダシ",
     "rect": "四角_フキダシ",

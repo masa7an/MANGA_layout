@@ -84,6 +84,15 @@ class BalloonSettings:
     jagged_spikes: int = 14
     # ギザギザの谷の深さ。半径に対する割合（0.25 なら谷が 75% の位置）
     jagged_depth: float = 0.33
+    # トゲトゲ（ギザギザの曲線版）の山の数と谷の深さ。**ギザギザと同じ値に
+    # してある。** 同じ叫びの形の直線版・曲線版なので、数と深さまで違うと
+    # 「曲線にした」以外の差が混ざり、どちらを選ぶかの判断がぶれる
+    spiky_spikes: int = 14
+    spiky_depth: float = 0.33
+    # トゲトゲの頂の鋭さ。**小さいほど尖る**（頂の近くで一気に落ちる）。
+    # 1.0 より大きくすると頂の近くが平らになって角が消え、ふわふわ側へ
+    # 寄っていく＝叫びに読めなくなる（→ `spiky_points`）
+    spiky_sharpness: float = 0.7
     # 波形の波の数。ギザギザより多くして、細かく震えて見えるようにする
     wavy_waves: int = 16
     # 波形の谷の深さ。半径に対する割合。**ギザギザより浅くする。**
@@ -676,6 +685,56 @@ def jagged_points(
     )
 
 
+# トゲトゲの山1つを最低何本の線分で描くか（→ `spiky_points`）。
+# **波形（8本）より多くする。** 山と谷の間が反っていることがこの形の意味
+# なので、そこが直線に落ちるとギザギザとの差が消える（→ 6.32）
+SPIKY_MIN_SEGMENTS_PER_SPIKE = 28
+
+
+def spiky_points(
+    rect: Rect, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
+) -> tuple[tuple[float, float], ...]:
+    """トゲトゲ（叫び・曲線版）の輪郭。
+
+    ギザギザと同じ叫びの形だが、**山と谷を直線ではなく曲線でつなぐ。**
+    頂は尖ったまま、谷だけが丸くなる（要件定義 6.32）。
+
+    作りはふわふわ・雲と同じで、楕円の半径を角度ごとに増減させる。違うのは
+    増減のさせ方だけ。
+
+    山1つの中の位置 `s`（頂で 0.0、谷で 1.0）に対して
+    `sin(π s / 2) ** sharpness` だけ半径を引く。
+
+    - `s → 0`（頂）で傾きが残るので、**頂は角のまま**
+    - `s = 1`（谷）で傾きが 0 になるので、**谷はなめらかに底を打つ**
+
+    ふわふわ（`wavy_points`）が余弦で頂も谷も丸めるのと、ここが違う。
+
+    `sharpness` は頂の近くの落ち方だけを変える。1.0 より小さいと急に
+    落ちて鋭く、大きいと頂の近くが平らになって角そのものが消える。
+    既定を 1.0 より小さくしてあるのは、**角が残ることがこの形の意味**
+    だから（要件定義 6.32）。
+    """
+    spikes = max(3, settings.spiky_spikes)
+    depth = min(max(settings.spiky_depth, 0.0), 0.9)
+    sharpness = max(settings.spiky_sharpness, 0.05)
+    # 頂点数は山の数の整数倍にする。半端だと最後の山だけ途中で打ち切られ、
+    # 始点との継ぎ目に角が出る（ふわふわと同じ理由 → `wavy_points`）
+    per_spike = max(
+        SPIKY_MIN_SEGMENTS_PER_SPIKE, -(-max(8, settings.ellipse_segments) // spikes)
+    )
+    n = per_spike * spikes
+    step = 2.0 * math.pi / n
+    points = []
+    for i in range(n):
+        # 山1つの中での位置（0.0〜1.0）。0.0 が頂、0.5 で谷、1.0 で次の頂
+        position = (i % per_spike) / per_spike
+        s = 1.0 - abs(1.0 - 2.0 * position)
+        ratio = 1.0 - depth * math.sin(math.pi * s / 2.0) ** sharpness
+        points.append(_on_ellipse(rect, i * step, ratio))
+    return tuple(points)
+
+
 # 波形の1波を最低何本の線分で描くか（→ `wavy_points`）
 WAVY_MIN_SEGMENTS_PER_WAVE = 8
 
@@ -843,6 +902,8 @@ def balloon_outline(
     """
     if balloon.style == "jagged":
         return jagged_points(balloon.rect, settings)
+    if balloon.style == "spiky":
+        return spiky_points(balloon.rect, settings)
     if balloon.style == "wavy":
         return wavy_points(balloon.rect, settings)
     if balloon.style == "cloud":
@@ -869,6 +930,8 @@ def _tail_base_ratio(balloon: BalloonObject, settings: BalloonSettings) -> float
     """
     if balloon.style == "jagged":
         return 1.0 - min(max(settings.jagged_depth, 0.0), 0.9)
+    if balloon.style == "spiky":
+        return 1.0 - min(max(settings.spiky_depth, 0.0), 0.9)
     if balloon.style == "wavy":
         return 1.0 - min(max(settings.wavy_depth, 0.0), 0.9)
     if balloon.style == "cloud":

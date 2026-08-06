@@ -15,6 +15,7 @@ import pytest
 from manga_layout import Rect, new_project
 from manga_layout.layout import (
     CLOUD_MIN_SEGMENTS_PER_LOBE,
+    SPIKY_MIN_SEGMENTS_PER_SPIKE,
     TAIL_BUBBLE_COUNT,
     TAIL_BUBBLE_MAX_RATIO,
     TAIL_LENGTH_MIN_PX,
@@ -33,6 +34,7 @@ from manga_layout.layout import (
     ellipse_points,
     jagged_points,
     root_y_at,
+    spiky_points,
     tail_base_angle,
     tail_body_contains,
     tail_bubbles,
@@ -105,6 +107,85 @@ class TestJagged:
         assert len(points) >= 6
 
 
+class TestSpiky:
+    """トゲトゲ（ギザギザの曲線版 → 6.32）。
+
+    **頂は角のまま・谷だけ丸い**が、この形の意味そのもの。両方丸めれば
+    ふわふわ（不安）に、両方尖らせればギザギザに戻る。数で押さえられるのは
+    ここまでで、鋭さの好みは目で見るしかない。
+    """
+
+    def test_山と谷の間に収まる(self):
+        for point in spiky_points(RECT, SETTINGS):
+            ratio = distance_ratio(RECT, point)
+            assert 1.0 - SETTINGS.spiky_depth - 1e-9 <= ratio <= 1.0 + 1e-9
+
+    def test_頂点数は山の数の整数倍(self):
+        """半端だと最後の山だけ途中で切れ、始点との継ぎ目に角が出る。"""
+        for spikes in (3, 7, 14, 23):
+            points = spiky_points(RECT, BalloonSettings(spiky_spikes=spikes))
+            assert len(points) % spikes == 0
+
+    def test_始点は頂で一周して戻る(self):
+        points = spiky_points(RECT, SETTINGS)
+        assert distance_ratio(RECT, points[0]) == pytest.approx(1.0)
+        per_spike = len(points) // SETTINGS.spiky_spikes
+        assert distance_ratio(RECT, points[per_spike]) == pytest.approx(1.0)
+        # 山1つの真ん中がいちばん深い谷
+        valley = distance_ratio(RECT, points[per_spike // 2])
+        assert valley == pytest.approx(1.0 - SETTINGS.spiky_depth)
+
+    def test_頂は角のまま谷だけ丸い(self):
+        """ここが崩れると、ふわふわ（不安）にもギザギザにも化ける。
+
+        頂のすぐ隣では半径が大きく落ち（角）、谷のすぐ隣ではほとんど
+        動かない（丸い底）。倍率で見ておけば、鋭さを調整しても壊れない。
+        """
+        points = spiky_points(RECT, SETTINGS)
+        per_spike = len(points) // SETTINGS.spiky_spikes
+        ratios = [distance_ratio(RECT, p) for p in points]
+        at_peak = abs(ratios[1] - ratios[0])
+        valley = per_spike // 2
+        at_valley = abs(ratios[valley + 1] - ratios[valley])
+        assert at_peak > at_valley * 10.0
+
+    def test_ギザギザと違って隣同士が跳ねない(self):
+        """曲線であることの裏返し。1本ごとの刻みは谷の深さより小さい。"""
+        ratios = [distance_ratio(RECT, p) for p in spiky_points(RECT, SETTINGS)]
+        steps = [
+            abs(b - a) for a, b in zip(ratios, ratios[1:] + ratios[:1], strict=True)
+        ]
+        assert max(steps) < SETTINGS.spiky_depth
+
+    def test_1山あたりの本数に下限がある(self):
+        """少ない本数で描くと山と谷の間が直線になり、ギザギザと差が出ない。"""
+        points = spiky_points(RECT, BalloonSettings(spiky_spikes=60))
+        assert len(points) == 60 * SPIKY_MIN_SEGMENTS_PER_SPIKE
+
+    def test_谷が深すぎても中心を越えない(self):
+        points = spiky_points(RECT, BalloonSettings(spiky_depth=5.0))
+        assert min(distance_ratio(RECT, p) for p in points) > 0.0
+
+    def test_山が少なすぎても形になる(self):
+        points = spiky_points(RECT, BalloonSettings(spiky_spikes=0))
+        assert len(points) >= 8
+
+    def test_鋭さが0以下でも壊れない(self):
+        points = spiky_points(RECT, BalloonSettings(spiky_sharpness=0.0))
+        assert len(points) >= 8
+        for point in points:
+            assert 1.0 - SETTINGS.spiky_depth - 1e-9 <= distance_ratio(RECT, point) <= 1.0 + 1e-9
+
+    def test_外接矩形に収まる(self):
+        for x, y in spiky_points(RECT, SETTINGS):
+            assert RECT.x - 1e-9 <= x <= RECT.right + 1e-9
+            assert RECT.y - 1e-9 <= y <= RECT.bottom + 1e-9
+
+    def test_同じ点が重複しない(self):
+        points = spiky_points(RECT, SETTINGS)
+        assert len(set(points)) == len(points)
+
+
 class TestWavy:
     def test_山と谷の間に収まる(self):
         """半径は 1.0（山）から 1 - depth（谷）の間だけを動く。"""
@@ -170,6 +251,8 @@ class TestOutline:
         assert len(balloon_outline(balloon, SETTINGS)) == SETTINGS.jagged_spikes * 2
         balloon.style = "wavy"
         assert balloon_outline(balloon, SETTINGS) == wavy_points(RECT, SETTINGS)
+        balloon.style = "spiky"
+        assert balloon_outline(balloon, SETTINGS) == spiky_points(RECT, SETTINGS)
 
 
 class TestTail:
@@ -192,6 +275,14 @@ class TestTail:
         balloon.tail.tip = (30.0, 90.0)
         base1, _, base2 = tail_triangle(balloon, SETTINGS)
         limit = 1.0 - SETTINGS.wavy_depth
+        assert distance_ratio(RECT, base1) <= limit + 1e-9
+        assert distance_ratio(RECT, base2) <= limit + 1e-9
+
+    def test_トゲトゲでも付け根は谷より内側にある(self, balloon):
+        balloon.style = "spiky"
+        balloon.tail.tip = (30.0, 90.0)
+        base1, _, base2 = tail_triangle(balloon, SETTINGS)
+        limit = 1.0 - SETTINGS.spiky_depth
         assert distance_ratio(RECT, base1) <= limit + 1e-9
         assert distance_ratio(RECT, base2) <= limit + 1e-9
 
