@@ -34,6 +34,7 @@ from ..model import (
 from ..recent_project import load_recent_project
 from ..storage import PROJECT_FILENAME
 from ..tone import KIND_LABELS as TONE_KIND_LABELS, level_label as tone_level_label
+from .check_view import CHECK_MENU_HINT
 from .export import EXPORT_DIRNAME
 from .state import (
     BALLOON_STYLE_LABELS,
@@ -209,6 +210,9 @@ class FileMenu:
         menu.addSeparator()
         self._build_rough_menu(window, menu)
         menu.addSeparator()
+        # **書き出しの隣に置く**（→ 要件定義 10.1）。書き出す直前に通る場所に
+        # 置かないと、点検そのものを忘れる。ショートカットは足さない
+        menu.addAction(window._act("抜けチェック...", window.run_check, None, CHECK_MENU_HINT))
         menu.addAction(
             window._act(
                 "画像で書き出し...",

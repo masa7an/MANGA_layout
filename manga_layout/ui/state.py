@@ -251,6 +251,10 @@ class EditorState(QObject):
     page_changed = Signal()
     # 状態表示に出すお知らせ
     message = Signal(str)
+    # 点検の印が変わった（→ 要件定義 10.1）。**`changed` とは別にする。**
+    # あちらは「モデルが変わった＝描き直しが要る」の合図で、点検の印は
+    # 作品を1文字も変えないので、混ぜると印を付けただけで未保存になる
+    check_changed = Signal()
 
     def __init__(self, project: Project | None = None, project_dir: pathlib.Path | None = None):
         super().__init__()
@@ -277,6 +281,10 @@ class EditorState(QObject):
         # `project.json` ではなく `settings.json` から来る。窓が起動時と
         # ラフを読み込む直前に入れ直す（→ `MainWindow.load_rough`）
         self.rough_opacity = ROUGH_OPACITY_DEFAULT
+        # 点検で見つかったページの id（→ 要件定義 10.1）。**保存形式には
+        # 載せない。** 作品ではなく「いま押した結果」なので、`Page` に
+        # 持たせると Undo・サムネイルの指紋・project.json の全部に絡む
+        self._check_marks: set[str] = set()
 
     # -- 参照 --------------------------------------------------------------
 
@@ -1671,6 +1679,27 @@ class EditorState(QObject):
         with self._edit_balloon(balloon_id, label) as balloon:
             balloon.attached_panel_id = panel_id
 
+    # -- 点検の印（要件定義 10.1） -------------------------------------------
+
+    @property
+    def check_marks(self) -> set[str]:
+        """紫の印が付いているページの id。**作品には保存されない。**"""
+        return set(self._check_marks)
+
+    def set_check_marks(self, page_ids: set[str]) -> None:
+        """点検の結果で印を付け直す。**前の結果は必ず捨てる。**
+
+        足し込むと、直したものの印が残り続けて嘘になる。押すたびに数え直す
+        （→ 要件定義 10.1）以上、印も毎回まっさらから付け直す。
+        """
+        if page_ids == self._check_marks:
+            return
+        self._check_marks = set(page_ids)
+        self.check_changed.emit()
+
+    def clear_check_marks(self) -> None:
+        self.set_check_marks(set())
+
     # -- ファイル ----------------------------------------------------------
 
     def reset(self, project: Project, project_dir: pathlib.Path | None) -> None:
@@ -1684,6 +1713,9 @@ class EditorState(QObject):
         self.image_cache.clear()
         self.rough_cache.clear()
         self.tone_cache.clear()
+        # 点検の印は前の作品のもの。ページの id ごと別系列になるので、
+        # 残しても付きようがないが、消さないと数だけ残る（→ 要件定義 10.1）
+        self.clear_check_marks()
         self.changed.emit()
         self.selection_changed.emit()
         self.page_changed.emit()

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QToolBar,
 )
 
+from ..check import headline, inspect_project, marked_page_ids
 from ..errors import MangaLayoutError
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect
@@ -30,6 +31,7 @@ from ..model import (
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
+from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
 from .menus import (
     TAIL_TURN_LABELS,
@@ -143,6 +145,10 @@ class MainWindow(QMainWindow):
         # ファイル入出力の部品。メニューがスロットとして参照するので、
         # メニューの組み立てより先に作る
         self.files = ProjectIO(self)
+
+        # 点検の結果の窓（→ 10.1）。**押されるまで作らない。**
+        # 起動のたびに窓を1つ作るのは、一度も使わない場合に無駄が出る
+        self._check_dialog: CheckResultDialog | None = None
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -1126,6 +1132,26 @@ class MainWindow(QMainWindow):
             "削除はしていないので、戻したいときはフォルダから取り出せます。",
         )
         self.state.message.emit(f"{len(moved)} 件を _unused/ へ移しました")
+
+    def run_check(self) -> None:
+        """抜けチェック（点検 → 要件定義 10.1）。**何も直さない。**
+
+        結果は2か所に出す。**何が問題か**は窓に文で（閉じるまで残る）、
+        **どのページか**は一覧の紫の印で。状態表示の1行には件数だけを出す
+        ——6秒で消えるので、明細を置く場所には使えない。
+
+        **作品には一切書かない。** 印は画面の状態（`state.check_marks`）
+        だけに持つので、Undo にも保存形式にもサムネイルの指紋にも乗らない。
+        """
+        findings = inspect_project(
+            self.state.project, lambda ref: self.state.preview(ref) is not None
+        )
+        self.state.set_check_marks(marked_page_ids(findings))
+
+        if self._check_dialog is None:
+            self._check_dialog = CheckResultDialog(self)
+        self._check_dialog.show_result(findings)
+        self.state.message.emit(headline(findings))
 
     def add_full_page_panel(self) -> None:
         rect = full_page_rect(self.state.page, self.state.settings)

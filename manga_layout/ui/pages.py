@@ -83,6 +83,15 @@ NOTE_COLOR_SWATCH = {
 # UserRole（指紋）は既に使っているので、その次を使う
 NOTE_COLOR_ROLE = Qt.ItemDataRole.UserRole + 1
 
+# 点検の印が付いているか（→ 要件定義 10.1）。**付箋とは別の場所に持つ。**
+# 付箋はページに1つだけなので、同じ場所へ入れると自分で貼った付箋が消える
+CHECK_ROLE = Qt.ItemDataRole.UserRole + 2
+
+# 点検の印の色（画面表示専用）。**付箋の3色（黄・桃・青）とぶつからない紫。**
+# 種類ごとに色を分けない——分けると色の意味を覚えることになり、
+# 「色に意味を持たせない」（→ 6.18）と食い違う
+CHECK_COLOR = QColor("#9b5de5")
+
 
 def thumbnail_box(pages: list[Page], width: int = THUMB_WIDTH) -> QSize:
     """サムネイル1枚ぶんの枠。**全ページで同じ大きさにする。**
@@ -311,6 +320,7 @@ class PageItemDelegate(QStyledItemDelegate):
         number = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
         icon = index.data(Qt.ItemDataRole.DecorationRole)
         note_color = index.data(NOTE_COLOR_ROLE)
+        checked = bool(index.data(CHECK_ROLE))
 
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
@@ -346,6 +356,8 @@ class PageItemDelegate(QStyledItemDelegate):
             painter.drawPixmap(thumb_rect, icon.pixmap(width, height))
             if isinstance(note_color, str):
                 self._paint_note(painter, thumb_rect, note_color)
+            if checked:
+                self._paint_check(painter, thumb_rect)
         painter.restore()
 
     def _paint_note(self, painter: QPainter, thumb_rect: QRect, color: str) -> None:
@@ -357,11 +369,26 @@ class PageItemDelegate(QStyledItemDelegate):
         swatch = NOTE_COLOR_SWATCH.get(color)
         if swatch is None:
             return
+        self._paint_badge(painter, self._badge_rect(thumb_rect, right=True), swatch)
+
+    def _paint_check(self, painter: QPainter, thumb_rect: QRect) -> None:
+        """点検で見つかったページの印（要件定義 10.1）。
+
+        **付箋と同じやり方で、置き場所だけ左上に分ける。** 右上は付箋が
+        使っているので、重ねると自分で貼った付箋が見えなくなる。
+        描き方が同じなので、こちらも指紋にも保存形式にも触らない。
+        """
+        self._paint_badge(painter, self._badge_rect(thumb_rect, right=False), CHECK_COLOR)
+
+    def _badge_rect(self, thumb_rect: QRect, right: bool) -> QRect:
         size = 14
-        badge = QRect(thumb_rect.right() - size + 3, thumb_rect.top() - 3, size, size)
+        x = thumb_rect.right() - size + 3 if right else thumb_rect.left() - 3
+        return QRect(x, thumb_rect.top() - 3, size, size)
+
+    def _paint_badge(self, painter: QPainter, badge: QRect, color: QColor) -> None:
         painter.save()
         painter.setPen(QColor("#00000066"))
-        painter.setBrush(swatch)
+        painter.setBrush(color)
         painter.drawEllipse(badge)
         painter.restore()
 
@@ -402,6 +429,8 @@ class PageListPanel(QListWidget):
         self.currentRowChanged.connect(self._on_row_changed)
         state.changed.connect(self.sync)
         state.page_changed.connect(self.sync)
+        # 点検の印（→ 10.1）。作品は変わらないので `changed` は飛ばない
+        state.check_changed.connect(self.sync)
         self.sync()
 
     # -- 大きさ ------------------------------------------------------------
@@ -454,6 +483,8 @@ class PageListPanel(QListWidget):
             f"{row + 1} ページ / {page.size.w:.0f} × {page.size.h:.0f} px"
             f" / コマ {len(page.panels)}"
         )
+        if page.id in self.state.check_marks:
+            text += "\n点検で見つかりました（紫の印）"
         if page.note is not None:
             label = NOTE_COLOR_LABELS.get(page.note.color, page.note.color)
             text += f"\n付箋（{label}）"
@@ -470,6 +501,7 @@ class PageListPanel(QListWidget):
         pages = self.state.project.pages
         box = thumbnail_box(pages)
         keys: list[str] = []
+        marks = self.state.check_marks
 
         self._syncing = True
         try:
@@ -494,6 +526,8 @@ class PageListPanel(QListWidget):
                 item.setData(
                     NOTE_COLOR_ROLE, page.note.color if page.note is not None else None
                 )
+                # 点検の印（→ 10.1）。付箋と同じく指紋の外なので毎回付け直す
+                item.setData(CHECK_ROLE, page.id in marks)
             self.setCurrentRow(self.state.page_index)
         finally:
             self._syncing = False
