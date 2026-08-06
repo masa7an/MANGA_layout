@@ -707,12 +707,26 @@ class ToneMenu:
 
         # 斜線でしか効かない項目には、下の `refresh` でグレーを掛ける。
         # 値は消さないので、斜線に戻せば前の調整がそのまま返る
+        #
+        # **この2つもキーで連打できる**（`Shift+.` / `Shift+,`）。拾う黒と
+        # 同じで、敷いた斜線が濃すぎ／薄すぎかは絵を見ないと決まらない
+        # （本人の指示 2026-08-07）。`setShortcut` を使わない理由は下の
+        # 「拾う黒」と同じ——セリフの入力中に横取りしないため、画面
+        # （`PageView`）側で拾う
         self.density_actions = [
             add_level(
-                "濃く", "density", lambda: window.state.step_tone_density(1), "斜線を太くする（灰色では濃くする）"
+                "濃く",
+                "density",
+                lambda: window.state.step_tone_density(1),
+                "斜線を太くする（灰色では濃くする）",
+                key="Shift+.",
             ),
             add_level(
-                "薄く", "density", lambda: window.state.step_tone_density(-1), "斜線を細くする（灰色では薄くする）"
+                "薄く",
+                "density",
+                lambda: window.state.step_tone_density(-1),
+                "斜線を細くする（灰色では薄くする）",
+                key="Shift+,",
             ),
         ]
         menu.addSeparator()
@@ -732,7 +746,7 @@ class ToneMenu:
             ),
         ]
         menu.addSeparator()
-        # **この2つだけキーで連打できる**（`Shift+]` / `Shift+[`）。拾う黒は
+        # **この2つもキーで連打できる**（`Shift+]` / `Shift+[`）。拾う黒は
         # 絵ごとに違い、行き過ぎたか足りないかを見ながら往復する値なので、
         # メニューを開き直していると合わせられない（本人談 2026-08-06）。
         #

@@ -82,6 +82,7 @@ from ..layout import (
 )
 from ..model import (
     SLANT_RIGHT,
+    TONE_KIND_WHITE,
     BalloonObject,
     FlowLines,
     FocusLines,
@@ -219,8 +220,8 @@ ZOOM_OUT_KEYS = (Qt.Key.Key_Minus,)
 
 # どこまでを黒と見るかを増減するキー（→ 要件定義 6.27）。**`Shift+]` / `Shift+[`。**
 #
-# **ここだけキーにするのは、連打で合わせる値だから。** 濃さ・目の細かさ・
-# 細さは決め打ちで足りるが、拾う黒は絵ごとに違い、**行き過ぎたか足りないかを
+# **ここをキーにするのは、連打で合わせる値だから。** 目の細かさ・細さは
+# 決め打ちで足りるが、拾う黒は絵ごとに違い、**行き過ぎたか足りないかを
 # 見ながら往復する**（本人談 2026-08-06）。メニューだと1回ごとに開き直す。
 #
 # Shift を押した `[` `]` は配列によって `{` `}` として届くので、両方を拾う
@@ -230,6 +231,19 @@ ZOOM_OUT_KEYS = (Qt.Key.Key_Minus,)
 # 左が減る側。修飾キーが違うので取り合いにはならない
 TONE_THRESHOLD_UP_KEYS = (Qt.Key.Key_BraceRight, Qt.Key.Key_BracketRight)
 TONE_THRESHOLD_DOWN_KEYS = (Qt.Key.Key_BraceLeft, Qt.Key.Key_BracketLeft)
+
+# 濃さを増減するキー（本人の指示 2026-08-07）。**`Shift+.` / `Shift+,`。**
+#
+# 拾う黒と**同じ絵を見ながら往復する**組。どこまで拾うかを決めたあと、
+# 敷いた斜線が濃すぎ／薄すぎに見えるのはその場で分かるので、メニューを
+# 開き直さずに続けて詰められるほうがいい。
+#
+# 記号は `>` `<`。**右が増える側**という向きは拾う黒・セリフの大きさと
+# 同じで、キーの位置も `]` `[` の隣の段に並ぶ。Shift を押した `.` `,` が
+# 配列によって `>` `<` にならないことがあるので、素の側も拾う
+# （角括弧と同じ手当て）
+TONE_DENSITY_UP_KEYS = (Qt.Key.Key_Greater, Qt.Key.Key_Period)
+TONE_DENSITY_DOWN_KEYS = (Qt.Key.Key_Less, Qt.Key.Key_Comma)
 
 # ファイル選択ダイアログとドロップ受け入れで共通の対象。
 # assets.sniff_format が見分けられる形式に合わせてある
@@ -1699,6 +1713,18 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # 濃さも同じ扱いで連打できる。**白抜きのときは素通りさせる**——
+        # 白く塗るだけなので濃さは効かず、メニューでもグレーにしてある
+        # （→ `ToneMenu.refresh`）。ここで値だけ動かすと、状態表示に段数が
+        # 出るのに絵が変わらず、変わらない理由を探すことになる（→ 6.12）
+        if self._tone_density_enabled:
+            if key in TONE_DENSITY_UP_KEYS and self.state.step_tone_density(1):
+                event.accept()
+                return
+            if key in TONE_DENSITY_DOWN_KEYS and self.state.step_tone_density(-1):
+                event.accept()
+                return
+
         if key in ZOOM_IN_KEYS:
             self.zoom_in()
             event.accept()
@@ -1713,6 +1739,12 @@ class PageView(QGraphicsView):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    @property
+    def _tone_density_enabled(self) -> bool:
+        """濃さのキーが効くか。メニュー側のグレーと同じ条件（→ `ToneMenu.refresh`）。"""
+        tone = self.state.selected_tone
+        return tone is not None and tone.kind != TONE_KIND_WHITE
 
     def _select_parent(self) -> None:
         """Esc。画像を選んでいれば入っているコマへ、そうでなければ選択解除。

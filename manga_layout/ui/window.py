@@ -305,15 +305,18 @@ class MainWindow(QMainWindow):
             # → `BALLOON_STYLE_LABELS`）。ここだけ別の順にすると、道具箱と
             # フキダシメニューで並びが食い違う
             (TOOL_BALLOON, "B"),
-            # 雲と四角にキーは割り当てない。**キーを足すこと自体に値打ちは
-            # 無く、元から通っていたものを塞ぐ副作用は必ず付く**
-            # （→ 要件定義 7章）。ビックリはてなマークと同じ扱いで、
-            # メニューと右クリックから出す
-            (TOOL_BALLOON_CLOUD, None),
+            # `W` は雲に付ける。**足したのではなく、ふわふわから付け替えた**
+            # （本人の指示 2026-08-07）。並びを使う頻度の順にしたとき
+            # （→ `BALLOON_STYLE_LABELS`）雲が2番目に上がったのに、キーだけ
+            # 前の頻度のまま残っていた。**キーの本数は増やさない**——足すこと
+            # 自体に値打ちは無く、塞ぐ副作用は必ず付く（→ 要件定義 7章）
+            (TOOL_BALLOON_CLOUD, "W"),
             # トゲトゲ（ギザギザの曲線版 → 6.32）にキーは割り当てない。
             # ギザギザと二者択一で、作風を決めたあとは片方しか使わない
             (TOOL_BALLOON_SPIKY, None),
-            (TOOL_BALLOON_WAVY, "W"),
+            # ふわふわと四角にキーは割り当てない。ビックリはてなマークと
+            # 同じ扱いで、メニューと右クリックから出す
+            (TOOL_BALLOON_WAVY, None),
             (TOOL_BALLOON_JAGGED, "G"),
             (TOOL_BALLOON_RECT, None),
             (TOOL_STICKER_EXCLAIM, "M"),

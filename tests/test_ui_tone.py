@@ -905,6 +905,67 @@ def test_セリフを打っている間は横取りしない(window_with_tone):
     assert image(window_with_tone).tone.threshold == before
 
 
+# -- キーで濃さを合わせる -----------------------------------------------------
+
+
+def test_キーで濃くできる(window_with_tone):
+    from PySide6.QtCore import Qt
+
+    before = image(window_with_tone).tone.density
+    press_key(window_with_tone.view, Qt.Key.Key_Greater)
+    assert image(window_with_tone).tone.density > before
+
+
+def test_キーで薄くできる(window_with_tone):
+    from PySide6.QtCore import Qt
+
+    before = image(window_with_tone).tone.density
+    press_key(window_with_tone.view, Qt.Key.Key_Less)
+    assert image(window_with_tone).tone.density < before
+
+
+def test_句読点そのものでも効く(window_with_tone):
+    """Shift を押した `.` `,` は配列によって `>` `<` にならないことがある
+    （角括弧と同じ手当て）。
+    """
+    from PySide6.QtCore import Qt
+
+    before = image(window_with_tone).tone.density
+    press_key(window_with_tone.view, Qt.Key.Key_Period)
+    assert image(window_with_tone).tone.density > before
+
+
+def test_白抜きでは濃さのキーが素通りする(window_with_tone):
+    """白く塗るだけなので濃さは効かない。メニューでもグレーにしてある。
+
+    ここで値だけ動かすと、状態表示に段数が出るのに絵が変わらない。
+    """
+    from PySide6.QtCore import Qt
+
+    window_with_tone.state.set_tone_kind(KIND_WHITE)
+    before = image(window_with_tone).tone.density
+    press_key(window_with_tone.view, Qt.Key.Key_Greater)
+    assert image(window_with_tone).tone.density == before
+
+
+def test_濃さのキーも項目名の数字に出る(window_with_tone):
+    """メニューを開かずに押すので、次に開いたとき合っていること。"""
+    from PySide6.QtCore import Qt
+
+    press_key(window_with_tone.view, Qt.Key.Key_Greater)
+    window_with_tone._refresh()
+    assert level_text(window_with_tone, "濃く").endswith("（Shift+.）")
+
+
+def test_濃さと拾う黒はキーを取り合わない(window_with_tone):
+    """向きは同じ（右が増える側）だが、動かす値は別（→ 要件定義 6.27）。"""
+    from PySide6.QtCore import Qt
+
+    before = image(window_with_tone).tone.threshold
+    press_key(window_with_tone.view, Qt.Key.Key_Greater)
+    assert image(window_with_tone).tone.threshold == before
+
+
 def test_矩形を画像全体に戻せる(window_with_tone):
     state = window_with_tone.state
     state.set_tone_area(image(window_with_tone).id, Rect(0.25, 0.25, 0.5, 0.5))

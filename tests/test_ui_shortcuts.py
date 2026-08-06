@@ -98,6 +98,7 @@ class Testメニューに無いキー:
         keys = [row.keys for row in rows_of(groups, "画面（メニューに無いキー）")]
         assert "+ / -" in keys
         assert "Shift+] / Shift+[" in keys
+        assert "Shift+. / Shift+," in keys
 
     def test_マウスの操作も並ぶ(self, groups):
         rows = rows_of(groups, "マウス")

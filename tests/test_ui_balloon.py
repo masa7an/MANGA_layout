@@ -36,6 +36,7 @@ from manga_layout.ui.state import (
     TOOL_BALLOON_CLOUD,
     TOOL_BALLOON_JAGGED,
     TOOL_BALLOON_RECT,
+    TOOL_BALLOON_SPIKY,
     TOOL_BALLOON_WAVY,
     TOOL_SELECT,
 )
@@ -216,6 +217,23 @@ class TestBalloonMenu:
         items = balloon_menu_items(window)
         for item, tool in zip(items, BALLOON_TOOLS, strict=False):
             assert item is window._tool_actions[tool]
+
+    def test_キーが付くのは丸い_雲_ギザギザだけ(self, window):
+        """1文字キーを全部の種類に割り当てない（→ 6.14）。
+
+        **`W` は雲に付ける。** ふわふわから付け替えた（2026-08-07。並びを
+        使う頻度の順にしたとき、キーだけが前の頻度のまま残っていた）。
+        """
+        keys = {
+            tool: window._tool_actions[tool].shortcut().toString()
+            for tool in BALLOON_TOOLS
+        }
+        assert keys[TOOL_BALLOON] == "B"
+        assert keys[TOOL_BALLOON_CLOUD] == "W"
+        assert keys[TOOL_BALLOON_JAGGED] == "G"
+        assert keys[TOOL_BALLOON_WAVY] == ""
+        assert keys[TOOL_BALLOON_SPIKY] == ""
+        assert keys[TOOL_BALLOON_RECT] == ""
 
     def test_選択中だけ使える項目もある(self, window_with_balloon):
         items = balloon_menu_items(window_with_balloon)
