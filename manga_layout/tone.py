@@ -31,7 +31,6 @@ from .model import (
     TONE_KIND_GRAY,
     TONE_KIND_STRIPES,
     TONE_KIND_WHITE,
-    TONE_KINDS,
     Tone,
 )
 

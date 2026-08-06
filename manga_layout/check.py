@@ -19,8 +19,8 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 from .layout import balloon_contains, text_ink_bands
 from .model import BalloonObject, Page, Project, StickerObject, TextObject
