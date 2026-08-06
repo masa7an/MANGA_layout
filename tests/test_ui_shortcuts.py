@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPalette
 
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.menu_search import MenuEntry
@@ -25,6 +27,7 @@ from manga_layout.ui.shortcuts import (
     action_label,
     collect_groups,
     menu_groups,
+    stripe_color,
 )
 
 
@@ -138,6 +141,72 @@ class Test窓:
 
     def test_窓は単体でも組める(self, qapp):
         ShortcutsDialog()
+
+
+class Test縞:
+    """1行おきの背景（→ `stripe_color`）。
+
+    キーの長さが `Ctrl+Shift+PgDown` から `V` まで開いているので、左の列と
+    右の列が離れた行では目が横に渡る途中で1行ずれる。押さえたいのは
+    **配色を決め打ちしていないこと**——暗い配色の上で白い帯を出さない。
+    """
+
+    def test_明るい配色では地より暗い(self):
+        stripe = stripe_color(QColor("white"), QColor("black"))
+        assert stripe.lightness() < QColor("white").lightness()
+
+    def test_暗い配色では地より明るい(self):
+        """**ここが白い帯になっていないこと。** 地の隣に留まる。"""
+        base = QColor("#2d2d2d")
+        stripe = stripe_color(base, QColor("white"))
+        assert base.lightness() < stripe.lightness() < QColor("white").lightness()
+
+    def test_1行おきに付く(self, window):
+        window.show_shortcuts()
+        head = window._shortcuts_dialog._tree.topLevelItem(0)
+        assert head.child(0).background(0).style() == Qt.BrushStyle.NoBrush
+        assert head.child(1).background(0).style() != Qt.BrushStyle.NoBrush
+
+    def test_左右の列に同じ色を敷く(self, window):
+        """片方だけだと、縞が途中で切れて目印にならない。"""
+        window.show_shortcuts()
+        row = window._shortcuts_dialog._tree.topLevelItem(0).child(1)
+        assert row.background(0).color() == row.background(1).color()
+
+    def test_見出しごとに数え直す(self, window):
+        """見出しの次は必ず地の色。通しで数えると向きが裏返る。"""
+        window.show_shortcuts()
+        tree = window._shortcuts_dialog._tree
+        heads = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+        assert all(
+            head.child(0).background(0).style() == Qt.BrushStyle.NoBrush
+            for head in heads
+            if head.childCount()
+        )
+
+    def test_開くたびに色を引き直す(self, window):
+        """配色を切り替えられても付いていく（窓は作りっぱなしで使い回す）。
+
+        窓の側で色を持つと（`setPalette` で `AlternateBase` を差し替える等）、
+        **その部品はそこで配色の継承が止まり**、明るい／暗いを切り替えても
+        古い色のまま残る。ここが通っている限り、その持ち方はしていない。
+
+        テストは明るい配色で動いている（offscreen の既定）ので、
+        **暗い側へ切り替えて**確かめる。
+        """
+        window.show_shortcuts()
+        tree = window._shortcuts_dialog._tree
+        before = tree.topLevelItem(0).child(1).background(0).color()
+
+        dark = QPalette()
+        dark.setColor(QPalette.ColorRole.Base, QColor("#2d2d2d"))
+        dark.setColor(QPalette.ColorRole.Text, QColor("white"))
+        window._shortcuts_dialog.setPalette(dark)
+        window.show_shortcuts()
+
+        after = tree.topLevelItem(0).child(1).background(0).color()
+        assert after != before
+        assert after.lightness() > QColor("#2d2d2d").lightness()
 
 
 class Testメニューから辿れる:

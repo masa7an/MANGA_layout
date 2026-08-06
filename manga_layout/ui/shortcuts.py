@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -45,6 +46,22 @@ KEY_SEPARATOR = " / "
 
 # 左の列（キー）の幅。「Ctrl+Shift+PgDown / …」まで折り返さずに収まる幅
 KEY_COLUMN_PX = 190
+
+# 1行おきの背景を、地の色から文字の色へどれだけ寄せるか（0〜1）。
+#
+# **薄い灰色を直に書かない。** この窓は使う人の配色（明るい／暗い）の上に
+# 出る。色を決め打ちすると、暗い配色では地より明るく浮いて、縞ではなく
+# 白い帯になる。地と文字の間を混ぜれば、どちらの配色でも「地より少しだけ
+# 文字寄り」に落ちる。
+#
+# **Qt の `setAlternatingRowColors` にも任せない。** あれが使う
+# `AlternateBase` は、この PC の暗い配色では地が `#2d2d2d` なのに
+# `#ffffff` が入っている（2026-08-07 実測）。任せると真っ白な帯が1行おきに
+# 出る。**配色が壊れていても、こちらで混ぜた色なら必ず地の隣に落ちる。**
+#
+# 0.09 は、隣の行と見分けが付き、かつ帯として目立ちすぎない量として
+# 実際に出して決めた（→ `stripe_color`）
+STRIPE_MIX = 0.09
 
 
 @dataclass(frozen=True)
@@ -144,6 +161,24 @@ def action_label(entry: MenuEntry) -> str:
     return PATH_SEPARATOR.join((*entry.path[1:], text))
 
 
+def stripe_color(base: QColor, text: QColor) -> QColor:
+    """1行おきの背景。地の色を文字の色のほうへ `STRIPE_MIX` だけ寄せる。
+
+    明るい配色なら地（白）が少し暗くなって薄い灰色に、暗い配色なら地
+    （黒）が少し明るくなる。**どちらでも「地より少しだけ濃い」側に
+    転ぶ**ので、縞が白く浮くことがない。
+    """
+
+    def mix(a: int, b: int) -> int:
+        return round(a + (b - a) * STRIPE_MIX)
+
+    return QColor(
+        mix(base.red(), text.red()),
+        mix(base.green(), text.green()),
+        mix(base.blue(), text.blue()),
+    )
+
+
 class ShortcutsDialog(QDialog):
     """ショートカットキーの一覧。**作りっぱなしで使い回す**（→ `CheckResultDialog`）。
 
@@ -183,7 +218,16 @@ class ShortcutsDialog(QDialog):
         layout.addWidget(buttons)
 
     def show_groups(self, groups: list[ShortcutGroup]) -> None:
-        """一覧を入れ替えて前に出す。開いていなければ開く。"""
+        """一覧を入れ替えて前に出す。開いていなければ開く。
+
+        **縞の色は開くたびに引き直す**（→ `stripe_color`）。使う人が
+        配色（明るい／暗い）を切り替えたとき、開いた時点の地の色から
+        作り直したほうが付いていける。
+        """
+        stripe = stripe_color(
+            self._tree.palette().color(QPalette.ColorRole.Base),
+            self._tree.palette().color(QPalette.ColorRole.Text),
+        )
         self._tree.clear()
         for group in groups:
             head = QTreeWidgetItem(self._tree, [group.title, ""])
@@ -193,8 +237,14 @@ class ShortcutsDialog(QDialog):
             font.setBold(True)
             head.setFont(0, font)
             head.setFirstColumnSpanned(True)
-            for row in group.rows:
-                QTreeWidgetItem(head, [row.keys, row.action])
+            for index, row in enumerate(group.rows):
+                item = QTreeWidgetItem(head, [row.keys, row.action])
+                # **縞は見出しごとに数え直す。** 通しで数えると、項目数が
+                # 奇数のメニューの次から縞の向きが裏返り、「見出しの次は
+                # 地の色」という手掛かりが消える
+                if index % 2:
+                    item.setBackground(0, stripe)
+                    item.setBackground(1, stripe)
         self._tree.expandAll()
         self._tree.setColumnWidth(0, KEY_COLUMN_PX)
         self.show()
