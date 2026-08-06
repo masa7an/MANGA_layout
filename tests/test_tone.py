@@ -263,13 +263,13 @@ def test_種類には全部に日本語の名前がある():
     assert set(TN.KIND_LABELS) == set(TONE_KINDS)
 
 
-# -- マスクをそのまま出す（PSD 用 → 6.28）-----------------------------------
+# -- PSD 用に3枚へ分ける（→ 6.28）-------------------------------------------
 
 
-def test_マスクの中は黒く_外は透明():
+def test_トーン範囲の中は黒く_外は透明():
     image = canvas()
     fill_box(image, 20, 20, 60, 60)
-    out = TN.mask_silhouette(image, make())
+    out = TN.tone_pieces(image, make()).area
     # **透明度は `pixelColor` で見る。** `QColor(image.pixel(...))` は
     # 透明度を捨てて常に不透明として読むので、外側も 255 に見える
     inside = out.pixelColor(50, 50)
@@ -277,29 +277,69 @@ def test_マスクの中は黒く_外は透明():
     assert out.pixelColor(150, 150).alpha() == 0
 
 
-def test_マスクは絵と同じ大きさ():
+def test_白ベタの中は白く_外は透明():
+    """元の絵の黒ベタを隠すためのもの（→ 6.28）。"""
+    image = canvas()
+    fill_box(image, 20, 20, 60, 60)
+    out = TN.tone_pieces(image, make()).fill
+    inside = out.pixelColor(50, 50)
+    assert (inside.red(), inside.alpha()) == (255, 255)
+    assert out.pixelColor(150, 150).alpha() == 0
+
+
+def test_トーンだけの1枚は外が透明():
+    """絵を含まない。**利用者はこれを消して自分のトーンに差し替える。**"""
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    out = TN.tone_pieces(image, make(kind=KIND_GRAY)).pattern
+    assert out.pixelColor(100, 100).alpha() == 255
+    assert out.pixelColor(5, 5).alpha() == 0
+
+
+def test_白ベタの上にトーンを重ねると焼いた1枚になる():
+    """**等倍で重ねれば `apply_tone` と一致する**（→ 6.28）。"""
+    from PySide6.QtGui import QPainter
+
+    image = canvas()
+    fill_box(image, 20, 20, 160, 160)
+    tone = make(kind=KIND_GRAY)
+    pieces = TN.tone_pieces(image, tone)
+
+    stacked = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
+    painter = QPainter(stacked)
+    painter.drawImage(0, 0, pieces.fill)
+    painter.drawImage(0, 0, pieces.pattern)
+    painter.end()
+    assert stacked.constBits() == TN.apply_tone(image, tone).constBits()
+
+
+def test_3枚とも絵と同じ大きさ():
     """クリスタで位置を合わせ直さずに済む（→ 6.28）。"""
     image = canvas(240, 160)
     fill_box(image, 20, 20, 60, 60)
-    assert TN.mask_silhouette(image, make()).size() == image.size()
+    pieces = TN.tone_pieces(image, make())
+    assert pieces.area.size() == image.size()
+    assert pieces.fill.size() == image.size()
+    assert pieces.pattern.size() == image.size()
 
 
-def test_マスクは種類で変わらない():
+def test_トーン範囲は種類で変わらない():
     """置き換えた先が違うだけで、選ぶ所は同じ（→ `build_mask` を共用）。"""
     image = canvas()
     fill_box(image, 20, 20, 60, 60)
-    a = TN.mask_silhouette(image, make())
-    b = TN.mask_silhouette(image, make(kind=KIND_WHITE))
+    a = TN.tone_pieces(image, make()).area
+    b = TN.tone_pieces(image, make(kind=KIND_WHITE)).area
     assert a.constBits() == b.constBits()
 
 
-def test_マスクも矩形で絞られる():
+def test_3枚とも矩形で絞られる():
     """絵と同じ範囲を指す。ずれると、クリスタで貼ってから気づくことになる。"""
     image = canvas()
     fill_box(image, 20, 20, 160, 160)
-    out = TN.mask_silhouette(image, make(area=Rect(0.0, 0.0, 0.5, 0.5)))
-    assert out.pixelColor(50, 50).alpha() == 255
-    assert out.pixelColor(150, 150).alpha() == 0
+    pieces = TN.tone_pieces(image, make(area=Rect(0.0, 0.0, 0.5, 0.5)))
+    for out in (pieces.area, pieces.fill, pieces.pattern):
+        assert out.pixelColor(50, 50).alpha() == 255
+        assert out.pixelColor(150, 150).alpha() == 0
 
 
 # -- 保存形式 ---------------------------------------------------------------

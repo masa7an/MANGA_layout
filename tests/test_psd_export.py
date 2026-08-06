@@ -49,6 +49,22 @@ def max_difference(a: QImage, b: QImage) -> int:
     return max(abs(x - y) for x, y in zip(left, right, strict=True))
 
 
+def differing_pixels(a: QImage, b: QImage) -> int:
+    """食い違っている画素の数。**縁だけのずれかどうか**を見るのに使う。"""
+    left, right = channels(a), channels(b)
+    return sum(
+        1 for i in range(0, len(left), 4) if left[i : i + 4] != right[i : i + 4]
+    )
+
+
+# トーンを4枚に分けたページで、重ねた結果が PNG からずれてよい幅
+# （→ 要件定義 6.28）。**トーンの範囲の境目 1px にだけ出る。**
+#
+# 分けない普通のページは今までどおり 1 まで（→ `Test重ね直すとPNGと一致する`）。
+# ここだけ緩いのは、絵とトーンが**別々に縮んでから重なる**ため
+TONE_EDGE_TOLERANCE = 40
+
+
 @pytest.fixture
 def state(qapp, tmp_path, png_bytes):
     """コマ・絵・集中線・フキダシ・セリフを1つずつ置いた作品。
@@ -453,56 +469,118 @@ class Testレイヤーの持ち方:
 # ---------------------------------------------------------------------------
 
 
-class Testトーン範囲:
-    """**絵と同じ経路で描いた1枚**であることを確かめる（→ `ToneMasks`）。
+class Testトーンを4枚に分ける:
+    """**絵と同じ経路で描いた3枚**であることを確かめる（→ `_Painters`）。
 
-    別に描くと、斜めのコマ・回した絵・絞った矩形でマスクだけがずれる。
+    別に描くと、斜めのコマ・回した絵・絞った矩形でトーンだけがずれる。
     ずれても画面には出ないので、**クリスタで貼ってから気づく**ことになる。
     """
 
-    def test_トーンを入れると出る(self, with_tone):
+    def test_トーンを入れると3枚増える(self, with_tone):
         names = flat_names(page_layers(with_tone, with_tone.project.pages[0], 1.0))
-        assert "トーン範囲" in names
+        assert {"白ベタ", "トーン範囲", "トーン"} <= set(names)
 
-    def test_トーンが無ければ出ない(self, state):
+    def test_トーンが無ければ1枚も出ない(self, state):
         names = flat_names(page_layers(state, state.project.pages[0], 1.0))
-        assert "トーン範囲" not in names
+        assert not {"白ベタ", "トーン範囲", "トーン"} & set(names)
 
-    def test_非表示で入る(self, with_tone):
-        """作品の中身ではない（ラフと同じ扱い）。"""
+    def test_絵にはトーンを焼かない(self, with_tone):
+        """**焼いたままでは差し替えられない**（本人の指摘 2026-08-06）。
+
+        トーンを入れた作品の「絵」が、**トーンを消した作品の「絵」と1画素も
+        違わない**こと。トーンの有無で変わるなら焼き込まれている。
+        """
+        toned = layer_named(
+            page_layers(with_tone, with_tone.project.pages[0], 1.0), "絵"
+        )
+        with with_tone.edit("トーンを消す") as project:
+            project.pages[0].panels[0].children[0].tone = None
+        plain = layer_named(
+            page_layers(with_tone, with_tone.project.pages[0], 1.0), "絵"
+        )
+        assert channels(toned.image) == channels(plain.image)
+
+    def test_トーン範囲だけが非表示(self, with_tone):
+        """白ベタとトーンは絵の一部。目印だけが作品の中身ではない。"""
         page = with_tone.project.pages[0]
-        assert not layer_named(page_layers(with_tone, page, 1.0), "トーン範囲").visible
+        group = next(x for x in page_layers(with_tone, page, 1.0) if isinstance(x, PsdGroup))
+        assert [c.name for c in group.children if not c.visible] == ["トーン範囲"]
 
-    def test_絵のすぐ上に入る(self, with_tone):
-        """ここを選んだまま作った新しいレイヤーが、集中線とコマ枠の下に入る。"""
+    def test_並びは白ベタ_トーン範囲_トーン(self, with_tone):
+        """トーン範囲を選んだまま作る新しいレイヤーが、白ベタの手前に入る。"""
         items = page_layers(with_tone, with_tone.project.pages[0], 1.0)
         group = next(x for x in items if isinstance(x, PsdGroup))
-        assert [c.name for c in group.children] == ["絵", "トーン範囲", "コマ枠"]
+        assert [c.name for c in group.children] == [
+            "絵", "白ベタ", "トーン範囲", "トーン", "コマ枠",
+        ]
 
-    def test_合成済みの1枚には出ない(self, with_tone):
-        """非表示なので、**PNG 書き出しと1画素も違わない**まま。"""
+    def test_重ね直すと縁を除いてPNGと一致する(self, with_tone):
+        """**トーンの範囲の境目だけがずれる**（→ 要件定義 6.28）。
+
+        分けると、絵とトーンが**別々に縮んでから重なる**ので、混ざる順番が
+        入れ替わる。ずれるのは縁の1px ぶんだけなので、**食い違う画素が
+        ページのごく一部に収まっていること**まで確かめる（面ごとずれて
+        いれば、ここで捕まる）。
+        """
         page = with_tone.project.pages[0]
         width, height = round(page.size.w), round(page.size.h)
-        layers = page_layers(with_tone, page, 1.0)
-        merged = flatten(layers, width, height)
-        assert max_difference(merged, render_page(with_tone, page, 1.0)) <= 1
+        merged = flatten(page_layers(with_tone, page, 1.0), width, height)
+        plain = render_page(with_tone, page, 1.0)
+        assert max_difference(merged, plain) <= TONE_EDGE_TOLERANCE
+        assert differing_pixels(merged, plain) < width * height * 0.02
 
     def test_黒ベタの所だけを指す(self, with_tone):
         """白い所まで指していたら、クリスタで貼るときに使えない。"""
         page = with_tone.project.pages[0]
-        mask = layer_named(page_layers(with_tone, page, 1.0), "トーン範囲")
-        art = layer_named(page_layers(with_tone, page, 1.0), "絵")
+        items = page_layers(with_tone, page, 1.0)
+        mask = layer_named(items, "トーン範囲")
+        art = layer_named(items, "絵")
         assert mask.image.width() < art.image.width(), "ベタは絵の一部"
         assert mask.image.height() < art.image.height()
 
+    def test_白ベタはトーン範囲からはみ出さない(self, with_tone):
+        """縁の中間の濃さを落としてあるので、広がることはない
+        （→ `tone._fully_masked`）。はみ出すと、絵を余計に隠す。
+        """
+        items = page_layers(with_tone, with_tone.project.pages[0], 1.0)
+        mask = layer_named(items, "トーン範囲")
+        fill = layer_named(items, "白ベタ")
+        assert 0 < fill.image.width() <= mask.image.width()
+        assert 0 < fill.image.height() <= mask.image.height()
+        assert (fill.x, fill.y) >= (mask.x, mask.y)
+
     def test_絞ると狭くなる(self, with_tone):
-        """矩形で絞ったぶんは、マスクの側にも効く。"""
+        """矩形で絞ったぶんは、3枚とも効く。"""
         page = with_tone.project.pages[0]
         before = layer_named(page_layers(with_tone, page, 1.0), "トーン範囲")
         with with_tone.edit("範囲を絞る") as project:
             project.pages[0].panels[0].children[0].tone.area = Rect(0.0, 0.0, 0.3, 1.0)
         after = layer_named(page_layers(with_tone, page, 1.0), "トーン範囲")
         assert after.image.width() < before.image.width()
+
+    def test_絵を重ねているコマは分けない(self, with_tone, dark_png):
+        """トーンの入った絵の上に別の絵があると、分けたトーンが手前に出る。
+
+        **重なりまでは見ない**（→ `_splittable`）。外したときの結果が
+        「絵の上にトーンが乗る」という気づきにくい間違いになるため。
+        """
+        ref, px = with_tone.import_bytes(dark_png)
+        with with_tone.edit("重ねる") as project:
+            panel = project.pages[0].panels[0]
+            project.add_image(panel, ref, Rect(30.0, 30.0, 60.0, 60.0), px)
+        names = flat_names(page_layers(with_tone, with_tone.project.pages[0], 1.0))
+        assert "白ベタ" not in names and "トーン" not in names
+        assert "トーン範囲" in names, "目印だけは出す"
+
+    def test_重ねていても重ね直せばPNGと一致する(self, with_tone, dark_png):
+        ref, px = with_tone.import_bytes(dark_png)
+        with with_tone.edit("重ねる") as project:
+            panel = project.pages[0].panels[0]
+            project.add_image(panel, ref, Rect(30.0, 30.0, 60.0, 60.0), px)
+        page = with_tone.project.pages[0]
+        width, height = round(page.size.w), round(page.size.h)
+        layers = page_layers(with_tone, page, 1.0)
+        assert max_difference(flatten(layers, width, height), render_page(with_tone, page, 1.0)) <= 1
 
 
 # ---------------------------------------------------------------------------

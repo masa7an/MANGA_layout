@@ -7,7 +7,7 @@
 ## 構成（下が奥）
 
     セリフ / マーク / フキダシ
-    [フォルダ] コマN ── 絵・トーン範囲（非表示）・集中線と流線・コマ枠
+    [フォルダ] コマN ── 絵・白ベタ・トーン範囲（非表示）・トーン・集中線と流線・コマ枠
       …（コマの数だけ）
     ラフ / 用紙
 
@@ -31,18 +31,32 @@
 フキダシ・マーク・セリフは**これまでどおり種類ごと1枚**。ページ直下に
 あってコマの子ではない（→ 4章）ので、コマに紐づけようがない。
 
-## トーンの範囲は、絵のすぐ上に非表示で入れる（要件定義 6.28）
+## トーンは4枚に分ける（要件定義 6.28）
 
 クリスタのトーンは種類がはるかに多く、こだわるなら結局そちらで貼り直す
-ことになる。**貼る場所を手で選び直さずに済むよう、マスクをそのまま
-1枚のレイヤーとして渡す**（→ `ToneMasks`）。「レイヤーから選択範囲」で
-そのまま選択範囲にできる。
+ことになる。**そのとき1手で差し替えられる形にして渡す。**
 
-- **非表示。** 作品の中身ではない（ラフと同じ扱い）。合成済みの1枚には
-  入らないので、**PNG 書き出しと1画素も違わない**まま
-- **絵のすぐ上。** ここを選んだまま新しいレイヤーを作れば、集中線とコマ枠の
-  **下**に入る。一番上に置くと、貼ったトーンが枠線を覆う
-- トーンの入った絵が1枚も無いコマには出さない（下の「中身の無いレイヤー」）
+    トーン       ← 消して、自分のトーンに差し替える
+    トーン範囲   ← 非表示。選択範囲を作るための目印
+    白ベタ       ← 元の絵の黒ベタを隠す
+    絵           ← **トーンを焼く前**
+
+**「絵」にトーンを焼き込んだままでは差し替えられない。** 上に網点を貼っても、
+隙間から下のトーンが透けて干渉する（本人の指摘 2026-08-06）。**白ベタが
+その下敷きを断つ**ので、利用者は「トーンを消す → 好きなトーンを貼る」だけで
+済む。
+
+- **重ねた結果は、トーンの範囲の境目 1px を除いて PNG 書き出しと一致する。**
+  分けると絵とトーンが**別々に縮んでから重なる**ので、混ざる順番が入れ替わる。
+  避けるには焼き込んだままにするしかなく、それでは分ける意味が無い
+  （→ 要件定義 6.28。2026-08-06 本人確認済み）。白ベタがマスクの縁を持たない
+  のは、そのずれを最小にするため（→ `tone._fully_masked`）
+- **トーン範囲だけ非表示。** 合成済みの1枚にも入らない（ラフと同じ扱い）
+- **並びは 白ベタ → トーン範囲 → トーン。** トーン範囲を選んだまま新しい
+  レイヤーを作ると、白ベタより手前・コマ枠より奥に入る
+- トーンの入った絵が1枚も無いコマには1枚も出さない（下の「中身の無いレイヤー」）
+- **分けられないコマもある**（→ `_splittable`）。トーンの入った絵の上に別の絵を
+  重ねている場合だけ、今までどおり焼いた1枚とトーン範囲を出す
 
 ## 中身の無いレイヤー・フォルダは出さない
 
@@ -58,14 +72,15 @@
 from __future__ import annotations
 
 import pathlib
+from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter, QPainterPath, QPainterPathStroker
 
 from ..images import ImageCache, Preview, full_from_bytes, full_rough_from_bytes
-from ..model import BalloonObject, Page, Panel, StickerObject, TextObject
+from ..model import BalloonObject, ImageObject, Page, Panel, StickerObject, TextObject
 from ..psd import PsdGroup, PsdLayer, crop_to_content, write_psd
-from ..tone import mask_silhouette
+from ..tone import TonePieces, tone_pieces
 from .export import (
     DEFAULT_SCALE,
     FullImages,
@@ -80,7 +95,9 @@ from .render import PageRenderer, polygon_of
 PAPER = ("用紙", "paper")
 ROUGH = ("ラフ", "rough")
 ART = ("絵", "art")
+TONE_FILL = ("白ベタ", "tonefill")
 TONE_MASK = ("トーン範囲", "tonemask")
+TONE_PATTERN = ("トーン", "tone")
 EFFECTS = ("集中線・流線", "effects")
 FRAMES = ("コマ枠", "frames")
 BALLOONS = ("フキダシ", "balloons")
@@ -111,8 +128,22 @@ class FullRoughs:
         return cache.get(ref, lambda: self.state.read_asset(ref))
 
 
-class ToneMasks:
-    """トーンにする所だけを黒く塗った1枚を返す置き場（→ 要件定義 6.28）。
+class BareImages:
+    """**トーンを焼く前**の絵を返す置き場（→ 要件定義 6.28）。
+
+    PSD の「絵」レイヤーはこちらを使う。焼いた1枚を入れると、利用者が
+    クリスタでトーンを貼り替えたときに**下から元のトーンが透ける**。
+    """
+
+    def __init__(self, images: FullImages) -> None:
+        self._images = images
+
+    def __call__(self, image) -> Preview | None:
+        return self._images.base(image.asset)
+
+
+class TonePieceImages:
+    """トーンを3枚（トーン範囲・白ベタ・トーン）に分けて返す置き場。
 
     **`PageRenderer` の画像を引く経路をそのまま差し替える。** こうすると
     コマの形での切り抜き・画像の位置・回転が絵と完全に同じになる。
@@ -125,32 +156,49 @@ class ToneMasks:
     絵は `FullImages` と**同じ入れ物から引く**（`base`）。原寸から焼くのは
     トーンを焼き直すのと同じ理由——縮小版から作ったマスクを引き伸ばすと、
     縁が階段状になったまま貼ることになる。
+
+    **3枚は1回のマスクから作って覚えておく**（→ `tone.tone_pieces`）。
+    描く経路が3つに分かれていても、焼くのは絵ごとに1回で済む。
     """
 
     def __init__(self, images: FullImages) -> None:
         self._images = images
-        self._masks: dict[tuple[str, tuple], Preview] = {}
+        # **上限を持たない**（`ToneCache` と違う）。1ページ書き出すあいだ
+        # だけの入れ物で、鍵は貼ってある絵の数で頭打ちになる
+        self._pieces: dict[tuple[str, tuple], tuple[TonePieces, tuple[int, int]]] = {}
 
-    def __call__(self, image) -> Preview | None:
+    def _of(self, image) -> tuple[TonePieces, tuple[int, int]] | None:
         tone = getattr(image, "tone", None)
         if tone is None:
             return None
         ref = image.asset
         key = (ref, tone.key())
-        found = self._masks.get(key)
+        found = self._pieces.get(key)
         if found is not None:
             return found
 
         source = self._images.base(ref)
         if source is None:
             return None
-        made = Preview(
-            image=mask_silhouette(source.image, tone), source_px=source.source_px
-        )
-        # **上限を持たない**（`ToneCache` と違う）。1ページ書き出すあいだ
-        # だけの入れ物で、鍵は貼ってある絵の数で頭打ちになる
-        self._masks[key] = made
+        made = (tone_pieces(source.image, tone), source.source_px)
+        self._pieces[key] = made
         return made
+
+    def _piece(self, image, name: str) -> Preview | None:
+        found = self._of(image)
+        if found is None:
+            return None
+        pieces, source_px = found
+        return Preview(image=getattr(pieces, name), source_px=source_px)
+
+    def area(self, image) -> Preview | None:
+        return self._piece(image, "area")
+
+    def fill(self, image) -> Preview | None:
+        return self._piece(image, "fill")
+
+    def pattern(self, image) -> Preview | None:
+        return self._piece(image, "pattern")
 
 
 def reading_order(panels: list[Panel], gutter: float) -> list[Panel]:
@@ -224,9 +272,7 @@ def page_layers(
     width, height = checked_page_px(page, scale)
     images = FullImages(state)
     renderer = PageRenderer(state, images, aids=False)
-    # トーンの範囲だけを描く写し。**描く手順は同じで、引く絵だけが違う**
-    # （→ `ToneMasks`）
-    masks = PageRenderer(state, ToneMasks(images), aids=False)
+    painters = _Painters.of(state, renderer, images)
     roughs = FullRoughs(state)
 
     def build(label, draw, visible: bool = True) -> PsdLayer | None:
@@ -242,9 +288,7 @@ def page_layers(
     ordered = reading_order(page.panels, state.settings.gutter)
     numbers = {panel.id: i + 1 for i, panel in enumerate(ordered)}
     for panel in _stacking(page, ordered):
-        items.append(
-            _panel_group(renderer, masks, page, panel, numbers[panel.id], build)
-        )
+        items.append(_panel_group(painters, page, panel, numbers[panel.id], build))
 
     items += [
         build(BALLOONS, lambda p: renderer.draw_floating(p, page, kinds=(BalloonObject,))),
@@ -272,25 +316,82 @@ def _stacking(page: Page, ordered: list[Panel]) -> list[Panel]:
     return list(reversed(ordered))
 
 
+@dataclass(frozen=True)
+class _Painters:
+    """コマの中身を描く写しの一式。**引く絵だけが違い、描く手順は同じ。**
+
+    トーンを4枚に分けるために4通りの絵が要る（→ 要件定義 6.28）。
+    `PageRenderer` は `images` を差し替えるだけで別の絵を描けるので、
+    ここで写しを作り分ければ、切り抜き・位置・回転は自動で揃う。
+    """
+
+    #: トーンを焼いた絵。**分けられないコマ**でだけ使う（→ `_splittable`）
+    full: PageRenderer
+    #: トーンを焼く前の絵
+    bare: PageRenderer
+    #: トーン範囲（黒いシルエット）
+    area: PageRenderer
+    #: 白ベタ
+    fill: PageRenderer
+    #: 敷いたトーンそのもの
+    pattern: PageRenderer
+
+    @classmethod
+    def of(cls, state, full: PageRenderer, images: FullImages) -> _Painters:
+        pieces = TonePieceImages(images)
+        return cls(
+            full=full,
+            bare=PageRenderer(state, BareImages(images), aids=False),
+            area=PageRenderer(state, pieces.area, aids=False),
+            fill=PageRenderer(state, pieces.fill, aids=False),
+            pattern=PageRenderer(state, pieces.pattern, aids=False),
+        )
+
+
+def _splittable(panel: Panel) -> bool:
+    """このコマのトーンを4枚に分けてよいか（→ 要件定義 6.28）。
+
+    分けると、**コマの中の絵が全部「絵」レイヤーへ、トーンが全部その上の
+    レイヤーへ**まとまる。絵が1枚なら順番は変わらないが、**トーンの入った
+    絵の上に別の絵を重ねている**場合、上の絵より手前にトーンが出てしまう。
+
+    そこだけは分けずに焼いた1枚を出す（今までどおり）。**重なっているか
+    どうかまでは見ない**——見るには回転を含む形の判定が要るうえ、外した
+    ときの結果が「絵の上にトーンが乗る」という気づきにくい間違いになる。
+    """
+    images = sorted(
+        (c for c in panel.children if isinstance(c, ImageObject)), key=lambda c: c.z
+    )
+    return not any(img.tone is not None for img in images[:-1])
+
+
 def _panel_group(
-    renderer: PageRenderer, masks: PageRenderer, page: Page, panel: Panel,
-    number: int, build
+    painters: _Painters, page: Page, panel: Panel, number: int, build
 ) -> PsdGroup | None:
     """コマ1つぶんのフォルダ。中身が1つも無ければ None。
 
-    中身は**奥から手前**（絵 → トーン範囲 → 集中線・流線 → コマ枠）。
-    `draw_panel` が描く順そのままで、ここでも独自の順は持たない。
+    中身は**奥から手前**（絵 → 白ベタ → トーン範囲 → トーン → 集中線・流線
+    → コマ枠）。`draw_panel` が描く順そのままで、ここでも独自の順は持たない。
 
-    **トーン範囲だけが非表示**で、しかも絵と同じ「中身」を別の絵で描いた
-    もの（→ `ToneMasks`）。置き場所を絵のすぐ上にした理由はモジュールの
-    冒頭にある。
+    **トーンの3枚は「絵」と同じ中身を別の絵で描いたもの**（→ `_Painters`）。
+    重ねた結果は、トーンの境目 1px を除いて焼いた1枚と一致する。置き場所と
+    並びの理由はモジュールの冒頭にある。
     """
     art = {"contents": True, "effects": False, "border": False}
-    plan = [
-        (ART, renderer, art, True),
-        (TONE_MASK, masks, art, False),
-        (EFFECTS, renderer, {"contents": False, "effects": True, "border": False}, True),
-        (FRAMES, renderer, {"contents": False, "effects": False, "border": True}, True),
+    if _splittable(panel):
+        # **トーン範囲は白ベタとトーンのあいだ。** ここを選んだまま新しい
+        # レイヤーを作ると、白ベタより手前・コマ枠より奥に入る（→ 冒頭）
+        plan = [
+            (ART, painters.bare, art, True),
+            (TONE_FILL, painters.fill, art, True),
+            (TONE_MASK, painters.area, art, False),
+            (TONE_PATTERN, painters.pattern, art, True),
+        ]
+    else:
+        plan = [(ART, painters.full, art, True), (TONE_MASK, painters.area, art, False)]
+    plan += [
+        (EFFECTS, painters.full, {"contents": False, "effects": True, "border": False}, True),
+        (FRAMES, painters.full, {"contents": False, "effects": False, "border": True}, True),
     ]
     children = []
     for label, draws, parts, visible in plan:

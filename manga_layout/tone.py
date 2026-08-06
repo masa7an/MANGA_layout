@@ -4,7 +4,8 @@
 から離れられない。分けてあるのは、`images.py` が「展開して持つ」係で、
 こちらが「絵を作り替える」係だから。
 
-外から使うのは `apply_tone` と `mask_silhouette` の2つ。中は4段で、**どの段も画素を1つずつ
+外から使うのは `apply_tone`（焼いた1枚）と `tone_pieces`（PSD 用に3枚へ
+分けたもの）。中は4段で、**どの段も画素を1つずつ
 Python で触らない**——`bytes.translate` と `QImage.scaled` に任せる
 （2048×2048 で合計 40ms 程度。要件定義 10.1 の実測）。
 
@@ -377,25 +378,75 @@ def _as_alpha(mask: QImage) -> QImage:
     return QImage(raw, w, h, bpl, QImage.Format.Format_Alpha8).copy()
 
 
-def mask_silhouette(image: QImage, tone: Tone) -> QImage:
-    """トーンにする所だけを黒く塗った1枚（外は透明）。
-
-    **PSD 書き出しの「トーン範囲」レイヤーに使う**（→ 要件定義 6.28）。
-    クリスタ側で「レイヤーから選択範囲」を作れば、そこへ好きなトーンを
-    貼れる。位置を手で合わせずに済むよう、絵と同じ場所・同じ大きさで出す。
-
-    **`apply_tone` と同じ `build_mask` を通る。** 別に作ると、しきい値や
-    細さを動かしたときに絵とマスクがずれる——ずれても画面には出ないので、
-    クリスタで貼ってから気づくことになる。
-    """
-    mask = build_mask(image, tone)
-    out = QImage(image.size(), QImage.Format.Format_ARGB32_Premultiplied)
-    out.fill(TONE_INK)
-    painter = QPainter(out)
+def _cut_out(layer: QImage, mask: QImage) -> QImage:
+    """`layer` をマスクの形に抜く（外を透明にする）。渡した1枚を書き換える。"""
+    painter = QPainter(layer)
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
     painter.drawImage(0, 0, _as_alpha(mask))
     painter.end()
+    return layer
+
+
+def _solid(size: QSize, color: QColor) -> QImage:
+    out = QImage(size, QImage.Format.Format_ARGB32_Premultiplied)
+    out.fill(color)
     return out
+
+
+def _fully_masked(mask: QImage) -> QImage:
+    """**完全に選ばれている所だけ**を残したマスク。縁の中間の濃さを落とす。
+
+    細さで落とす段（`_drop_thin`）が拡大を通るので、マスクの縁は 0 と 255 の
+    あいだの値になる。**そこへ白ベタを敷くと、重ねた結果が焼き込んだ1枚と
+    食い違う**——縁では「白を敷いてからトーンを敷く」と2回混ざるのに対し、
+    焼き込んだほうは1回しか混ざらない（→ 要件定義 6.28）。
+
+    縁を落とせば白ベタは中間の濃さを持たなくなり、重ねた結果が完全に一致
+    する。落ちるのは絵の縁 1〜2px ぶんで、そこは元の絵がそのまま残る。
+    """
+    raw, w, h, bpl = _raw_of(mask)
+    return _gray_image(_cut(raw, keep_at_or_above=255), w, h, bpl)
+
+
+@dataclass(frozen=True)
+class TonePieces:
+    """トーンを PSD のレイヤー3枚に分けたもの（→ 要件定義 6.28）。
+
+    **3枚とも1回のマスクから作る。** 焼くのは1枚 40ms 程度なので、別々に
+    呼ぶと同じ計算を3回することになる。
+
+    重ねる順は `fill` → `pattern`（`area` は非表示の目印なのでどこでもよい）。
+    **等倍で重ねれば `apply_tone` が焼いた1枚と一致する**（`fill` が縁を
+    持たないため → `_fully_masked`）。縮めて描く書き出しでは、絵とトーンが
+    別々に縮むぶん**境目 1px だけずれる**（→ 要件定義 6.28）。
+    """
+
+    # トーン範囲。黒いシルエットで、クリスタの「レイヤーから選択範囲」に使う
+    area: QImage
+    # 白ベタ。**元の絵の黒ベタを隠すためだけにある。** これが無いと、
+    # 利用者がトーンを貼り替えたときに下の黒ベタが網点の隙間から透ける
+    fill: QImage
+    # 敷いたトーンそのもの。**利用者はこれを消して自分のトーンに差し替える**
+    pattern: QImage
+
+
+def tone_pieces(image: QImage, tone: Tone) -> TonePieces:
+    """トーンを3枚に分ける（→ `TonePieces`、要件定義 6.28）。
+
+    **`apply_tone` と同じ `build_mask` を通る。** 別に作ると、しきい値や
+    細さを動かしたときに絵とレイヤーがずれる——ずれても画面には出ないので、
+    クリスタで貼ってから気づくことになる。
+
+    3枚とも**絵と同じ場所・同じ大きさ**で返す。クリスタで位置を合わせ直す
+    手間が要らないことが、この機能の中身。
+    """
+    mask = build_mask(image, tone)
+    size = image.size()
+    return TonePieces(
+        area=_cut_out(_solid(size, TONE_INK), mask),
+        fill=_cut_out(_solid(size, TONE_PAPER), _fully_masked(mask)),
+        pattern=_cut_out(_pattern(size, tone), mask),
+    )
 
 
 def apply_tone(image: QImage, tone: Tone) -> QImage:
@@ -404,13 +455,7 @@ def apply_tone(image: QImage, tone: Tone) -> QImage:
     **元のアルファは残る。** マスクが透明な所を外している（白地に載せて
     から判定する）ので、トーンは不透明な所にしか乗らない。
     """
-    mask = build_mask(image, tone)
-
-    layer = _pattern(image.size(), tone)
-    painter = QPainter(layer)
-    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-    painter.drawImage(0, 0, _as_alpha(mask))
-    painter.end()
+    layer = _cut_out(_pattern(image.size(), tone), build_mask(image, tone))
 
     out = image.convertToFormat(QImage.Format.Format_ARGB32_Premultiplied)
     painter = QPainter(out)
