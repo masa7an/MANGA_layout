@@ -26,7 +26,6 @@ from ..storage import (
     project_dir_of,
 )
 from . import saving
-from .restore import RestoreDialog
 from .export import (
     DEFAULT_FORMAT,
     DEFAULT_SCALE,
@@ -39,6 +38,7 @@ from .export import (
     planned_paths,
     scale_label,
 )
+from .restore import RestoreDialog
 from .saving import SaveAsDialog
 
 if TYPE_CHECKING:

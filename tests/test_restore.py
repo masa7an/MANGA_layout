@@ -17,7 +17,14 @@ import os
 
 import pytest
 
-from manga_layout import History, Rect, list_backups, load_backup, new_project, save_project
+from manga_layout import (
+    History,
+    Rect,
+    list_backups,
+    load_backup,
+    new_project,
+    save_project,
+)
 from manga_layout.errors import ProjectFormatError
 from manga_layout.storage import (
     BACKUP_DIRNAME,
