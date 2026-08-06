@@ -26,6 +26,7 @@ from manga_layout.ui.psd_export import (
     export_psd_pages,
     flatten,
     page_layers,
+    panels_overlap,
     reading_order,
 )
 from tests.test_psd import layer_tree, parse_psd
@@ -101,6 +102,32 @@ def overlapping(qapp, tmp_path, png_bytes):
         upper = project.add_panel(page, Rect(190.0, 120.0, 180.0, 140.0))
         project.add_image(lower, ref, Rect(30.0, 30.0, 220.0, 170.0), px)
         project.add_image(upper, ref, Rect(190.0, 120.0, 180.0, 140.0), px)
+    return editor
+
+
+@pytest.fixture
+def four_panels(qapp, tmp_path, png_bytes):
+    """重なっていない4コマ。**作った順と読み順をわざとずらしてある。**
+
+    上段 → 下段の左 → 下段の右 の順に作るので、読み順（右から）とは
+    2枚目・3枚目が入れ替わる。作った順で並べてしまっても気づけるようにする。
+    """
+    editor = EditorState()
+    editor.save(tmp_path / "作品")
+    ref, px = editor.import_bytes(png_bytes)
+
+    with editor.edit("4コマ") as project:
+        page = project.pages[0]
+        page.size = Size(400.0, 400.0)
+        boxes = [
+            Rect(20.0, 20.0, 360.0, 100.0),  # コマ1（上段）
+            Rect(20.0, 160.0, 160.0, 100.0),  # 左 → コマ3
+            Rect(220.0, 160.0, 160.0, 100.0),  # 右 → コマ2
+            Rect(20.0, 300.0, 360.0, 80.0),  # コマ4（下段）
+        ]
+        for box in boxes:
+            panel = project.add_panel(page, box)
+            project.add_image(panel, ref, box, px)
     return editor
 
 
@@ -213,14 +240,34 @@ class Test並びと名前:
         assert [items[0].name, items[1].name] == ["用紙", "ラフ"]
         assert isinstance(items[2], PsdGroup)
 
-    def test_フォルダは重なり順に並ぶ(self, overlapping):
-        """読み順ではなく**奥から手前**。番号だけが読み順（→ 10.1）。"""
+    def test_重なっていなければ一覧は読み順(self, four_panels):
+        """一覧の上から コマ1、コマ2……（→ 要件定義 10.1）。
+
+        PSD には並び順と重なり順の区別が無いが、**重ならないコマの前後は
+        絵に出ない**ので、探しやすい向きにできる。
+        """
+        items = page_layers(four_panels, four_panels.project.pages[0], 1.0)
+        assert [x["name"] for x in names_of(items) if isinstance(x, dict)] == [
+            "コマ1",
+            "コマ2",
+            "コマ3",
+            "コマ4",
+        ]
+
+    def test_重なっていれば重なり順を保つ(self, overlapping):
+        """並びが絵に出るページでは、読みやすさより絵を採る。"""
         items = page_layers(overlapping, overlapping.project.pages[0], 1.0)
         groups = [x for x in items if isinstance(x, PsdGroup)]
-        panels = sorted(overlapping.project.pages[0].panels, key=lambda p: p.z)
-        assert len(groups) == len(panels) == 2
-        # 奥のコマが先（＝PSD では下）に来る
+        assert len(groups) == 2
+        # 奥のコマが先（＝PSD では下、一覧では下）に来る
         assert [g.name for g in groups] == ["コマ1", "コマ2"]
+
+    def test_並べ替えても絵は変わらない(self, four_panels):
+        """**並べ替えてよい根拠そのもの。** ここが崩れたら並べ替えない。"""
+        page = four_panels.project.pages[0]
+        layers = page_layers(four_panels, page, 1.0)
+        merged = flatten(layers, round(page.size.w), round(page.size.h))
+        assert max_difference(merged, render_page(four_panels, page, 1.0)) <= 1
 
     def test_古い名前欄には英字を入れる(self, state):
         """日本語が読めないソフトでも役割が分かるように（→ `psd.PsdLayer`）。"""
@@ -266,6 +313,40 @@ class Test読み順の番号:
         items = page_layers(overlapping, overlapping.project.pages[0], 1.0)
         names = sorted(x.name for x in items if isinstance(x, PsdGroup))
         assert names == ["コマ1", "コマ2"]
+
+    def test_作った順ではなく読み順で振る(self, four_panels):
+        """下段は左を先に作ってあるが、番号は右が先（→ 10.1）。"""
+        page = four_panels.project.pages[0]
+        items = page_layers(four_panels, page, 1.0)
+        groups = {x.name: x for x in items if isinstance(x, PsdGroup)}
+        # 3枚目に作った右のコマが コマ2、2枚目に作った左のコマが コマ3
+        assert groups["コマ2"].children[0].x > groups["コマ3"].children[0].x
+
+
+class Test重なりの判定:
+    """並べ替えてよいかの判断（→ `psd_export.panels_overlap`）。"""
+
+    def test_離れていれば重ならない(self, four_panels):
+        assert not panels_overlap(four_panels.project.pages[0].panels)
+
+    def test_重ねていれば重なる(self, overlapping):
+        assert panels_overlap(overlapping.project.pages[0].panels)
+
+    def test_枠線の太さぶんも数える(self, qapp, tmp_path):
+        """形が触れていなくても、枠線どうしが触れれば絵に出る。
+
+        枠線は形の線の上に中心を置いて引かれるので、太さの半分だけ外へ
+        はみ出す。形だけで見ると「触れていない」と誤って判断する。
+        """
+        from manga_layout import new_project
+
+        project = new_project()
+        page = project.pages[0]
+        width = page.panels[0].border.width if page.panels else 3.5
+        # 隙間は枠線の太さより狭い（＝はみ出した分どうしが触れる）
+        project.add_panel(page, Rect(10.0, 10.0, 100.0, 100.0))
+        project.add_panel(page, Rect(110.0 + width / 4, 10.0, 100.0, 100.0))
+        assert panels_overlap(page.panels)
 
 
 # ---------------------------------------------------------------------------

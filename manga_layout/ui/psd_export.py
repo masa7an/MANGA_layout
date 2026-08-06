@@ -8,8 +8,11 @@
 
     セリフ / マーク / フキダシ
     [フォルダ] コマN ── 絵・集中線と流線・コマ枠
-      …（コマの数だけ、奥から手前の順に）
+      …（コマの数だけ）
     ラフ / 用紙
+
+フォルダの並びは**重なっていないページなら読み順**（一覧の上から コマ1、
+コマ2……）。重なっているページだけ重なり順を保つ（→ `_stacking`）。
 
 並びは `render.PageRenderer.draw` の描く順そのまま。**ここで独自の順を
 持たない。** 持つと、画面と書き出しで重なりが食い違ったときに、どちらが
@@ -44,7 +47,7 @@ from __future__ import annotations
 import pathlib
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPainter
+from PySide6.QtGui import QImage, QPainter, QPainterPath, QPainterPathStroker
 
 from ..images import ImageCache, Preview, full_from_bytes, full_rough_from_bytes
 from ..model import BalloonObject, Page, Panel, StickerObject, TextObject
@@ -56,7 +59,7 @@ from .export import (
     export_dpi,
     page_filename,
 )
-from .render import PageRenderer
+from .render import PageRenderer, polygon_of
 
 #: レイヤーの名前と、古い名前欄に入れる英字（→ `psd.PsdLayer`）。
 #: **奥から手前の順**に並べてある
@@ -120,6 +123,39 @@ def reading_order(panels: list[Panel], gutter: float) -> list[Panel]:
     return ordered
 
 
+def _inked(panel: Panel) -> QPainterPath:
+    """そのコマが1画素でも触りうる範囲。
+
+    形そのものではなく、**枠線の太さぶん外へ膨らませた**もの。枠線は
+    形の線の上に中心を置いて引かれるので、太さの半分だけ外へはみ出す。
+    形だけで見ると、隣り合っただけのコマが「触れていない」ことになる。
+    """
+    path = QPainterPath()
+    path.addPolygon(polygon_of(panel.shape.points))
+    path.closeSubpath()
+    if not panel.border.visible or panel.border.width <= 0:
+        return path
+    stroker = QPainterPathStroker()
+    stroker.setWidth(panel.border.width)
+    return path.united(stroker.createStroke(path))
+
+
+def panels_overlap(panels: list[Panel]) -> bool:
+    """コマ同士が1画素でも重なるか。
+
+    **重ならないなら、コマの前後はどう並べても絵が変わらない。**
+    フォルダを読み順に並べ替えてよいかの判断に使う（→ 要件定義 10.1）。
+
+    枚数は多くて数十なので、総当たりで足りる。
+    """
+    inked = [_inked(panel) for panel in panels]
+    for i, first in enumerate(inked):
+        for second in inked[i + 1 :]:
+            if first.intersects(second):
+                return True
+    return False
+
+
 def page_layers(
     state, page: Page, scale: float = DEFAULT_SCALE
 ) -> list[PsdLayer | PsdGroup]:
@@ -142,13 +178,9 @@ def page_layers(
         build(ROUGH, lambda p: renderer.draw_rough(p, page, images=roughs), False),
     ]
 
-    numbers = {
-        panel.id: i + 1
-        for i, panel in enumerate(reading_order(page.panels, state.settings.gutter))
-    }
-    # 並べる順は**読み順ではなく重なり順**（奥から手前）。読み順は
-    # 名前に付ける番号だけに使う
-    for panel in sorted(page.panels, key=lambda p: p.z):
+    ordered = reading_order(page.panels, state.settings.gutter)
+    numbers = {panel.id: i + 1 for i, panel in enumerate(ordered)}
+    for panel in _stacking(page, ordered):
         items.append(_panel_group(renderer, page, panel, numbers[panel.id], build))
 
     items += [
@@ -157,6 +189,24 @@ def page_layers(
         build(TEXTS, lambda p: renderer.draw_floating(p, page, kinds=(TextObject,))),
     ]
     return [item for item in items if item is not None]
+
+
+def _stacking(page: Page, ordered: list[Panel]) -> list[Panel]:
+    """フォルダを並べる順（下から上）。
+
+    **重なっていないページでは読み順に並べる。** PSD には並び順と重なり順の
+    区別が無く、一覧の並びがそのまま重なり順になる。だが**コマが重ならない
+    なら前後は絵に出ない**ので、一覧で探しやすい向き——上から コマ1、コマ2
+    ——にできる（→ 要件定義 10.1）。一覧は上が手前なので、下から上へは
+    読み順の逆に積む。
+
+    **1組でも重なっていれば重なり順のまま。** そちらでは並びが絵に出る。
+    読みやすさのために、下のコマの枠線が上のコマの絵を貫く状態へ戻したら
+    本末転倒（第2段階でそれを直したところ → 6.28）。
+    """
+    if panels_overlap(page.panels):
+        return sorted(page.panels, key=lambda p: p.z)
+    return list(reversed(ordered))
 
 
 def _panel_group(
