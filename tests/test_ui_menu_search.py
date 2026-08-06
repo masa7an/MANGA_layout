@@ -134,6 +134,21 @@ class Test探す:
         assert "フキダシ → 丸い_フキダシを追加 (B)" in hits  # 空同士の一致で通さない
         assert hits == trails(search(entries, "フキダシ"))
 
+    def test_セリフの言い換えで当たる(self, entries):
+        """「テキスト」で探しても「セリフ」に届く（本人の要望 2026-08-07）。"""
+        hits = trails(search(entries, "テキスト"))
+        assert "セリフ → セリフを追加 (T)" in hits
+        assert hits == trails(search(entries, "セリフ"))
+
+    @pytest.mark.parametrize("written", ["びっくり", "びっくりマーク"])
+    def test_ビックリマークの言い換えで当たる(self, entries, written):
+        """「びっくり」だけでも、「マーク」まで続けても当たる。
+
+        読み替えた先を「ビックリマーク」まで伸ばすと、後者が
+        「ビックリマークマーク」になって外れる（→ `SYNONYMS`）。
+        """
+        assert "マーク → ビックリマークを追加 (M)" in trails(search(entries, written))
+
     def test_言い換えは語の一部でも効く(self, entries):
         """「ふきだしを追加」のように、続けて打たれても読み替える。"""
         assert trails(search(entries, "ふきだしを追加")) == trails(
