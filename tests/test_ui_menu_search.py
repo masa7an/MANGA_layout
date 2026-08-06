@@ -22,10 +22,11 @@ from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.menu_search import (
     HIGHLIGHT_SECONDS,
     MISSING_FEATURES,
+    NOT_IN_MENU,
     MenuEntry,
     collect_menu_entries,
+    guide_notes,
     item_text,
-    missing_notes,
     plain_label,
     search,
 )
@@ -190,19 +191,19 @@ class Test無い機能に無いと答える:
         ],
     )
     def test_定番の機能には無いと答える(self, asked, expected):
-        assert missing_notes(asked) == [expected]
+        assert guide_notes(asked) == [expected]
 
     @pytest.mark.parametrize("asked", ["擬音", "オノマトペ", "描き文字", "効果音"])
     def test_呼び名が違っても同じ答えに行き着く(self, asked):
         """4つとも「擬音機能はありません」に集める。"""
-        assert missing_notes(asked) == missing_notes("擬音")
+        assert guide_notes(asked) == guide_notes("擬音")
 
     def test_同じ答えは1回しか出さない(self):
         """「効果音のオノマトペ」でも、同じ文が2行並ばない。"""
-        assert len(missing_notes("効果音のオノマトペ")) == 1
+        assert len(guide_notes("効果音のオノマトペ")) == 1
 
     def test_別の答えは並べて出す(self):
-        assert len(missing_notes("ペンと消しゴム")) == 2
+        assert len(guide_notes("ペンと消しゴム")) == 2
 
     @pytest.mark.parametrize(
         "asked",
@@ -216,16 +217,16 @@ class Test無い機能に無いと答える:
     )
     def test_PSDは片道だけあると答える(self, asked):
         """大文字・全角の違いは潰す。**無いとは言わず、どちら向きかを答える。**"""
-        assert missing_notes(asked) == ["PSD 機能は、【書き出し】のみとなっています"]
+        assert guide_notes(asked) == ["PSD 機能は、【書き出し】のみとなっています"]
 
     def test_探す言葉でなく文で打たれても拾う(self):
-        assert missing_notes("ペンはどこですか") == missing_notes("ペン")
+        assert guide_notes("ペンはどこですか") == guide_notes("ペン")
 
     def test_表に無い言葉には何も答えない(self):
         """**言い換え表と同じ歯止め**。先回りで機能名を並べない。"""
-        assert missing_notes("コマ") == []
-        assert missing_notes("フキダシ") == []
-        assert missing_notes("") == []
+        assert guide_notes("コマ") == []
+        assert guide_notes("フキダシ") == []
+        assert guide_notes("") == []
 
     def test_あるものを無いと言わない(self, entries):
         """表の言葉がメニューに実在したら、案内と矛盾する（→ 6.30）。
@@ -236,6 +237,29 @@ class Test無い機能に無いと答える:
         for word in MISSING_FEATURES:
             found = [e for e in search(entries, word) if word in e.trail]
             assert not found, f"「{word}」はメニューに実在する: {trails(found)}"
+
+
+class Testメニューに無いが在るものは行き先を答える:
+    """右クリックからしか出ないものは、どう探しても0件になる（→ 6.30）。"""
+
+    @pytest.mark.parametrize("asked", ["付箋", "ふせん", "付箋を貼りたい"])
+    def test_付箋はサムネイルの右クリックへ案内する(self, asked):
+        assert guide_notes(asked) == ["付箋は、サムネイルを右クリックしてください"]
+
+    def test_一覧では見つからないから案内が要る(self, entries):
+        """メニューバーを辿るだけでは届かないことが、この表の前提。"""
+        for word in NOT_IN_MENU:
+            assert search(entries, word) == []
+
+    def test_あるほうを先に出す(self):
+        """行き先のある答えのほうが、次にやることに直に繋がる。"""
+        notes = guide_notes("付箋とペン")
+        assert len(notes) == 2
+        assert notes[0].startswith("付箋")
+
+    def test_無い機能の表とは別に持つ(self):
+        """混ぜると、実在しないことを確かめる歯止め（上）が付箋で落ちる。"""
+        assert not set(NOT_IN_MENU) & set(MISSING_FEATURES)
 
 
 class Test出しかた:
@@ -279,7 +303,7 @@ class Test出しかた:
         dialog = window._menu_search_dialog
         dialog._field.setText("消しゴム")
         assert dialog._list.count() == 0
-        assert "消しゴム機能はありません" in dialog._missing.text()
+        assert "消しゴム機能はありません" in dialog._guide.text()
         assert "別の言葉" not in dialog._count.text()
         dialog.close()
 
@@ -287,9 +311,9 @@ class Test出しかた:
         window.search_menu()
         dialog = window._menu_search_dialog
         dialog._field.setText("ペン")
-        assert dialog._missing.text()
+        assert dialog._guide.text()
         dialog._field.setText("コマ")
-        assert dialog._missing.text() == ""
+        assert dialog._guide.text() == ""
         assert dialog._list.count() > 0
         dialog.close()
 
@@ -298,7 +322,7 @@ class Test出しかた:
         window.search_menu()
         dialog = window._menu_search_dialog
         dialog._field.setText("PSD")
-        assert "【書き出し】" in dialog._missing.text()
+        assert "【書き出し】" in dialog._guide.text()
         assert dialog._list.count() > 0
         dialog.close()
 

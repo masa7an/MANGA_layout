@@ -13,10 +13,12 @@
 先回りで表を作ると、使われない言い換えまで抱え込んだうえ、項目を増やす
 たびに足す手間が残る。表に無い言葉は今も単純な文字の一致だけで探す。
 
-**無い機能は、無いと答える**（→ `MISSING_FEATURES`）。絵を描くソフトなら
-必ずある言葉（「ペン」「消しゴム」など）で探した人に、項目が0件だとしか
-返さないと、**無いのか呼び名が違うだけなのかが分からない**まま探し続ける
-ことになる。
+**一覧が0件になる問いには、一覧の外から答える**（→ `guide_notes`）。
+絵を描くソフトなら必ずある言葉（「ペン」「消しゴム」など）は**無いと答え**
+（→ `MISSING_FEATURES`）、右クリックからしか出ないもの（「付箋」）は
+**行き先を答える**（→ `NOT_IN_MENU`）。どちらも一覧では0件になるが、
+0件とだけ返すと**無いのか、呼び名が違うだけなのかが分からない**まま
+探し続けることになる。
 
 押した項目については、**そのメニューを画面上端で四角く囲む**
 （→ `MainWindow.highlight_menu`）。実行はしないまま、最初に開く場所だけ
@@ -123,7 +125,7 @@ _NO_FEATURE = f"その機能はありません。{PAINT_SOFT}"
 MISSING_FEATURES = {
     "ペン": f"ペン入れ機能はありません。{PAINT_SOFT}",
     "消しゴム": f"消しゴム機能はありません。{PAINT_SOFT}",
-    # 呼び名が4つあるが、答えは1つ（同じ文面は1回しか出さない → `missing_notes`）
+    # 呼び名が4つあるが、答えは1つ（同じ文面は1回しか出さない → `guide_notes`）
     "擬音": f"擬音機能はありません。{PAINT_SOFT}",
     "オノマトペ": f"擬音機能はありません。{PAINT_SOFT}",
     "描き文字": f"擬音機能はありません。{PAINT_SOFT}",
@@ -145,9 +147,26 @@ MISSING_FEATURES = {
     "psd": "PSD 機能は、【書き出し】のみとなっています",
 }
 
+# **あるが、メニューには無い**機能の行き先（本人の要望 2026-08-07）。
+#
+# この窓はメニューバーを辿って一覧を作るので（→ `collect_menu_entries`）、
+# 右クリックからしか出ないものは**どう探しても0件になる**。無い機能と
+# 同じ見え方をするのに、答えは正反対（「ありません」ではなく「そこにある」）
+# なので、表も分ける。
+#
+# **`MISSING_FEATURES` に混ぜてはいけない。** あちらは「メニューにも
+# 実在しないこと」を歯止めのテストで確かめている表で、こちらは実在する。
+NOT_IN_MENU = {
+    "付箋": "付箋は、サムネイルを右クリックしてください",
+    "ふせん": "付箋は、サムネイルを右クリックしてください",
+}
 
-def missing_notes(query: str) -> list[str]:
-    """打った言葉に含まれる「無い機能」の案内（→ `MISSING_FEATURES`）。
+
+def guide_notes(query: str) -> list[str]:
+    """打った言葉に対する案内（→ `NOT_IN_MENU`、`MISSING_FEATURES`）。
+
+    **「ある」ほうを先に出す。** 行き先のある答えのほうが、探している人が
+    次にやることに直に繋がる。
 
     **文の中に混じっていても拾う。**「psdを入力するには？」のように、
     探す言葉ではなく質問の形で打たれることを見込んでいる。
@@ -157,7 +176,7 @@ def missing_notes(query: str) -> list[str]:
     """
     asked = _fold(query)
     notes: list[str] = []
-    for word, note in MISSING_FEATURES.items():
+    for word, note in (*NOT_IN_MENU.items(), *MISSING_FEATURES.items()):
         if _fold(word) in asked and note not in notes:
             notes.append(note)
     return notes
@@ -341,12 +360,12 @@ class MenuSearchDialog(QDialog):
 
         self._count = QLabel()
 
-        # 無い機能の案内（→ `MISSING_FEATURES`）。**一覧の上に置く。**
+        # 一覧では答えられないことへの案内（→ `guide_notes`）。**一覧の上に置く。**
         # 下に置くと、0件の一覧を見た時点で窓を閉じられて読まれない。
         # **灰色にしない**（下の `note` と違い、これは読ませたい答え）
-        self._missing = QLabel()
-        self._missing.setWordWrap(True)
-        self._missing.hide()
+        self._guide = QLabel()
+        self._guide.setWordWrap(True)
+        self._guide.hide()
 
         self._list = QListWidget()
         # 説明が長い項目があるので折り返す。横スクロールで読ませない
@@ -371,7 +390,7 @@ class MenuSearchDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self._field)
         layout.addWidget(self._count)
-        layout.addWidget(self._missing)
+        layout.addWidget(self._guide)
         layout.addWidget(self._list)
         layout.addWidget(note)
         layout.addWidget(buttons)
@@ -420,9 +439,9 @@ class MenuSearchDialog(QDialog):
         for entry in self._hits:
             self._list.addItem(item_text(entry))
 
-        notes = missing_notes(query)
-        self._missing.setText("\n".join(notes))
-        self._missing.setVisible(bool(notes))
+        notes = guide_notes(query)
+        self._guide.setText("\n".join(notes))
+        self._guide.setVisible(bool(notes))
 
         if self._hits:
             self._count.setText(f"{len(self._hits)} 件")
