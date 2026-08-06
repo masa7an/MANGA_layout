@@ -162,6 +162,34 @@ class Test探す:
         assert trails(search(entries, written)) == trails(search(entries, "コマ"))
         assert "コマ → コマ追加 (P)" in trails(search(entries, written))
 
+    @pytest.mark.parametrize("written", ["png", "PNG", "jpg", "psd", "エクスポート"])
+    def test_拡張子や他のソフトの言い方で書き出しに届く(self, entries, written):
+        """**大文字でも当たる。** 拡張子は大文字で打たれることが多い。
+
+        `read_as` は casefold 済みの言葉を受けるので、表の鍵は小文字。
+        """
+        assert "ファイル → 画像で書き出し..." in trails(search(entries, written))
+
+    @pytest.mark.parametrize(
+        ("written", "trail"),
+        [
+            ("アンドゥ", "編集 → 元に戻す"),
+            ("リドゥ", "編集 → やり直す"),
+            ("コピー", "編集 → 複製"),
+            ("ズーム", "表示 → 拡大"),
+            ("書体", "セリフ → フォントを選ぶ..."),
+            ("スピード線", "コマ → 流線 → 入れる"),
+            ("尻尾", "フキダシ → しっぽを消す"),
+        ],
+    )
+    def test_他のソフトの呼び名でも当たる(self, entries, written, trail):
+        """このアプリの項目名はやまとことばに寄せてある（→ 6.12）。
+
+        **先回りして足す側へ改めた**（本人の判断 2026-08-07）。定番の
+        呼び名で0件になる時間がいちばん無駄になる。
+        """
+        assert trail in trails(search(entries, written))
+
     def test_言い換えは語の一部でも効く(self, entries):
         """「ふきだしを追加」のように、続けて打たれても読み替える。"""
         assert trails(search(entries, "ふきだしを追加")) == trails(
@@ -219,6 +247,34 @@ class Test無い機能に無いと答える:
         """大文字・全角の違いは潰す。**無いとは言わず、どちら向きかを答える。**"""
         assert guide_notes(asked) == ["PSD 機能は、【書き出し】のみとなっています"]
 
+    @pytest.mark.parametrize(
+        ("asked", "expected"),
+        [
+            ("トンボ", "印刷向けの機能はありません（ウェブ漫画用です）"),
+            ("ノンブル", "印刷向けの機能はありません（ウェブ漫画用です）"),
+            ("ルビ", "セリフの書式は、大きさ・太字・寄せ・縦横だけです"),
+            ("行間", "セリフの書式は、大きさ・太字・寄せ・縦横だけです"),
+            ("定規", "その機能はありません"),
+        ],
+    )
+    def test_無い理由まで書ける群には専用の答えを返す(self, asked, expected):
+        """**「ペイントソフトで」と言えないものがある。**
+
+        定規やグリッドは向こうでやっても解決しないので、行き先を書けない
+        ときは余計な誘導を付けずに無いとだけ言う。
+        """
+        assert guide_notes(asked) == [expected]
+
+    def test_レイヤーは無いで済ませない(self):
+        """編集中には無いが、PSD では分かれる（→ 10.1）。
+
+        無いとだけ答えると、**クリスタへ渡す道があること自体**を
+        知らないまま帰らせることになる。
+        """
+        assert guide_notes("レイヤー") == [
+            "編集中にレイヤーはありません。PSD で書き出すとレイヤーに分かれます"
+        ]
+
     def test_探す言葉でなく文で打たれても拾う(self):
         assert guide_notes("ペンはどこですか") == guide_notes("ペン")
 
@@ -245,6 +301,17 @@ class Testメニューに無いが在るものは行き先を答える:
     @pytest.mark.parametrize("asked", ["付箋", "ふせん", "付箋を貼りたい"])
     def test_付箋はサムネイルの右クリックへ案内する(self, asked):
         assert guide_notes(asked) == ["付箋は、サムネイルを右クリックしてください"]
+
+    @pytest.mark.parametrize("asked", ["スクロール", "手のひら", "画面移動"])
+    def test_画面の動かし方を答える(self, asked):
+        """ホイールは拡大・縮小に取ってあるので、上下に動かす手が別にある。"""
+        assert "スペースキー" in guide_notes(asked)[0]
+
+    def test_設定の在り処を答える(self):
+        assert guide_notes("環境設定") == ["設定は settings.bat から変えられます"]
+
+    def test_右クリックが本体だと教える(self):
+        assert guide_notes("右クリック") == ["多くの操作は、対象を右クリックすると出ます"]
 
     def test_一覧では見つからないから案内が要る(self, entries):
         """メニューバーを辿るだけでは届かないことが、この表の前提。"""
