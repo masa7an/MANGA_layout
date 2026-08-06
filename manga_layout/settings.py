@@ -202,6 +202,47 @@ def save_settings(settings: AppSettings, path: pathlib.Path | None = None) -> pa
     return path
 
 
+def load_raw_settings(path: pathlib.Path | None = None) -> dict | None:
+    """設定ファイルの中身を**そのまま**返す。読めなければ `None`。
+
+    `load_settings` との違いは、**知らない項目も、範囲外の値も、書いてある
+    まま返す**こと。書き戻すときに消さないため（→ `update_settings_file`）と、
+    「書いたのに採用されなかった値」を道具側で見つけるために要る。
+
+    `None` は「ファイルが無い」と「壊れている」の両方を指す。区別が要る側は
+    ファイルの有無で分ける（設定を調整する道具は、壊れている場合にだけ
+    「保存すると置き換わる」と知らせる → 要件定義 6.28）。
+    """
+    path = path or settings_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def update_settings_file(
+    settings: AppSettings, path: pathlib.Path | None = None
+) -> pathlib.Path:
+    """**知っている項目だけを差し替えて**書き戻す。
+
+    `save_settings` との違いは、**知らない項目を消さない**こと。設定は手で
+    書き換える前提のファイルなので、まだアプリが知らない項目や、将来のために
+    書き足した項目が混ざりうる。道具から保存するたびにそれが黙って消えると、
+    「触っていない所が無くなった」に気づけない。
+
+    アプリ本体は今までどおり `save_settings`（雛形を置くときだけ使う）。
+    こちらは設定を調整する道具から使う（→ 要件定義 6.28）。
+    """
+    data = load_raw_settings(path) or {}
+    data.update(settings.to_dict())
+    path = path or settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    atomic_write_text(path, text)
+    return path
+
+
 def ensure_settings_file(path: pathlib.Path | None = None) -> pathlib.Path:
     """無ければ既定値で作る。**あるものには触らない。**
 
