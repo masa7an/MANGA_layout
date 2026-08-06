@@ -121,6 +121,12 @@ TOOL_ROUGH = "rough"
 # すれば、その間は他のつまみを全部消せる（ラフと同じ切り分け）
 TOOL_TONE_AREA = "tone_area"
 
+# **既にあるものを調整するだけの道具。** 何も作らず、持っている間は選び直せない
+# （→ 要件定義 6.23、6.27）。この2つだけ、**もう一度選ぶと選択の道具へ戻る**
+# （→ `MainWindow._pick_tool`）。作る側の道具（コマ・フキダシ・マーク）は
+# 押すたびに1つ作るので、同じ扱いにすると2回目が「作る」ではなく「やめる」に化ける
+ADJUST_TOOLS = (TOOL_ROUGH, TOOL_TONE_AREA)
+
 # どの道具がどの種類の吹き出しを作るか
 BALLOON_TOOLS = {
     TOOL_BALLOON: "ellipse",

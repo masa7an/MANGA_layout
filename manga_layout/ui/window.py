@@ -45,6 +45,7 @@ from .menus import (
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .project_io import ProjectIO
 from .state import (
+    ADJUST_TOOLS,
     BALLOON_STYLE_LABELS,
     TOOL_BALLOON,
     TOOL_BALLOON_CLOUD,
@@ -71,6 +72,11 @@ APP_TITLE = "漫画レイアウタ"
 # 表示メニューに出す、ページ一覧の開け閉め項目の名前。
 # 一覧の見出し（「ページ 1/9」）とは別に持つ（理由は `_refresh`）
 PAGES_MENU_LABEL = "ページ一覧"
+
+# 調整の道具（→ `ADJUST_TOOLS`）を持っている間、状態表示の末尾に出す出口。
+# **出口は必ず名乗る。** この2つは持ち替えた覚えのないまま入ってしまうことが
+# あり、そのとき「クリックしても何も選べない」としか見えない（→ 6.27）
+ADJUST_TOOL_EXIT = "同じ項目をもう一度押すと戻る"
 
 TEXT_ALIGN_LABELS = {"left": "左寄せ", "center": "中央寄せ", "right": "右寄せ"}
 
@@ -290,11 +296,27 @@ class MainWindow(QMainWindow):
             action.setCheckable(True)
             if shortcut:
                 action.setShortcut(QKeySequence(shortcut))
-            action.triggered.connect(lambda _checked=False, t=tool: self.state.set_tool(t))
+            action.triggered.connect(lambda _checked=False, t=tool: self._pick_tool(t))
             group.addAction(action)
             self.addAction(action)
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
+
+    def _pick_tool(self, tool: str) -> None:
+        """道具の項目が押された。
+
+        **調整の道具は、同じ項目をもう一度押すと解除する**（→ 要件定義 6.27）。
+        レ点が外れて選択の道具へ戻る。**入るのと出るのが同じ場所**になるので、
+        持ち替えた覚えのないまま入ってしまった人も、押した項目を辿れば出られる
+        （本人の指摘 2026-08-06。トーンの範囲を調整中だと気づけなかった）。
+
+        **作る側の道具（コマ・フキダシ・マーク）には広げない。** あちらは
+        押すたびに1つ作るので、2回目が「やめる」に化けると意味が変わる。
+        """
+        if tool in ADJUST_TOOLS and self.state.tool == tool:
+            self.state.set_tool(TOOL_SELECT)
+            return
+        self.state.set_tool(tool)
 
     def _build_tool_menu(self) -> None:
         tool_menu = self.menuBar().addMenu("道具(&T)")
@@ -376,7 +398,10 @@ class MainWindow(QMainWindow):
         どちらを動かしているのか分からなくなる。
 
         ラフの調整中は選択の話をしない（→ 6.23）。この道具では何も選べず、
-        掴めるのはラフだけなので、そちらの寸法を出す。
+        掴めるのはラフだけなので、そちらの寸法を出す。**トーンの範囲も同じ**
+        （→ 6.27）。どちらも**調整中であること自体をここで名乗る**——
+        持ち替えたことに気づかないまま「クリックしても選べない」に見えるのが、
+        この2つの道具のいちばんの躓き（本人の指摘 2026-08-06）。
         """
         if self.state.tool == TOOL_ROUGH:
             rough = self.state.page.rough
@@ -385,7 +410,21 @@ class MainWindow(QMainWindow):
             tint = "青く淡く" if rough.faded else "元の色"
             return (
                 f"ラフ調整中: {rough.rect.w:.0f} × {rough.rect.h:.0f} px / {tint}"
+                f" / {ADJUST_TOOL_EXIT}"
             )
+
+        if self.state.tool == TOOL_TONE_AREA:
+            tone = self.state.selected_tone
+            image = self.state.tone_image
+            if tone is None or image is None:
+                return "トーン範囲を調整中: 対象の絵がありません"
+            area = tone.area
+            where = (
+                "今は画像全体"
+                if area is None
+                else f"{area.w * image.rect.w:.0f} × {area.h * image.rect.h:.0f} px"
+            )
+            return f"トーン範囲を調整中: {where} / {ADJUST_TOOL_EXIT}"
 
         image = self.state.selected_image
         if image is not None:

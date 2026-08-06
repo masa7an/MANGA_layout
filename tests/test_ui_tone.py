@@ -20,6 +20,7 @@ from manga_layout import Rect, tone as TN
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import (
     TOOL_LABELS,
+    TOOL_PANEL,
     TOOL_ROUGH,
     TOOL_SELECT,
     TOOL_TONE_AREA,
@@ -396,6 +397,53 @@ def test_トーンを消すと道具が外れる(window_with_tone):
     state.remove_tone()
     state._leave_tone_tool_if_gone()
     assert state.tool == TOOL_SELECT
+
+
+def test_同じ項目をもう一度押すと調整をやめる(window_with_tone):
+    """**入るのと出るのが同じ場所。** 持ち替えた覚えのないまま入っても戻れる
+    （本人の指摘 2026-08-06）。
+    """
+    action = window_with_tone.tone_menu.area_tool_action
+    action.trigger()
+    assert window_with_tone.state.tool == TOOL_TONE_AREA
+
+    action.trigger()
+    assert window_with_tone.state.tool == TOOL_SELECT
+    assert not action.isChecked(), "レ点も外れる"
+
+
+def test_調整をやめても範囲は残る(window_with_tone):
+    """やめるのは道具の持ち替えだけ。囲った範囲まで戻したら操作にならない。"""
+    state = window_with_tone.state
+    state.set_tone_area(image(window_with_tone).id, Rect(0.2, 0.2, 0.3, 0.3))
+    action = window_with_tone.tone_menu.area_tool_action
+    action.trigger()
+    action.trigger()
+    assert image(window_with_tone).tone.area is not None
+
+
+def test_作る道具は2回押しても解除されない(window_with_tone):
+    """コマやフキダシは押すたびに1つ作る。2回目が「やめる」に化けると困る。"""
+    action = window_with_tone._tool_actions[TOOL_PANEL]
+    action.trigger()
+    action.trigger()
+    assert window_with_tone.state.tool == TOOL_PANEL
+
+
+def test_調整中は状態表示で名乗る(window_with_tone):
+    """**「クリックしても選べない」としか見えないのが躓きの中身**（→ 6.27）。"""
+    window_with_tone.state.set_tool(TOOL_TONE_AREA)
+    window_with_tone._refresh()
+    hint = window_with_tone.hint_label.text()
+    assert hint.startswith("トーン範囲を調整中")
+    assert "もう一度" in hint, "出口も一緒に名乗る"
+
+
+def test_調整をやめたら状態表示も戻る(window_with_tone):
+    window_with_tone.state.set_tool(TOOL_TONE_AREA)
+    window_with_tone.state.set_tool(TOOL_SELECT)
+    window_with_tone._refresh()
+    assert "調整中" not in window_with_tone.hint_label.text()
 
 
 def test_Undoでトーンが消えても道具が外れる(window_with_tone):

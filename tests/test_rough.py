@@ -404,6 +404,23 @@ class Test調整の道具:
 
         assert view.viewport().cursor().shape() == Qt.CursorShape.SizeFDiagCursor
 
+    def test_同じ項目をもう一度押すと調整をやめる(self, window_with_rough):
+        """トーンの範囲と揃える（→ 6.27）。調整の道具は入口と出口が同じ場所。"""
+        action = window_with_rough._tool_actions[TOOL_ROUGH]
+        action.trigger()
+        assert window_with_rough.state.tool == TOOL_ROUGH
+
+        action.trigger()
+        assert window_with_rough.state.tool == TOOL_SELECT
+        assert not action.isChecked()
+
+    def test_調整中は状態表示で名乗る(self, window_with_rough):
+        window_with_rough.state.set_tool(TOOL_ROUGH)
+        window_with_rough._refresh()
+        hint = window_with_rough.hint_label.text()
+        assert hint.startswith("ラフ調整中")
+        assert "もう一度" in hint, "出口も一緒に名乗る"
+
     def test_普段の選択ではラフを掴めない(self, window_with_rough):
         state = window_with_rough.state
         state.set_tool(TOOL_SELECT)
