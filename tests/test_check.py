@@ -25,7 +25,6 @@ from manga_layout.check import (
     KIND_EMPTY_TEXT,
     KIND_MISSING_ASSET,
     KIND_NOTE_LEFT,
-    KIND_OUTSIDE_PAGE,
     KIND_TEXT_OVERFLOW,
     headline,
     inspect_project,
@@ -33,6 +32,7 @@ from manga_layout.check import (
     summary_lines,
 )
 from manga_layout.focus import default_focus
+from manga_layout.layout import outside_page
 from manga_layout.model import PageNote
 
 # フキダシは用紙の真ん中あたりに置く。半径 200px の円
@@ -155,16 +155,38 @@ class Testフキダシからのはみ出し:
         assert inspect_project(project) == []
 
 
-class Test用紙の外:
-    def test_はみ出したコマを拾う(self):
+class Test用紙の外は拾わない:
+    """紙の端まで絵を出すコマ（断ち切り）は**普通の使い方**（2026-08-06）。
+
+    拾うと窓が常に埋まり、埋まった窓は読まれなくなる。
+    """
+
+    def test_はみ出したコマを拾わない(self):
         project = new_project()
         page = project.pages[0]
         panel = project.add_panel(page, Rect(-100.0, 100.0, 400.0, 400.0))
         project.add_image(panel, "assets/a.png", Rect(0.0, 100.0, 300.0, 300.0), (10, 10))
 
-        found = inspect_project(project)
-        assert kinds(found) == [KIND_OUTSIDE_PAGE]
-        assert found[0].object_id == panel.id
+        assert inspect_project(project, lambda ref: True) == []
+
+    def test_はみ出したフキダシとセリフも拾わない(self):
+        project = new_project()
+        page = project.pages[0]
+        balloon = project.add_balloon(page, Rect(-200.0, 1600.0, 400.0, 400.0))
+        text = project.add_text(page, "あい", Rect(-150.0, 1650.0, 140.0, 140.0))
+        text.attached_balloon_id = balloon.id
+
+        assert inspect_project(project) == []
+
+    def test_ページの大きさを変えたときの数え上げは残す(self):
+        """点検から外しただけで、`layout.outside_page` は消していない。
+
+        あちらは**その操作で外へ出た**ことをその場で知らせるもの（→ 6.1）で、
+        用途が違う。
+        """
+        project = new_project()
+        panel = project.add_panel(project.pages[0], Rect(-100.0, 100.0, 400.0, 400.0))
+        assert [o.id for o in outside_page(project.pages[0])] == [panel.id]
 
 
 class Test絵の入っていないコマ:

@@ -8,6 +8,12 @@
 窓も付箋も出てこない。画像の実体があるかどうかだけは外から渡してもらう
 （`has_asset`）——実体の在り処を知っているのは画面の側だけで、ここへ持ち込むと
 純粋な計算でなくなる。
+
+**用紙からのはみ出しは拾わない**（2026-08-06 本人確認済み）。紙の端まで絵を
+出すコマ（断ち切り）は普通の使い方なので、拾うと窓が常に埋まり、埋まった窓は
+読まれなくなる。`layout.outside_page` 自体は残す——あちらは**ページの大きさを
+変えた直後**に「今この操作で外へ出た」ことを知らせるためのもので（→ 6.1）、
+用途が違う。
 """
 
 from __future__ import annotations
@@ -16,13 +22,12 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Callable
 
-from .layout import balloon_contains, outside_page, text_ink_bands
+from .layout import balloon_contains, text_ink_bands
 from .model import BalloonObject, Page, Project, StickerObject, TextObject
 from .vertical import COLUMN_PITCH
 
-# 拾うものの種類（→ 要件定義 10.1）
+# 拾うものの種類（→ 要件定義 6.29）
 KIND_MISSING_ASSET = "missing_asset"
-KIND_OUTSIDE_PAGE = "outside_page"
 KIND_TEXT_OVERFLOW = "text_overflow"
 KIND_EMPTY_TEXT = "empty_text"
 KIND_EMPTY_PANEL = "empty_panel"
@@ -30,17 +35,15 @@ KIND_NOTE_LEFT = "note_left"
 
 KIND_LABELS = {
     KIND_MISSING_ASSET: "実体の見つからない画像",
-    KIND_OUTSIDE_PAGE: "用紙からはみ出しているもの",
     KIND_TEXT_OVERFLOW: "フキダシからはみ出したセリフ",
     KIND_EMPTY_TEXT: "空のままのセリフ",
     KIND_EMPTY_PANEL: "絵の入っていないコマ",
     KIND_NOTE_LEFT: "付箋の残っているページ",
 }
 
-# 重い順。**この順で窓に出す**（→ 要件定義 10.1「重さの違い」）
+# 重い順。**この順で窓に出す**（→ 要件定義 6.29「重さの違い」）
 KIND_ORDER = (
     KIND_MISSING_ASSET,
-    KIND_OUTSIDE_PAGE,
     KIND_TEXT_OVERFLOW,
     KIND_EMPTY_TEXT,
     KIND_EMPTY_PANEL,
@@ -56,7 +59,7 @@ KIND_GROUPS = {kind: GROUP_FIX for kind in KIND_ORDER} | {KIND_NOTE_LEFT: GROUP_
 
 # セリフのはみ出しを見逃す幅（字の大きさに対する割合）。
 #
-# **厳しくしすぎない**（→ 要件定義 10.1）。縦書きの帯は列の送りぶんの幅を持ち、
+# **厳しくしすぎない**（→ 要件定義 6.29）。縦書きの帯は列の送りぶんの幅を持ち、
 # 楕円のフキダシでは字の角が少し外へ出るのが普通の使い方。ここを 0 にすると
 # 一覧が常に埋まり、埋まった一覧は読まれなくなる。
 OVERFLOW_SLACK = 0.25
@@ -113,8 +116,6 @@ def inspect_page(
         for obj in _asset_objects(page):
             if not obj.asset or not has_asset(obj.asset):
                 found.append(hit(KIND_MISSING_ASSET, obj.id))
-
-    found.extend(hit(KIND_OUTSIDE_PAGE, obj.id) for obj in outside_page(page))
 
     balloons = {f.id: f for f in page.floating if isinstance(f, BalloonObject)}
     for obj in page.floating:
