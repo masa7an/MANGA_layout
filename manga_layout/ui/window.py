@@ -301,17 +301,20 @@ class MainWindow(QMainWindow):
             (TOOL_SPLIT_H, "H"),
             (TOOL_SPLIT_V, "J"),
             (TOOL_SPLIT_SLANT, "K"),
+            # フキダシの並びは `BALLOON_TOOLS` と揃える（使う頻度の順
+            # → `BALLOON_STYLE_LABELS`）。ここだけ別の順にすると、道具箱と
+            # フキダシメニューで並びが食い違う
             (TOOL_BALLOON, "B"),
-            (TOOL_BALLOON_JAGGED, "G"),
-            # トゲトゲ（ギザギザの曲線版 → 6.32）にキーは割り当てない。
-            # ギザギザと二者択一で、作風を決めたあとは片方しか使わない
-            (TOOL_BALLOON_SPIKY, None),
-            (TOOL_BALLOON_WAVY, "W"),
             # 雲と四角にキーは割り当てない。**キーを足すこと自体に値打ちは
             # 無く、元から通っていたものを塞ぐ副作用は必ず付く**
             # （→ 要件定義 7章）。ビックリはてなマークと同じ扱いで、
             # メニューと右クリックから出す
             (TOOL_BALLOON_CLOUD, None),
+            # トゲトゲ（ギザギザの曲線版 → 6.32）にキーは割り当てない。
+            # ギザギザと二者択一で、作風を決めたあとは片方しか使わない
+            (TOOL_BALLOON_SPIKY, None),
+            (TOOL_BALLOON_WAVY, "W"),
+            (TOOL_BALLOON_JAGGED, "G"),
             (TOOL_BALLOON_RECT, None),
             (TOOL_STICKER_EXCLAIM, "M"),
             (TOOL_STICKER_EXCLAIM_QUESTION, None),
