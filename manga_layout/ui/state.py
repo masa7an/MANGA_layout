@@ -90,6 +90,7 @@ from ..tone import (
     stepped_pitch as tone_stepped_pitch,
     stepped_thin as tone_stepped_thin,
     stepped_threshold as tone_stepped_threshold,
+    zoomed_area,
 )
 
 # 道具（ツール）
@@ -385,6 +386,10 @@ class EditorState(QObject):
         if tool == self._tool:
             return
         self._tool = tool
+        # 連打でまとめている1手をここで区切る（→ `zoom_tone_area`）。
+        # 区切らないと、道具を外して戻ってきたあとの連打が、前の連打と
+        # 同じ1手に吸い込まれる
+        self.history.break_merge()
         self.tool_changed.emit()
 
     def select(self, panel_id: str | None) -> None:
@@ -1245,12 +1250,15 @@ class EditorState(QObject):
         image = self.tone_image
         return None if image is None else image.tone
 
-    def _edit_tone(self, image_id: str, label: str):
-        """id で引き直してから触るための小さな入れ物（`_edit_flow` と同じ）。"""
+    def _edit_tone(self, image_id: str, label: str, *, merge_key: str | None = None):
+        """id で引き直してから触るための小さな入れ物（`_edit_flow` と同じ）。
+
+        `merge_key` を渡すと、連打ぶんが履歴の1手にまとまる（→ `History.commit`）。
+        """
 
         @contextlib.contextmanager
         def scope():
-            with self.edit_page(label) as page:
+            with self.edit_page(label, merge_key=merge_key) as page:
                 target = page.find(image_id)
                 if not isinstance(target, ImageObject) or target.tone is None:
                     raise KeyError(f"トーンの入った画像が見つかりません: {image_id}")
@@ -1380,6 +1388,41 @@ class EditorState(QObject):
         """
         with self._edit_tone(image_id, "トーンの範囲") as target:
             target.tone.area = area
+
+    def zoom_tone_area(self, steps: int) -> bool:
+        """絞る矩形を、中心を動かさずに広げる／狭める。変わったら True。
+
+        **連打で合わせる前提**（本人談 2026-08-06）。隅を引くのと違い
+        中心が動かないので、狙いを合わせてから大きさだけを詰められる。
+
+        **絞っていない画像では、狭めるときだけ効く。** そこが「画像全体」の
+        状態なので、広げても行き先が無い。狭めた時点で矩形が実体になる。
+
+        **連打ぶんは履歴に1手しか積まない**（`merge_key`）。1回ずつ積むと、
+        Undo を20回押しても1回ぶんずつしか戻らない（セリフの入力と同じ扱い）。
+        """
+        image = self.tone_image
+        if image is None or image.tone is None:
+            return False
+
+        area = image.tone.area
+        if area is None:
+            if steps > 0:
+                self.message.emit("すでに画像全体が対象です")
+                return False
+            area = Rect(0.0, 0.0, 1.0, 1.0)
+
+        zoomed = zoomed_area(area, steps)
+        if zoomed == area:
+            return False
+
+        image_id = image.id
+        with self._edit_tone(image_id, "トーンの範囲", merge_key=f"tone_area:{image_id}") as target:
+            target.tone.area = zoomed
+        self.message.emit(
+            f"トーンの範囲: 画像の {zoomed.w * 100:.0f}% × {zoomed.h * 100:.0f}%"
+        )
+        return True
 
     def clear_tone_area(self) -> bool:
         """絞りを外して画像全体に戻す。戻したら True。"""

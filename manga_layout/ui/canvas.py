@@ -217,6 +217,16 @@ MAX_VIEW_SCALE = 8.0
 ZOOM_IN_KEYS = (Qt.Key.Key_Plus, Qt.Key.Key_Equal)
 ZOOM_OUT_KEYS = (Qt.Key.Key_Minus,)
 
+# トーンの範囲を伸縮させるキー（→ 要件定義 6.27）。**`Shift+]` / `Shift+[`。**
+#
+# Shift を押した `[` `]` は配列によって `{` `}` として届くので、両方を拾う
+# （`+` に対して `=` も拾っているのと同じ手当て）。
+#
+# **セリフの大きさ（`Ctrl+]` / `Ctrl+[`）と向きを揃える。** 右が大きく、
+# 左が小さい。修飾キーが違うので取り合いにはならない
+TONE_AREA_GROW_KEYS = (Qt.Key.Key_BraceRight, Qt.Key.Key_BracketRight)
+TONE_AREA_SHRINK_KEYS = (Qt.Key.Key_BraceLeft, Qt.Key.Key_BracketLeft)
+
 # ファイル選択ダイアログとドロップ受け入れで共通の対象。
 # assets.sniff_format が見分けられる形式に合わせてある
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -1670,6 +1680,18 @@ class PageView(QGraphicsView):
                 self.begin_text_edit(text.id)
                 event.accept()
                 return
+        # トーンの範囲を連打で伸縮させる（→ 要件定義 6.27）。
+        #
+        # **`+` / `-` には割り当てない。** あちらは拡大縮小で、範囲を合わせる
+        # ときこそ拡大したい。この道具の間だけ意味を差し替えると、いちばん
+        # 要るときにズームが使えなくなる（→ 7章）
+        if key in TONE_AREA_GROW_KEYS and self._tone_area_zoom(1):
+            event.accept()
+            return
+        if key in TONE_AREA_SHRINK_KEYS and self._tone_area_zoom(-1):
+            event.accept()
+            return
+
         if key in ZOOM_IN_KEYS:
             self.zoom_in()
             event.accept()
@@ -1684,6 +1706,17 @@ class PageView(QGraphicsView):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _tone_area_zoom(self, steps: int) -> bool:
+        """トーンの範囲を伸縮させる。効いたら True。
+
+        **この道具を持っている間だけ効く。** 常に効かせると、`Shift+]` が
+        場面によって何をするか分からないキーになる。ラフの調整と同じで、
+        持ち替えている間だけの意味にする（→ 6.23）。
+        """
+        if self.state.tool != TOOL_TONE_AREA:
+            return False
+        return self.state.zoom_tone_area(steps)
 
     def _select_parent(self) -> None:
         """Esc。画像を選んでいれば入っているコマへ、そうでなければ選択解除。
