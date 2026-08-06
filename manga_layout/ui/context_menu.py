@@ -175,6 +175,8 @@ class ContextMenu:
                 tip=REPLACE_IMAGE_TIP,
             )
             menu.addAction(window.image_menu.open_image_action)
+            menu.addSeparator()
+            self._copy_actions(menu.addMenu("トーン"), window.tone_menu.copy_items)
 
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
@@ -192,6 +194,12 @@ class ContextMenu:
             # ここで作り直すと、メニューバー側が古い項目を持ったまま残る
             self._copy_actions(menu.addMenu("集中線"), window.focus_menu.copy_items)
             self._copy_actions(menu.addMenu("流線"), window.flow_menu.copy_items)
+            # **トーンもここに出す。** 持ち主は画像だが（→ 6.27）、絵を
+            # 選ぶにはコマの中へ入る必要があり、集中線・流線と同じつもりで
+            # コマを右クリックした利用者には行き先が無い（本人談 2026-08-06）。
+            # 絵が1枚のコマならそのまま効き、複数なら押したときに断る
+            if state.panel_images:
+                self._copy_actions(menu.addMenu("トーン"), window.tone_menu.copy_items)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()

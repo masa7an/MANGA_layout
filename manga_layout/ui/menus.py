@@ -559,7 +559,7 @@ class ToneMenu:
             "入れる",
             window.toggle_tone,
             None,
-            "選んだ画像の黒ベタを斜線のトーンに置き換える。元の画像は変わらない",
+            "選んだ絵の黒ベタを斜線のトーンに置き換える。元の画像は変わらない",
         )
         menu.addAction(self.toggle_action)
         menu.addSeparator()
@@ -618,7 +618,11 @@ class ToneMenu:
 
     def refresh(self) -> None:
         tone = self._state.selected_tone
-        self.toggle_action.setEnabled(self._state.selected_image is not None)
+        # **絵が複数あるコマでもグレーにしない。** 押したら状態表示で
+        # 「絵を選んでから」と断る（→ `EditorState.tone_ambiguous`、6.15）
+        self.toggle_action.setEnabled(
+            self._state.tone_image is not None or self._state.tone_ambiguous
+        )
         self.toggle_action.setText("消す" if tone is not None else "入れる")
         for action in self.actions:
             action.setEnabled(tone is not None)

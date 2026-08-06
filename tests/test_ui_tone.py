@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 from test_ui_balloon import drag, move_to, press, release
+from test_ui_context_menu import folded_labels, labels
 
 from manga_layout import Rect, tone as TN
 from manga_layout.ui import EditorState, MainWindow
@@ -86,11 +87,55 @@ def test_2つは入らない(window_with_tone):
     assert window_with_tone.state.add_tone() is False
 
 
-def test_画像を選んでいないと入らない(window):
+def test_絵の入っていないコマでは入らない(window):
     with window.state.edit("コマの追加") as project:
         project.add_panel(project.pages[0], PANEL)
     window.state.select(window.state.page.panels[0].id)
     assert window.state.add_tone() is False
+
+
+def test_コマを選んだだけでも入れられる(window_with_image):
+    """**絵を選び直さなくてよい。**
+
+    トーンの持ち主は画像だが、絵を選ぶにはコマをダブルクリックして中へ
+    入る必要がある。そこを要求すると、集中線・流線と同じつもりでコマを
+    選んだ利用者にはただグレーの項目に見える（本人談 2026-08-06）。
+    """
+    state = window_with_image.state
+    state.select(state.page.panels[0].id)
+    assert state.selected_image is None
+    assert state.add_tone() is True
+    assert image(window_with_image).tone is not None
+
+
+def test_コマを選んだ状態でも項目が押せる(window_with_image):
+    state = window_with_image.state
+    state.select(state.page.panels[0].id)
+    window_with_image._refresh()
+    assert window_with_image.tone_menu.toggle_action.isEnabled()
+
+
+def test_絵が複数あるコマでは断る(window_with_image, dark_png):
+    """どちらに掛けるかは黙って選べない。背景の上にキャラを重ねる使い方がある。"""
+    state = window_with_image.state
+    panel_id = state.page.panels[0].id
+    state.place_image(panel_id, dark_png)  # 2枚目
+    state.select(panel_id)
+
+    assert state.tone_ambiguous is True
+    assert state.tone_image is None
+    assert state.add_tone() is False
+    assert all(c.tone is None for c in state.page.panels[0].children)
+
+
+def test_絵が複数でも項目はグレーにしない(window_with_image, dark_png):
+    """グレーだと「使えない」は伝わるが理由が伝わらない（→ 6.15 と同じ線引き）。"""
+    state = window_with_image.state
+    panel_id = state.page.panels[0].id
+    state.place_image(panel_id, dark_png)
+    state.select(panel_id)
+    window_with_image._refresh()
+    assert window_with_image.tone_menu.toggle_action.isEnabled()
 
 
 def test_入れた時点では絞らない(window_with_tone):
@@ -101,6 +146,36 @@ def test_入れた時点では絞らない(window_with_tone):
 def test_消せる(window_with_tone):
     assert window_with_tone.state.remove_tone() is True
     assert image(window_with_tone).tone is None
+
+
+def test_右クリックに並ぶ_絵を選んでいるとき(window_with_tone):
+    """集中線・流線と同じように畳んで出す（本人の要望 2026-08-06）。"""
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    assert "トーン" in labels(menu)
+
+
+def test_右クリックに並ぶ_コマを選んでいるとき(window_with_tone):
+    """コマを右クリックした人にも行き先が要る（集中線・流線と同じ場所）。"""
+    state = window_with_tone.state
+    state.select(state.page.panels[0].id)
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    names = labels(menu)
+    assert "トーン" in names
+    assert names.index("トーン") == names.index("流線") + 1, "集中線・流線の隣"
+
+
+def test_右クリックの畳みに中身が入っている(window_with_tone):
+    menu = window_with_tone.context_menu.build(0.0, 0.0)
+    assert "濃く" in folded_labels(menu, "トーン")
+
+
+def test_絵の無いコマでは右クリックに出さない(window):
+    """押しても何も起きない項目を並べない（→ 6.12）。"""
+    with window.state.edit("コマの追加") as project:
+        project.add_panel(project.pages[0], PANEL)
+    window.state.select(window.state.page.panels[0].id)
+    menu = window.context_menu.build(0.0, 0.0)
+    assert "トーン" not in labels(menu)
 
 
 def test_メニューの項目が入れる_消すで入れ替わる(window_with_image):
@@ -193,12 +268,24 @@ def test_入れていない画像では増減しない(window_with_image):
 # -- 道具の出入り -----------------------------------------------------------
 
 
-def test_別のものを選ぶと道具が外れる(window_with_tone):
+def test_絵の入っていないコマを選ぶと道具が外れる(window_with_tone):
     """掴めるものが1つも無い道具を持ったまま残さない（ラフと同じ → 6.23）。"""
+    state = window_with_tone.state
+    with state.edit("コマの追加") as project:
+        project.add_panel(project.pages[0], Rect(120.0, 700.0, 300.0, 200.0))
+    empty = state.page.panels[1].id
+
+    state.set_tool(TOOL_TONE_AREA)
+    state.select(empty)
+    assert state.tool == TOOL_SELECT
+
+
+def test_絵を持つコマを選んでも道具は残る(window_with_tone):
+    """コマ経由でも効くので、外す理由が無い（→ `EditorState.tone_image`）。"""
     state = window_with_tone.state
     state.set_tool(TOOL_TONE_AREA)
     state.select(state.page.panels[0].id)
-    assert state.tool == TOOL_SELECT
+    assert state.tool == TOOL_TONE_AREA
 
 
 def test_トーンを消すと道具が外れる(window_with_tone):

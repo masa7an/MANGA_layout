@@ -768,7 +768,7 @@ class ToneAreaDrag(Drag):
     def begin(
         cls, view: PageView, x: float, y: float, handle: str | None
     ) -> ToneAreaDrag:
-        image = view.state.selected_image
+        image = view.state.tone_image
         local = unrotate_point(x, y, image.rect, image.rotation)
         return cls(
             image.id,
@@ -989,7 +989,7 @@ class PageScene(QGraphicsScene):
         無いように見える。
         """
         view = self._page_view()
-        image = self.state.selected_image
+        image = self.state.tone_image
         if image is None or image.tone is None:
             return
 
@@ -1965,7 +1965,7 @@ class PageView(QGraphicsView):
         は矩形自身の中心を軸にするので、そのまま渡すと傾いた画像で軸がずれる
         （範囲の矩形と画像とで中心が違う）。
         """
-        image = self.state.selected_image
+        image = self.state.tone_image
         if image is None or image.tone is None:
             return None
         lx, ly = unrotate_point(x, y, image.rect, image.rotation)
@@ -1979,10 +1979,10 @@ class PageView(QGraphicsView):
         **他には何も起きない。** 道具を持ち替えている間だけ範囲を掴める、
         という切り分けそのもの（ラフと同じ → 6.23）。
         """
-        image = self.state.selected_image
+        image = self.state.tone_image
         if image is None or image.tone is None:
             self.state.message.emit(
-                "トーンの入った画像を選んでください（画像 → トーン → 入れる）"
+                "トーンの入った絵かコマを選んでください（画像 → トーン → 入れる）"
             )
             return
         # 隅の4つだけを見る。辺のつまみは出していない（→ `_draw_cross_handles`）

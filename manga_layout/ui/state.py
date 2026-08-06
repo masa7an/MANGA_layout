@@ -1203,9 +1203,46 @@ class EditorState(QObject):
     # -- トーン（画像の黒の置き換え → 要件定義 10.1） ------------------------
 
     @property
-    def selected_tone(self) -> Tone | None:
-        """選択中の画像に入っているトーン。無ければ None。"""
+    def tone_image(self) -> ImageObject | None:
+        """トーンの操作が効く画像。無ければ None。
+
+        **絵を選んでいなくても、コマを選んでいれば効く。** トーンの持ち主は
+        画像だが（→ 要件定義 6.27）、絵を選ぶにはコマをダブルクリックして
+        中へ入る必要がある。そこを要求すると、集中線・流線と同じつもりで
+        コマを選んだ利用者には**ただグレーの項目**に見える（本人談 2026-08-06）。
+
+        **絵が2枚以上あるコマでは決まらない**ので None を返す。背景の上に
+        キャラを重ねる使い方があり、どちらに掛けるかは黙って選べない
+        （→ `tone_ambiguous`）。
+        """
         image = self.selected_image
+        if image is not None:
+            return image
+        images = self.panel_images
+        return images[0] if len(images) == 1 else None
+
+    @property
+    def panel_images(self) -> list[ImageObject]:
+        """選択中のコマに入っている絵。コマを選んでいなければ空。"""
+        panel = self.selected_panel
+        if panel is None:
+            return []
+        return [c for c in panel.children if isinstance(c, ImageObject)]
+
+    @property
+    def tone_ambiguous(self) -> bool:
+        """コマを選んでいて、絵が2枚以上ある。どれに掛けるか決まらない。
+
+        **項目はグレーにせず、押したら状態表示で断る。** グレーにすると
+        「使えない」は伝わるが理由が伝わらない（斜めのコマを複製できない
+        と伝えるときと同じ線引き → 6.15）。
+        """
+        return self.selected_image is None and len(self.panel_images) > 1
+
+    @property
+    def selected_tone(self) -> Tone | None:
+        """操作が効く画像に入っているトーン。無ければ None。"""
+        image = self.tone_image
         return None if image is None else image.tone
 
     def _edit_tone(self, image_id: str, label: str):
@@ -1227,9 +1264,15 @@ class EditorState(QObject):
         **範囲は絞らない状態で入る。** 絞るのは足りなかったときの手当てで、
         まず全体に掛けて様子を見るほうが手数が少ない（→ 要件定義 10.1）。
         """
-        image = self.selected_image
+        if self.tone_ambiguous:
+            self.message.emit(
+                "このコマには絵が複数あります。"
+                "ダブルクリックで絵を選んでから入れてください"
+            )
+            return False
+        image = self.tone_image
         if image is None:
-            self.message.emit("トーンを入れる画像を選んでください")
+            self.message.emit("トーンを入れる絵かコマを選んでください")
             return False
         if image.tone is not None:
             return False
@@ -1246,7 +1289,7 @@ class EditorState(QObject):
 
     def remove_tone(self) -> bool:
         """選択中の画像からトーンを消す。消したら True。"""
-        image = self.selected_image
+        image = self.tone_image
         if image is None or image.tone is None:
             return False
 
@@ -1299,7 +1342,7 @@ class EditorState(QObject):
 
     def step_tone_angle(self, steps: int) -> bool:
         """斜線の向きを 15 度ずつ回す。**つまみは作らない**（→ 要件定義 10.1）。"""
-        image = self.selected_image
+        image = self.tone_image
         if image is None or image.tone is None:
             return False
 
@@ -1314,7 +1357,7 @@ class EditorState(QObject):
         """しきい値・間隔・濃さ・細さの増減は、値の名前と刻み方だけが違う
         （→ `_step_flow`）。
         """
-        image = self.selected_image
+        image = self.tone_image
         if image is None or image.tone is None:
             return False
         value = step(getattr(image.tone, field), steps)
@@ -1340,7 +1383,7 @@ class EditorState(QObject):
 
     def clear_tone_area(self) -> bool:
         """絞りを外して画像全体に戻す。戻したら True。"""
-        image = self.selected_image
+        image = self.tone_image
         if image is None or image.tone is None or image.tone.area is None:
             return False
         self.set_tone_area(image.id, None)

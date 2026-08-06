@@ -151,6 +151,9 @@ class MainWindow(QMainWindow):
         self.focus_menu = self.panel_menu.focus
         self.flow_menu = self.panel_menu.flow
         self.image_menu = ImageMenu(self)
+        # 平らな別名。右クリックとテストが「トーン」を直に指すときに使う
+        # （集中線・流線と同じ扱い）
+        self.tone_menu = self.image_menu.tone
         self.balloon_menu = BalloonMenu(self)
         self.sticker_menu = StickerMenu(self)
         self.text_menu = TextMenu(self)
