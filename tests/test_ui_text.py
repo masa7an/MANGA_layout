@@ -13,6 +13,7 @@ import pytest
 from PySide6.QtGui import QFont
 
 from manga_layout import Rect
+from manga_layout.layout import text_frame
 from manga_layout.model import PT_TO_PX, TextObject
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import TOOL_SELECT, TOOL_TEXT
@@ -104,6 +105,29 @@ def double_click(view, x: float, y: float) -> None:
             Qt.KeyboardModifier.NoModifier,
         )
     )
+
+
+def move_to(view, x: float, y: float) -> None:
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    position = QPointF(view.mapFromScene(QPointF(x, y)))
+    view.mouseMoveEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            position,
+            view.viewport().mapToGlobal(position),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
+def drag(view, x1: float, y1: float, x2: float, y2: float) -> None:
+    press(view, x1, y1)
+    move_to(view, x2, y2)
+    release(view, x2, y2)
 
 
 def click(view, x: float, y: float) -> None:
@@ -303,6 +327,106 @@ class TestSelectAndEdit:
         window_with_text.state.undo()
 
         assert window_with_text.state.page.find(text_id).content == "セリフ"
+
+
+class TestSelectionFrame:
+    """選択枠とつまみは、枠ではなく**字の並び**に沿う（→ `layout.text_frame`）。
+
+    セリフは掴める範囲が枠と別（→ `layout.text_at`）。枠のまま描くと、
+    **押しても掴めない場所まで枠が伸びる**——「オレンジの枠が文字より大きすぎて
+    どこを掴んでいるのか分からない」という指摘（本人談 2026-08-07）はこの
+    食い違いそのもの。描く範囲・つまみ・移動の起点をすべてここへ揃える。
+    """
+
+    @pytest.fixture
+    def window_with_wide_text(self, window_with_balloon):
+        """既定の大きさ（230×422）の枠に3文字だけ。実際の使い方に近い形。"""
+        window_with_balloon.state.add_text(
+            Rect(300.0, 300.0, 230.0, 422.0), "セリフ"
+        )
+        return window_with_balloon
+
+    def test_枠より狭い(self, window_with_wide_text):
+        state = window_with_wide_text.state
+        text = state.selected_text
+
+        bounds = state.selected_bounds
+        assert bounds == text_frame(text)
+        assert bounds.w < text.rect.w and bounds.h < text.rect.h
+
+    def test_つまみは字の角に出る(self, window_with_wide_text):
+        """枠の角にはもう出ない。出すと掴めない場所につまみが残る。"""
+        state = window_with_wide_text.state
+        view = window_with_wide_text.view
+        bounds = state.selected_bounds
+        rect = state.selected_text.rect
+
+        assert view._handle_at_point(bounds.x, bounds.y) == "nw"
+        assert view._handle_at_point(bounds.right, bounds.bottom) == "se"
+        assert view._handle_at_point(rect.x, rect.y) is None
+
+    def test_掴んだだけでは何も起きない(self, window_with_wide_text):
+        """つまみを押して動かさずに離した場合（→ `ResizeDrag.commit`）。
+
+        枠を字に合わせるのは大きさを変えたときだけ。掴んだだけで枠が縮むと、
+        見た目が変わらないまま履歴に1手積まれる。
+        """
+        state = window_with_wide_text.state
+        before = state.selected_text.rect
+        depth = state.history.depth
+        corner = state.selected_bounds
+        view = window_with_wide_text.view
+
+        press(view, corner.x, corner.y)
+        release(view, corner.x, corner.y)
+
+        assert only_text(state.page).rect == before
+        assert state.history.depth == depth
+
+    def test_つまみを引くと枠が字にそろう(self, window_with_wide_text):
+        """大きさを変えた時点で、枠そのものが字の外接矩形を起点になる。
+
+        起点が字の側にあるので、**掴んでいない側は動かない**。以前は枠が
+        起点だったため、右下を引くと左上が 87px 離れた枠の角のままだった。
+        """
+        state = window_with_wide_text.state
+        before = state.selected_bounds
+
+        drag(
+            window_with_wide_text.view,
+            before.right,
+            before.bottom,
+            before.right + 30.0,
+            before.bottom + 20.0,
+        )
+
+        after = only_text(state.page).rect
+        assert (after.x, after.y) == pytest.approx((before.x, before.y))
+        assert after.w > before.w and after.h > before.h
+
+    def test_引いて動かすと枠も字も同じだけ動く(self, window_with_wide_text):
+        """移動の起点も字の外接矩形（→ `MoveDrag.begin`）。"""
+        state = window_with_wide_text.state
+        before_rect = state.selected_text.rect
+        before_frame = state.selected_bounds
+        cx, cy = before_frame.center
+
+        drag(window_with_wide_text.view, cx, cy, cx + 40.0, cy + 30.0)
+
+        after = only_text(state.page)
+        dx = after.rect.x - before_rect.x
+        dy = after.rect.y - before_rect.y
+        assert (dx, dy) != (0.0, 0.0)
+        assert state.selected_bounds.x == pytest.approx(before_frame.x + dx)
+        assert state.selected_bounds.y == pytest.approx(before_frame.y + dy)
+
+    def test_空のセリフは枠のまま(self, window_with_balloon):
+        """空のときは点線の枠が唯一の掴み所（→ `layout.text_ink_bands`）。"""
+        state = window_with_balloon.state
+        rect = Rect(300.0, 300.0, 230.0, 422.0)
+        state.add_text(rect, "")
+
+        assert state.selected_bounds == rect
 
 
 class TestFormat:

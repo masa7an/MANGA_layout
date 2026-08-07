@@ -1424,6 +1424,33 @@ def text_ink_bands(text: TextObject) -> list[Rect]:
     return [Rect(rect.x, top, rect.w, used)]
 
 
+def text_frame(text: TextObject) -> Rect:
+    """セリフの選択枠とつまみを置く矩形。**字の並びの外接矩形**。
+
+    枠（`TextObject.rect`）そのものを使わないのは、**掴める範囲が既に枠では
+    ないため**（→ `text_ink_bands`、`text_at`）。既定の枠は 230×422 あり、
+    数文字のセリフではその大半が空く。そこに枠を描くと、**押しても掴めない
+    場所まで枠が伸びる**ことになり、「どこを掴んでいるのか分からない」という
+    指摘（本人談 2026-08-07）そのものになる。描く範囲と掴める範囲は揃える。
+
+    **この矩形を大きさ変更でそのまま枠に入れてよい。** 字の並びは枠の中で
+    寄せに従って置かれるので（`vertical.layout` / 上下中央の `drawText`）、
+    外接矩形へ入れ直しても字は 1px も動かない——寄せが left でも right でも
+    center でも、外接矩形の中で同じ位置に来る。**2 回目以降も動かない**
+    （外接矩形の外接矩形は自分自身）ので、掴み直すたびに縮み続けることもない。
+
+    横書きは**高さだけが縮む**。字送りが分からず幅を出せないためで、帯の幅は
+    枠のまま（→ `text_ink_bands`）。既定の枠は縦長で余りもほとんどが上下に
+    出るので、これで用は足りる。
+    """
+    bands = text_ink_bands(text)
+    left = min(band.x for band in bands)
+    top = min(band.y for band in bands)
+    right = max(band.right for band in bands)
+    bottom = max(band.bottom for band in bands)
+    return Rect(left, top, right - left, bottom - top)
+
+
 def text_contains(text: TextObject, x: float, y: float) -> bool:
     """その点がセリフの字の上か（→ `text_ink_bands`）。"""
     return any(band.contains(x, y) for band in text_ink_bands(text))

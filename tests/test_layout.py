@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import Rect, Size, new_project
+from manga_layout import vertical
 from manga_layout.layout import (
     LayoutSettings,
     aspect_of,
@@ -24,6 +25,7 @@ from manga_layout.layout import (
     snap_point,
     split_panel,
     text_at,
+    text_frame,
     text_ink_bands,
 )
 
@@ -522,3 +524,82 @@ class TestTextAt:
         front = project.add_text(page, "あ", rect)
         assert front.z > back.z
         assert text_at(page, 350.0, 325.0) is front
+
+
+class TestTextFrame:
+    """セリフの選択枠は、枠ではなく**字の並びの外接矩形**（→ `text_frame`）。
+
+    掴める範囲（`TestTextAt`）が既に枠ではないので、枠のまま描くと**押しても
+    掴めない場所まで枠が伸びる**。「どこを掴んでいるのか分からない」という
+    指摘（本人談 2026-08-07）はこの食い違いそのもの。
+    """
+
+    def test_枠より狭い(self):
+        """1列3文字。幅は列送り、高さは字の大きさ×3 になる。"""
+        project = new_project()
+        page = project.pages[0]
+        rect = Rect(250.0, 250.0, 200.0, 400.0)
+        text = project.add_text(page, "セリフ", rect)
+
+        frame = text_frame(text)
+        size = text.font.size_px
+        assert frame.w == pytest.approx(size * vertical.COLUMN_PITCH)
+        assert frame.h == pytest.approx(size * 3)
+        assert frame.w < rect.w and frame.h < rect.h
+
+    def test_字の帯をすべて囲む(self):
+        """掴める範囲が枠の外に出ないこと。出ると枠の外で掴めてしまう。"""
+        project = new_project()
+        page = project.pages[0]
+        text = project.add_text(page, "あい\nうえお", Rect(250.0, 250.0, 300.0, 400.0))
+
+        frame = text_frame(text)
+        for band in text_ink_bands(text):
+            assert band.x >= frame.x - 1e-9 and band.right <= frame.right + 1e-9
+            assert band.y >= frame.y - 1e-9 and band.bottom <= frame.bottom + 1e-9
+
+    def test_空のセリフは枠そのもの(self):
+        """空のときは点線の枠が「描いてある範囲」（→ `text_ink_bands`）。
+
+        ここを狭めると、作った直後のセリフに掴み所が無くなる。
+        """
+        project = new_project()
+        page = project.pages[0]
+        rect = Rect(250.0, 250.0, 200.0, 150.0)
+        text = project.add_text(page, "", rect)
+        assert text_frame(text) == rect
+
+    def test_横書きは高さだけ縮む(self):
+        """字送りが分からず幅は出せない（→ `text_ink_bands`）。"""
+        project = new_project()
+        page = project.pages[0]
+        rect = Rect(250.0, 250.0, 200.0, 400.0)
+        text = project.add_text(page, "セリフ", rect)
+        text.direction = "horizontal"
+
+        frame = text_frame(text)
+        assert frame.x == rect.x and frame.w == rect.w
+        assert frame.h < rect.h
+        assert frame.center[1] == pytest.approx(rect.center[1])
+
+    @pytest.mark.parametrize("direction", ["vertical", "horizontal"])
+    @pytest.mark.parametrize("align", ["left", "center", "right"])
+    def test_枠に入れ直しても字が動かない(self, direction, align):
+        """大きさ変更は、この矩形をそのまま枠に入れる（→ `text_frame`）。
+
+        入れた拍子に字が動くと、掴んだ覚えのない側が動いて見える。
+        **2回目以降も動かない**ことまで確かめる。ここが縮み続けると、
+        掴み直すたびにセリフが痩せていく。
+        """
+        project = new_project()
+        page = project.pages[0]
+        text = project.add_text(page, "あい\nうえお", Rect(250.0, 250.0, 300.0, 400.0))
+        text.direction = direction
+        text.align = align
+
+        before = text_ink_bands(text)
+        frame = text_frame(text)
+        text.rect = frame
+
+        assert text_ink_bands(text) == before
+        assert text_frame(text) == frame

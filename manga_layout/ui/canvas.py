@@ -515,6 +515,12 @@ class ResizeDrag(Drag):
         self.preview_rect = resized
 
     def commit(self, view: PageView) -> None:
+        # 掴んだだけで動かさなかったら何もしない。他の型では
+        # `_apply_resize` の「同じ矩形なら帰る」で弾かれていたが、セリフは
+        # **起点が枠ではなく字の外接矩形**なので（→ `layout.text_frame`）
+        # そこを素通りし、見た目が1px も変わらないまま履歴が1手増える
+        if self.preview_rect == self.origin_rect:
+            return
         view._apply_resize(self.preview_rect)
 
 

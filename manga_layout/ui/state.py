@@ -48,6 +48,7 @@ from ..layout import (
     default_tail_tip,
     outside_page,
     tail_tip_turned_to,
+    text_frame,
 )
 from ..model import (
     BALLOON_STYLES_WITH_BUBBLE_TAIL,
@@ -422,12 +423,19 @@ class EditorState(QObject):
 
         斜めの組に入っているコマは、**組の外側の矩形**を返す。組は必ず
         一緒に動くので、つまみも外側に付いていないと操作と結果が合わない。
+
+        セリフは**枠ではなく字の並びの外接矩形**を返す（→ `layout.text_frame`）。
+        セリフだけは掴める範囲が枠と別で、枠を返すと押しても掴めない場所まで
+        つまみが伸びる。移動・大きさ変更もここを起点にするので、**見えている
+        枠を掴んで動かす**という関係が全部の操作で揃う。
         """
         obj = self.selected_object
         if isinstance(obj, Panel):
             pair = self.page.slant_pair_of(obj.id)
             return obj.shape.bounds() if pair is None else self.page.slant_bounds(pair)
-        if isinstance(obj, (ImageObject, BalloonObject, StickerObject, TextObject)):
+        if isinstance(obj, TextObject):
+            return text_frame(obj)
+        if isinstance(obj, (ImageObject, BalloonObject, StickerObject)):
             return obj.rect
         return None
 
