@@ -432,6 +432,28 @@ class Testフォント設定の窓:
 
         assert window_with_text.state.selected_text.font.size_px == before
 
+    def test_窓を広げてから開く(self, window, monkeypatch):
+        """Qt の既定は書体の一覧が数行しか見えず、隅を引けることにも気づけない。
+
+        `QFontDialog.getFont`（静的な呼び方）では大きさを指定できないので、
+        自分で組み立てて `resize` してから開いている（→ `_ask_font`）。
+        """
+        from PySide6.QtWidgets import QDialog, QFontDialog
+
+        大きさ: list = []
+
+        def fake_exec(dialog):
+            大きさ.append((dialog.width(), dialog.height()))
+            return QDialog.DialogCode.Rejected
+
+        既定 = QFontDialog(QFont(), window).size()
+        monkeypatch.setattr(QFontDialog, "exec", fake_exec)
+
+        window.choose_font()
+
+        assert 大きさ[0][0] > 既定.width()
+        assert 大きさ[0][1] > 既定.height()
+
     def test_大きさの表示にポイントを併記する(self):
         """px だけだと画面の点の数と取り違える。"""
         assert MainWindow._size_label(25.0) == "25px（約 12pt）"
@@ -441,20 +463,25 @@ def _capture_font(monkeypatch, *, accept: bool) -> list:
     """窓を出さずに、渡された QFont を控える。"""
     渡された: list = []
 
-    def fake(font, *args, **kwargs):
+    def fake(self, font):
         渡された.append(font)
         return font, accept
 
-    monkeypatch.setattr("manga_layout.ui.window.QFontDialog.getFont", fake)
+    monkeypatch.setattr(MainWindow, "_ask_font", fake)
     return 渡された
 
 
 def _choose_font(
     monkeypatch, *, points: float | None = None, pixels: int | None = None, accept=True
 ) -> None:
-    """窓を出さずに、その書式を選んだことにして進める。"""
+    """窓を出さずに、その書式を選んだことにして進める。
 
-    def fake(font, *args, **kwargs):
+    差し替えるのは `MainWindow._ask_font`（窓を組み立てて出す1か所）。
+    **`QFontDialog.getFont` は使っていない**——窓の大きさを指定できず、
+    書体の一覧が数行しか見えない状態で開いてしまうため（→ `_ask_font`）。
+    """
+
+    def fake(self, font):
         chosen = QFont(font)
         if points is not None:
             chosen.setPointSizeF(points)
@@ -462,7 +489,7 @@ def _choose_font(
             chosen.setPixelSize(pixels)
         return chosen, accept
 
-    monkeypatch.setattr("manga_layout.ui.window.QFontDialog.getFont", fake)
+    monkeypatch.setattr(MainWindow, "_ask_font", fake)
 
 
 class Test次のセリフの書式:

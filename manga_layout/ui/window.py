@@ -130,6 +130,13 @@ BOTTOM_GAP_PX = 20
 # ウィンドウを掴めなくなる
 FRAME_ALLOWANCE_PX = 48
 
+# フォントを選ぶ窓の、開いたときの大きさ（px）。
+# **Qt の既定は書体の一覧が数行しか見えない高さ**で、目当ての書体まで
+# 延々と送ることになる。窓の隅を引けば広がるが、**広げられること自体に
+# 気づけない**（本人の指摘 2026-08-07）。
+# 画面に入らなければ作業領域に合わせて縮める（`WINDOW_SIZE` と同じ扱い）
+FONT_DIALOG_SIZE = (820, 620)
+
 
 
 class MainWindow(QMainWindow):
@@ -1082,7 +1089,7 @@ class MainWindow(QMainWindow):
         current.setPointSizeF(font.size_px / PT_TO_PX)
         current.setBold(font.bold)
 
-        chosen, ok = QFontDialog.getFont(current, self, "フォントを選ぶ")
+        chosen, ok = self._ask_font(current)
         if not ok:
             return
 
@@ -1101,6 +1108,32 @@ class MainWindow(QMainWindow):
             text.id, family=chosen.family(), size_px=size, bold=chosen.bold()
         )
         self.state.message.emit(f"フォント: {label}")
+
+    def _ask_font(self, current: QFont) -> tuple[QFont, bool]:
+        """フォントを選ぶ窓を出す。選ばれた書式と、決めたかどうかを返す。
+
+        **`QFontDialog.getFont`（1行で済む静的な呼び方）は使えない。**
+        あちらは窓の大きさを指定できず、Qt の既定のまま開く。書体の一覧が
+        数行しか見えないので目当ての書体まで延々と送ることになり、しかも
+        **隅を引けば広がること自体に気づけない**（本人の指摘 2026-08-07）。
+        自分で組み立てて `resize` してから開く（→ `FONT_DIALOG_SIZE`）。
+
+        画面より大きくしない。作業領域（タスクバーを除いた範囲）に収める
+        のは起動時の窓と同じ扱い（→ `_apply_initial_geometry`）。
+        """
+        dialog = QFontDialog(current, self)
+        dialog.setWindowTitle("フォントを選ぶ")
+
+        width, height = FONT_DIALOG_SIZE
+        screen = self.screen()
+        if screen is not None:  # 表示装置が無いとき（offscreen 等）は素通り
+            area = screen.availableGeometry()
+            width = min(width, area.width())
+            height = min(height, area.height())
+        dialog.resize(width, height)
+
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        return dialog.selectedFont(), accepted
 
     @staticmethod
     def _size_px_of(font: QFont, fallback: float) -> float:
