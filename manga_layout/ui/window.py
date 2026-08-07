@@ -557,11 +557,19 @@ class MainWindow(QMainWindow):
         weight = " 太字" if font.bold else ""
         return f"{font.family} {self._size_label(font.size_px)}{weight}"
 
+    def _refresh_hint(self) -> None:
+        """状態表示の右側を出し直す。
+
+        **`changed` の飛ばない変化を映すための入口。** 道具の切り替えと、
+        次に作るセリフの書式（→ `choose_font`）はどちらも作品を変えないので、
+        `_refresh` は呼ばれない。
+        """
+        self.hint_label.setText(self._hint())
+
     def _sync_tool_actions(self) -> None:
         self._tool_actions[self.state.tool].setChecked(True)
-        # 状態表示は道具でも変わる（ラフの調整中は選択の話をしない → 6.23）。
-        # `_refresh` は道具の切り替えでは呼ばれないので、ここで出し直す
-        self.hint_label.setText(self._hint())
+        # 状態表示は道具でも変わる（ラフの調整中は選択の話をしない → 6.23）
+        self._refresh_hint()
 
     def _title(self) -> str:
         name = self.state.project_dir.name if self.state.project_dir else "無題"
@@ -1061,24 +1069,38 @@ class MainWindow(QMainWindow):
 
         窓はポイントでしか喋らないので、`PT_TO_PX` で換算して渡す。
         画面の解像度で Qt に換算させると、紙の上での大きさと合わない。
+
+        **セリフを選んでいなければ「次に作るセリフ」の書式を決める**
+        （→ `EditorState.next_text_font`）。以前はここで断っていたため、
+        次の書式を決めるためだけに要らないセリフを1つ置く必要があった
+        （本人の指摘 2026-08-07）。
         """
         text = self.state.selected_text
-        if text is None:
-            self.state.message.emit("先にセリフを選んでください")
-            return
-        current = QFont(text.font.family)
-        current.setPointSizeF(text.font.size_px / PT_TO_PX)
-        current.setBold(text.font.bold)
+        font = text.font if text is not None else self.state.next_text_font
+
+        current = QFont(font.family)
+        current.setPointSizeF(font.size_px / PT_TO_PX)
+        current.setBold(font.bold)
 
         chosen, ok = QFontDialog.getFont(current, self, "フォントを選ぶ")
         if not ok:
             return
 
-        size = self._size_px_of(chosen, fallback=text.font.size_px)
+        size = self._size_px_of(chosen, fallback=font.size_px)
+        label = f"{chosen.family()} {self._size_label(size)}"
+        if text is None:
+            self.state.set_next_text_font(
+                family=chosen.family(), size_px=size, bold=chosen.bold()
+            )
+            # 作品は変わらないので `changed` は飛ばない。状態表示だけ出し直す
+            self._refresh_hint()
+            self.state.message.emit(f"次に作るセリフの書式: {label}")
+            return
+
         self.state.set_text_font(
             text.id, family=chosen.family(), size_px=size, bold=chosen.bold()
         )
-        self.state.message.emit(f"フォント: {chosen.family()} {self._size_label(size)}")
+        self.state.message.emit(f"フォント: {label}")
 
     @staticmethod
     def _size_px_of(font: QFont, fallback: float) -> float:

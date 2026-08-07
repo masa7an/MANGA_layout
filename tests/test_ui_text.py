@@ -525,6 +525,107 @@ class Test次のセリフの書式:
         assert window_with_text._hint().endswith(" 太字")
 
 
+class Test選択なしで書式を決める:
+    """セリフを選んでいなくてもフォントの窓を開ける（本人の指摘 2026-08-07）。
+
+    以前はここで断っていたため、**次の書式を決めるためだけに要らない
+    セリフを1つ置く**必要があった。
+    """
+
+    def test_選んでいなくても窓が開く(self, window, monkeypatch):
+        window.state.select(None)
+        渡された = _capture_font(monkeypatch, accept=False)
+
+        window.choose_font()
+
+        assert len(渡された) == 1
+
+    def test_今の次の書式を持っていく(self, window, monkeypatch):
+        """窓に出る値は「次に置かれる書式」。無関係な既定を見せない。"""
+        window.state.select(None)
+        window.state.set_next_text_font(size_px=25.0, bold=True)
+        渡された = _capture_font(monkeypatch, accept=False)
+
+        window.choose_font()
+
+        # 25px は 150dpi 換算で 12pt
+        assert 渡された[0].pointSizeF() == pytest.approx(12.0)
+        assert 渡された[0].bold()
+
+    def test_選んだ書式が次のセリフに乗る(self, window_with_balloon, monkeypatch):
+        window_with_balloon.state.select(None)
+        _choose_font(monkeypatch, points=24.0)
+
+        window_with_balloon.choose_font()
+        window_with_balloon.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
+
+        # 24pt は 150dpi 換算で 50px
+        assert window_with_balloon.state.selected_text.font.size_px == pytest.approx(50.0)
+
+    def test_今あるセリフは変わらない(self, window_with_text, monkeypatch):
+        """決めるのは「次に作るもの」だけ。選んでいないものへ及ばない。"""
+        text_id = window_with_text.state.selected_text.id
+        before = window_with_text.state.page.find(text_id).font
+        window_with_text.state.select(None)
+        _choose_font(monkeypatch, points=24.0)
+
+        window_with_text.choose_font()
+
+        assert window_with_text.state.page.find(text_id).font == before
+
+    def test_履歴に積まない(self, window_with_balloon, monkeypatch):
+        """作品を1文字も変えないので、決めただけで未保存にしない。"""
+        depth = window_with_balloon.state.history.depth
+        window_with_balloon.state.select(None)
+        _choose_font(monkeypatch, points=24.0)
+
+        window_with_balloon.choose_font()
+
+        assert window_with_balloon.state.history.depth == depth
+
+    def test_状態表示がすぐ変わる(self, window, monkeypatch):
+        """`changed` が飛ばないので、出し直しを忘れると古い値が残る。"""
+        window.state.select(None)
+        _choose_font(monkeypatch, points=24.0)
+
+        window.choose_font()
+
+        assert "50px（約 24pt）" in window.hint_label.text()
+
+    def test_取り消せば何も変わらない(self, window, monkeypatch):
+        window.state.select(None)
+        before = window.state.next_text_font
+        _choose_font(monkeypatch, points=24.0, accept=False)
+
+        window.choose_font()
+
+        assert window.state.next_text_font == before
+
+    def test_メニューは選んでいなくても押せる(self, window):
+        """グレーだと、そこから決められること自体に気づけない。"""
+        window.state.select(None)
+        window._refresh()
+
+        assert _text_menu(window).font_action.isEnabled()
+
+    def test_他のセリフ操作はグレーのまま(self, window):
+        """選んでいる1つへの操作は、選ぶまで押せない（従来どおり）。"""
+        window.state.select(None)
+        window._refresh()
+
+        assert not _text_menu(window).bold_action.isEnabled()
+
+
+def _text_menu(window):
+    """セリフのメニュー。"""
+    from manga_layout.ui.menus import TextMenu
+
+    for menu in window._menus:
+        if isinstance(menu, TextMenu):
+            return menu
+    raise AssertionError("セリフのメニューが見つからない")
+
+
 class Test空のまま閉じたセリフ:
     """置いたばかりのセリフを1文字も入れずに閉じたら、追加ごと取り消す。
 

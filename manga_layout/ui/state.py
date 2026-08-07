@@ -250,6 +250,21 @@ def object_label(obj: SceneObject | None) -> str:
     return ""
 
 
+def _font_changes(
+    family: str | None, size_px: float | None, bold: bool | None
+) -> dict[str, object]:
+    """指定された項目だけを集める（`dataclasses.replace` へ渡す形）。
+
+    セリフの書式と「次に作るセリフの書式」の両方が同じ形で受け取るので、
+    組み立ては1か所にしてある（→ `EditorState.set_text_font`）。
+    """
+    return {
+        key: value
+        for key, value in (("family", family), ("size_px", size_px), ("bold", bold))
+        if value is not None
+    }
+
+
 class EditorState(QObject):
     """開いている作品と、画面上の選択・道具。"""
 
@@ -1637,18 +1652,30 @@ class EditorState(QObject):
         3か所のうち1つを直し忘れたときに「この操作だけ引き継がれない」
         という説明の付かない差ができる（→ `next_text_font`）。
         """
-        changes = {
-            key: value
-            for key, value in (
-                ("family", family),
-                ("size_px", size_px),
-                ("bold", bold),
-            )
-            if value is not None
-        }
         with self._edit_text(text_id, "セリフの書式") as text:
-            text.font = dataclasses.replace(text.font, **changes)
-        self.next_text_font = dataclasses.replace(self.next_text_font, **changes)
+            text.font = dataclasses.replace(
+                text.font, **_font_changes(family, size_px, bold)
+            )
+        self.set_next_text_font(family=family, size_px=size_px, bold=bold)
+
+    def set_next_text_font(
+        self,
+        *,
+        family: str | None = None,
+        size_px: float | None = None,
+        bold: bool | None = None,
+    ) -> None:
+        """**次に作るセリフの書式だけ**を決める。今あるセリフには触らない。
+
+        セリフを1つも選んでいないときにフォントの窓から使う（→
+        `MainWindow.choose_font`）。選んでいるときしか書式を指定できないと、
+        **次の書式を決めるためだけに、要らないセリフを1つ置く**ことになる。
+
+        作品を変えないので履歴には積まない（→ `next_text_font`）。
+        """
+        self.next_text_font = dataclasses.replace(
+            self.next_text_font, **_font_changes(family, size_px, bold)
+        )
 
     def _edit_balloon(self, balloon_id: str, label: str):
         """id で引き直してから触るための小さな入れ物。

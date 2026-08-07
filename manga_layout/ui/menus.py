@@ -1051,10 +1051,19 @@ class TextMenu:
 
         self.actions: list[QAction] = []
 
-        def add(label: str, slot, shortcut: str | None = None) -> QAction:
-            action = window._act(label, slot, shortcut)
+        def add(
+            label: str,
+            slot,
+            shortcut: str | None = None,
+            tip: str = "",
+            *,
+            always: bool = False,
+        ) -> QAction:
+            """`always` の項目は、セリフを選んでいなくても押せる。"""
+            action = window._act(label, slot, shortcut, tip)
             menu.addAction(action)
-            self.actions.append(action)
+            if not always:
+                self.actions.append(action)
             return action
 
         add("文字を入力...", window.edit_text, "F2")
@@ -1073,7 +1082,16 @@ class TextMenu:
         self.bold_action = add("太字", window.toggle_bold, "Ctrl+B")
         self.bold_action.setCheckable(True)
         menu.addSeparator()
-        add("フォントを選ぶ...", window.choose_font)
+        # **セリフを選んでいなくても押せる項目。** 選んでいなければ
+        # 「次に作るセリフ」の書式を決める（→ `MainWindow.choose_font`）。
+        # グレーにすると、次の書式を決めるためだけに要らないセリフを
+        # 1つ置く必要があった（本人の指摘 2026-08-07）
+        self.font_action = add(
+            "フォントを選ぶ...",
+            window.choose_font,
+            tip="セリフを選んでいなければ、次に作るセリフの書式を決めます",
+            always=True,
+        )
 
         # 右クリックのメニューが写して使う（→ `items_to_copy`）
         self.copy_items = items_to_copy(menu, window._tool_actions.values())
