@@ -335,6 +335,10 @@ JPG は「人間の目が気づきにくい細かい色の変化」から順番�
 
 ![コマ追加（P）でコマを置き、H / J / K で割ってコマ割りを作る](docs/tutorial.gif)
 
+**同じ手順を、音声の解説つきで見られます。**
+
+<a href="https://youtu.be/jodjE9Fg_Rs"><img src="docs/tutorial_thumb.png" width="480" alt="音声解説つきのチュートリアル動画（YouTube・21秒）"></a>
+
 ### 道具の切り替え
 
 | キー | 動作 |
