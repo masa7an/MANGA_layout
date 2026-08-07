@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from PySide6.QtCore import QObject, Signal
 
 from ..assets import AssetStore, PendingAssets
+from ..errors import AssetError
 from ..flow import (
     DEFAULT_FLOW_SETTINGS,
     default_flow,
@@ -1837,12 +1838,48 @@ class EditorState(QObject):
         # **画像の実体を先に書く。** 逆順だと、途中で落ちたときに
         # 実体の無い参照を持つ project.json が残る。この順なら、
         # 最悪でも参照されない画像が余るだけで済む
-        self.pending_assets.flush_to(AssetStore(target))
+        store = AssetStore(target)
+        self._carry_assets_to(store)
+        self.pending_assets.flush_to(store)
 
         path = save_project(self.project, target)
         self.project_dir = target
         self.history.mark_saved()
         return path
+
+    def _carry_assets_to(self, store: AssetStore) -> None:
+        """今の保存先にある画像の実体を、新しい保存先へ写す。
+
+        「名前を付けて保存」で保存先が変わる経路のためにある。
+        `pending_assets` が持っているのは**保存先が決まる前に貼った分**だけ
+        なので、一度保存した作品を別名保存すると、それだけでは
+        `assets/` が空のまま project.json だけが増える（＝参照が全部切れる）。
+
+        写すのは **project.json から参照されている画像だけ。** 参照の無い
+        ものまで運ぶと、「未使用ファイルを整理」で片付けたはずのものが
+        別名保存のたびに戻ってくる。
+
+        **1枚読めなくても保存は止めない。** 元の `assets/` が既に欠けている
+        作品を別名保存したいことはある。そこで保存ごと失敗させると、
+        欠けていない残りまで写せずに終わってしまう。欠けたままの参照は
+        「ファイル → 抜けチェック」で見つけられる。
+        """
+        if self.project_dir is None:
+            return
+
+        source = AssetStore(self.project_dir)
+        for ref in sorted(self.project.referenced_assets()):
+            # 名前が中身のハッシュなので、同名が既にあれば中身も同じ。
+            # 保存先が変わっていない普段の保存は、ここで全部素通りする
+            if store.exists(ref) or ref in self.pending_assets:
+                continue
+            try:
+                store.add_bytes(source.read(ref))
+            except AssetError:
+                # 読めない・画像として通らない1枚を飛ばすだけ。書き込みに
+                # 失敗した場合（OSError）はここでは捕まえず、保存を止める。
+                # 実体を書けないまま project.json を書くと参照が切れる
+                continue
 
     def autosave(self) -> pathlib.Path | None:
         """作業中の内容を `backup/` へ退避する。書いたらそのパスを返す。

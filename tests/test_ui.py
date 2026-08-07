@@ -417,6 +417,66 @@ class TestImageAssets:
         assert len(AssetStore(tmp_path).list_refs()) == 1
         assert len(window.state.page.panels[0].children) == 2
 
+    def test_別名保存で実体も新しい保存先へ移る(self, window_with_image, tmp_path):
+        """保存済みの作品を別のフォルダへ保存し直したとき。
+
+        預かり分（pending_assets）は1度目の保存で空になるので、
+        そのままでは2度目の保存先の assets/ が空になり、
+        project.json の参照が全部切れる。
+        """
+        from manga_layout import AssetStore, find_missing_assets
+
+        ref = window_with_image.state.selected_image.asset
+        first = tmp_path / "元"
+        second = tmp_path / "別名"
+        window_with_image.state.save(first)
+
+        window_with_image.state.save(second)
+
+        assert AssetStore(second).read(ref) == AssetStore(first).read(ref)
+        assert find_missing_assets(load_project(second), second) == []
+        # 元のフォルダは触らない
+        assert AssetStore(first).list_refs() == [ref]
+
+    def test_別名保存で参照の無い画像は運ばない(self, window_with_image, tmp_path):
+        """「未使用ファイルを整理」で片付けたものが別名保存で戻らないこと。"""
+        from manga_layout import AssetStore
+
+        first = tmp_path / "元"
+        second = tmp_path / "別名"
+        window_with_image.state.save(first)
+        window_with_image.state.undo()  # 画像を置く前まで戻す
+
+        window_with_image.state.save(second)
+
+        assert window_with_image.state.project.referenced_assets() == set()
+        assert AssetStore(second).list_refs() == []
+        assert len(AssetStore(first).list_refs()) == 1
+
+    def test_元の実体が欠けていても別名保存は止まらない(
+        self, window, png, png_bytes, tmp_path
+    ):
+        """1枚読めなかっただけで保存ごと失敗すると、残りまで失う。"""
+        from manga_layout import AssetStore, find_missing_assets
+
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        window.state.place_image(panel_id, png)
+        lost = window.state.place_image(panel_id, png_bytes).asset
+        first = tmp_path / "元"
+        second = tmp_path / "別名"
+        window.state.save(first)
+        AssetStore(first).resolve(lost).unlink()  # 元の assets/ が欠けた状態
+
+        window.state.save(second)
+
+        assert (second / "project.json").is_file()
+        # 読めた分は運べている。欠けた分は「抜けチェック」で見つけられる
+        assert AssetStore(second).list_refs() == sorted(
+            r for r in window.state.project.referenced_assets() if r != lost
+        )
+        assert find_missing_assets(load_project(second), second) == [lost]
+
     def test_別の作品を開くと前の画像を持ち越さない(self, window_with_image, tmp_path):
         from manga_layout import new_project, save_project
 
