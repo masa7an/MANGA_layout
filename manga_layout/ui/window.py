@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDockWidget,
     QFileDialog,
-    QFontDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -34,6 +33,7 @@ from ..storage import prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
+from .font_dialog import FontChooser
 from .menu_search import (
     HIGHLIGHT_SECONDS,
     MENU_SEARCH_HINT,
@@ -1120,8 +1120,12 @@ class MainWindow(QMainWindow):
 
         画面より大きくしない。作業領域（タスクバーを除いた範囲）に収める
         のは起動時の窓と同じ扱い（→ `_apply_initial_geometry`）。
+
+        窓には**書体を打ち込んで絞り込む欄**を足してある（→ `FontChooser`）。
+        広げても一覧に見えるのは十数件で、200件近い書体を送る手間は
+        窓の大きさだけでは解けない（本人の要望 2026-08-07）。
         """
-        dialog = QFontDialog(current, self)
+        dialog = FontChooser(current, self)
         dialog.setWindowTitle("フォントを選ぶ")
 
         width, height = FONT_DIALOG_SIZE

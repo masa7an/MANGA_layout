@@ -454,6 +454,29 @@ class Testフォント設定の窓:
         assert 大きさ[0][0] > 既定.width()
         assert 大きさ[0][1] > 既定.height()
 
+    def test_絞り込みの欄が付いた窓を出す(self, window, monkeypatch):
+        """書体は 200 件近く並ぶので、広げただけでは送る手間が残る。
+
+        絞り込みの中身は `tests/test_ui_font_dialog.py` で見ている。
+        ここで確かめるのは、**窓を出す1か所がそちらを通っている**こと。
+        """
+        from PySide6.QtWidgets import QDialog, QFontDialog
+
+        from manga_layout.ui.font_dialog import FontChooser
+
+        出した: list = []
+
+        def fake_exec(dialog):
+            出した.append(dialog)
+            return QDialog.DialogCode.Rejected
+
+        monkeypatch.setattr(QFontDialog, "exec", fake_exec)
+
+        window.choose_font()
+
+        assert isinstance(出した[0], FontChooser)
+        assert 出した[0].filter_field.isVisibleTo(出した[0])
+
     def test_大きさの表示にポイントを併記する(self):
         """px だけだと画面の点の数と取り違える。"""
         assert MainWindow._size_label(25.0) == "25px（約 12pt）"
