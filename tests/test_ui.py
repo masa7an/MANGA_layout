@@ -417,6 +417,64 @@ class TestImageAssets:
         assert len(AssetStore(tmp_path).list_refs()) == 1
         assert len(window.state.page.panels[0].children) == 2
 
+    def test_上書き保存では実体を書き直さない(
+        self, window_with_image, tmp_path, monkeypatch
+    ):
+        """同じフォルダへの保存が、毎回 assets/ を書き直さないこと。
+
+        別名保存のために足した写し取り（`_carry_assets_to`）は、
+        保存のたびに通る。既にあるものを読み直して書き直すようになると、
+        絵が増えるほど普段の保存が重くなる。
+        """
+        from manga_layout import AssetStore
+        from manga_layout import assets as assets_module
+
+        window_with_image.state.save(tmp_path)
+
+        writes: list = []
+        real = assets_module._atomic_write_bytes
+        monkeypatch.setattr(
+            assets_module,
+            "_atomic_write_bytes",
+            lambda path, data: (writes.append(path), real(path, data))[1],
+        )
+        window_with_image.state.save(tmp_path)
+
+        assert writes == []
+        # 素通りしただけで、実体は残っている
+        assert AssetStore(tmp_path).read(window_with_image.state.selected_image.asset)
+
+    def test_上書き保存で足した画像だけが増える(self, window_with_image, png_bytes, tmp_path):
+        """保存済みの作品に貼った画像も、上書き保存後に残ること。"""
+        from manga_layout import AssetStore, find_missing_assets
+
+        first = window_with_image.state.selected_image.asset
+        window_with_image.state.save(tmp_path)
+
+        panel_id = window_with_image.state.page.panels[0].id
+        added = window_with_image.state.place_image(panel_id, png_bytes).asset
+        window_with_image.state.save(tmp_path)
+
+        assert AssetStore(tmp_path).list_refs() == sorted([first, added])
+        assert find_missing_assets(load_project(tmp_path), tmp_path) == []
+
+    def test_整理した未使用画像は上書き保存で戻らない(
+        self, window_with_image, png_bytes, tmp_path
+    ):
+        """「未使用ファイルを整理」の結果を、次の保存が取り消さないこと。"""
+        from manga_layout import AssetStore, prune_unused_assets
+
+        panel_id = window_with_image.state.page.panels[0].id
+        unused = window_with_image.state.place_image(panel_id, png_bytes).asset
+        window_with_image.state.save(tmp_path)
+        window_with_image.state.undo()  # 2枚目を置く前まで戻す
+        assert prune_unused_assets(window_with_image.state.project, tmp_path) == [unused]
+
+        window_with_image.state.save(tmp_path)
+
+        assert unused not in AssetStore(tmp_path).list_refs()
+        assert (tmp_path / "assets" / "_unused").is_dir()
+
     def test_別名保存で実体も新しい保存先へ移る(self, window_with_image, tmp_path):
         """保存済みの作品を別のフォルダへ保存し直したとき。
 
