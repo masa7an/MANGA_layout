@@ -135,6 +135,19 @@ def click(view, x: float, y: float) -> None:
     release(view, x, y)
 
 
+def click_pair(view, x: float, y: float) -> None:
+    """Qt が実際に送る順（押下 → 離す → ダブルクリック → 離す）。
+
+    **ダブルクリックの事象だけを送っては駄目。** 手前の押下で選択が動く
+    ことが、セリフの「1回目は選ぶ、2回目で入力へ」の判定そのものになって
+    いる（→ `PageView._double_click_text`、`tests/test_pick_cycle.py`）。
+    """
+    press(view, x, y)
+    release(view, x, y)
+    double_click(view, x, y)
+    release(view, x, y)
+
+
 class TestAdd:
     def test_道具で置ける(self, window_with_balloon):
         window_with_balloon.state.set_tool(TOOL_TEXT)
@@ -256,12 +269,41 @@ class TestSelectAndEdit:
         assert state.selected_text is not None
         assert state.selected_balloon is None
 
-    def test_ダブルクリックで入力に入る(self, window_with_text):
+    def test_選んでいないセリフはダブルクリックでも選ぶだけ(self, window_with_text):
+        """狙いを外して別のセリフを叩いても、入力へ飛び込まない。
+
+        入力欄は縦書きのセリフでも横書きで開くので、飛び込むとそのセリフが
+        その場で横書きに化けて見える。**縦書きの設定は変わっていないのに
+        変わったように見える**（本人談 2026-08-07、要件定義 6.5）。
+        """
+        state = window_with_text.state
+        text = only_text(state.page)
+        state.select(None)
+
+        click_pair(window_with_text.view, *text.rect.center)
+
+        assert not window_with_text.view.is_editing_text
+        assert state.selected_id == text.id
+        assert only_text(state.page).direction == text.direction
+
+    def test_選んでいるセリフをダブルクリックすると入力に入る(self, window_with_text):
+        """1回目で選び、2回目で入力へ（→ `PageView._double_click_text`）。"""
         state = window_with_text.state
         center = only_text(state.page).rect.center
         state.select(None)
 
-        double_click(window_with_text.view, *center)
+        click_pair(window_with_text.view, *center)
+        click_pair(window_with_text.view, *center)
+
+        assert window_with_text.view.is_editing_text
+
+    def test_はじめから選んでいれば1回で入力に入る(self, window_with_text):
+        """選んでおいてからのダブルクリックは、今までどおり入力へ。"""
+        state = window_with_text.state
+        text = only_text(state.page)
+        state.select(text.id)
+
+        click_pair(window_with_text.view, *text.rect.center)
 
         assert window_with_text.view.is_editing_text
 

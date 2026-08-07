@@ -2333,8 +2333,8 @@ class PageView(QGraphicsView):
         return abs(x - root[0]) <= half and abs(y - root[1]) <= half
 
     def mouseDoubleClickEvent(self, event) -> None:
-        """セリフなら文字の入力へ。それ以外は、その場所にあるものを
-        **押すたびに1つずつ選び直す**（→ 要件定義 6.25）。
+        """**選んでいるセリフ**なら文字の入力へ。それ以外は、その場所にある
+        ものを**押すたびに1つずつ選び直す**（→ 要件定義 6.25）。
 
         巡る順は「コマ → その中の画像 → 次のコマ → …」（→ `pick_stack`）
         なので、**1回目は必ずコマの中の画像**になる。1クリックで画像が
@@ -2356,7 +2356,7 @@ class PageView(QGraphicsView):
 
         text = text_at(self.state.page, x, y)
         if text is not None:
-            self.begin_text_edit(text.id)
+            self._double_click_text(text.id)
             event.accept()
             return
 
@@ -2377,6 +2377,37 @@ class PageView(QGraphicsView):
         self._selected_before_press = target
         self._announce_pick(target, stack)
         event.accept()
+
+    def _double_click_text(self, text_id: str) -> None:
+        """セリフの上でダブルクリックされた。**選んでいたものだけ入力へ入る。**
+
+        以前は1回目から入力に入っていたが、**隣り合ったセリフを選び分ける
+        ときに、狙いを外したセリフの入力へ飛び込んでしまう**（本人談
+        2026-08-07）。入力欄は縦書きのセリフでも横書きで開くので
+        （→ `TextEditorItem`）、飛び込んだセリフはその場で横書きに化けて
+        見える。**縦書きの設定は 1 度も変わっていないのに、変わったように
+        見える**のがこの操作の質の悪いところだった。
+
+        選ぶだけで済めば、外したときの損は「別のものが選ばれた」だけになる。
+        入力へは**もう一度ダブルクリック**すれば入る（→ 要件定義 6.5）。
+
+        **押される前の選択から数える**（`_selected_before_press`）。
+        ダブルクリックの手前には必ず押下が挟まり、そこで既にこのセリフへ
+        選び直されているので、今の選択を見ると**必ず「選んでいた」に
+        なってしまう**。下の巡回が同じ理由で同じ控えを使っている（→ 6.25）。
+        """
+        if self._selected_before_press == text_id:
+            self.begin_text_edit(text_id)
+            return
+
+        self._reset_drag()
+        self.state.select(text_id)
+        # 次のダブルクリックで入力へ入れるようにする。押下を挟まずに
+        # ダブルクリックが続いた場合への備えで、下の巡回と同じ扱い
+        self._selected_before_press = text_id
+        self.state.message.emit(
+            "セリフを選びました。もう一度ダブルクリック、または Enter で入力できます"
+        )
 
     def _announce_pick(self, object_id: str, stack: list[str]) -> None:
         """ダブルクリックで選んだものを状態表示に出す。
