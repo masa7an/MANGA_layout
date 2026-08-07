@@ -53,6 +53,7 @@ from ..layout import (
 from ..model import (
     BALLOON_STYLES_WITH_BUBBLE_TAIL,
     BALLOON_STYLES_WITHOUT_TAIL,
+    DEFAULT_TEXT_DIRECTION,
     NOTE_COLORS,
     TAIL_SHAPE_BUBBLES,
     TAIL_SHAPE_TRIANGLE,
@@ -318,6 +319,12 @@ class EditorState(QObject):
         # 作品を開いても持ち越す（`reset` で戻さない）のは `rough_opacity`
         # と同じ扱い。アプリを閉じると既定へ戻る
         self.next_text_font = Font()
+        # 次に作るセリフの向き（→ 要件定義 6.5、6.11）。**書式と同じ扱いで
+        # 引き継ぐ。** 既定は縦書きだが、横書きの箇条書きを作っている最中は
+        # 1つ置くたびに縦書きへ戻り、そのつど F7 を押し直すことになる
+        # （本人の指摘 2026-08-07）。書式だけ引き継いで向きが戻るのは、
+        # 利用者から見れば「勝手に縦にされる」としか映らない
+        self.next_text_direction = DEFAULT_TEXT_DIRECTION
         # 点検で見つかったページの id（→ 要件定義 10.1）。**保存形式には
         # 載せない。** 作品ではなく「いま押した結果」なので、`Page` に
         # 持たせると Undo・サムネイルの指紋・project.json の全部に絡む
@@ -1599,9 +1606,11 @@ class EditorState(QObject):
         吹き出しはコマの中で単独に動かせるので、コマだけに紐づけると
         吹き出しを動かしたときにセリフが取り残される。
 
-        **書式は `next_text_font`（最後に指定したもの）を使う。** 作品の
-        中でセリフの書体と大きさが揃っているのが普通なので、1つ選ぶたびに
-        既定へ戻ると、置くたびに選び直すことになる。
+        **書式と向きは `next_text_font` / `next_text_direction`（最後に
+        指定したもの）を使う。** 作品の中でセリフの書体と大きさが揃って
+        いるのが普通なので、1つ選ぶたびに既定へ戻ると、置くたびに選び直す
+        ことになる。**向きも同じ**で、横書きの箇条書きを作っている最中に
+        1つ置くたび縦書きへ戻ると、そのつど直す操作が要る。
         """
         page = self.page
         balloon = balloon_at(page, *rect.center)
@@ -1612,6 +1621,7 @@ class EditorState(QObject):
                 project.pages[self._page_index], content, rect, panel_id
             )
             text.font = dataclasses.replace(self.next_text_font)
+            text.direction = self.next_text_direction
             text.attached_balloon_id = balloon.id if balloon is not None else None
         self.select(text.id)
         return text
@@ -1636,14 +1646,26 @@ class EditorState(QObject):
             text.align = align
 
     def set_text_direction(self, text_id: str, direction: str) -> None:
-        """縦書き・横書きを切り替える。
+        """縦書き・横書きを切り替え、**次に作るセリフにも写す**。
 
         `align` は持ち替えない。横書きの左右の寄せが、縦書きでは上下の
         寄せとして読み替えられる（→ `manga_layout.vertical`）。別々に
         持つと、向きを往復したときにどちらの値を使うのか決められなくなる。
+
+        写すのは書式（→ `set_text_font`）と同じ理由。向きだけ引き継がずに
+        既定の縦書きへ戻ると、横書きの箇条書きを作っている最中は1つ置く
+        たびに直すことになる。
         """
         with self._edit_text(text_id, "セリフの向き") as text:
             text.direction = direction
+        self.set_next_text_direction(direction)
+
+    def set_next_text_direction(self, direction: str) -> None:
+        """**次に作るセリフの向きだけ**を決める。今あるセリフには触らない。
+
+        作品を変えないので履歴には積まない（→ `set_next_text_font`）。
+        """
+        self.next_text_direction = direction
 
     def set_text_font(
         self,

@@ -559,10 +559,17 @@ class MainWindow(QMainWindow):
         return f"コマ未選択 / 次のセリフ: {self._next_font_label()}"
 
     def _next_font_label(self) -> str:
-        """次に作るセリフの書式（→ `EditorState.next_text_font`）。"""
+        """次に作るセリフの書式と向き（→ `EditorState.next_text_font`）。
+
+        **向きも出す。** 向きは書式と同じく引き継ぐので（→
+        `EditorState.next_text_direction`）、何で置かれるのかは置いてみる
+        まで分からない。書体だけ名乗って向きを黙っていると、横書きのつもりで
+        置いたものが縦書きで出る事故がそのまま残る（本人の指摘 2026-08-07）。
+        """
         font = self.state.next_text_font
         weight = " 太字" if font.bold else ""
-        return f"{font.family} {self._size_label(font.size_px)}{weight}"
+        lay = "縦" if self.state.next_text_direction == "vertical" else "横"
+        return f"{font.family} {self._size_label(font.size_px)}{weight} {lay}書き"
 
     def _refresh_hint(self) -> None:
         """状態表示の右側を出し直す。

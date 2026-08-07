@@ -707,6 +707,38 @@ class Test次のセリフの書式:
 
         assert window_with_text.state.selected_text.font == 期待
 
+    def test_向きも引き継ぐ(self, window_with_text):
+        """横書きにしたら、次に作るセリフも横書き（本人の指摘 2026-08-07）。
+
+        既定は縦書きだが、横書きの箇条書きを作っている最中に1つ置くたび
+        縦書きへ戻ると、そのつど直すことになる。**書式だけ引き継いで向きが
+        戻るのは、使う側からは「勝手に縦にされる」としか映らない。**
+        """
+        window_with_text.toggle_vertical()  # 既定の縦書き → 横書き
+        assert window_with_text.state.selected_text.direction == "horizontal"
+
+        window_with_text.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
+
+        assert window_with_text.state.selected_text.direction == "horizontal"
+
+    def test_縦書きへ戻せば次も縦書き(self, window_with_text):
+        window_with_text.toggle_vertical()  # 横書き
+        window_with_text.toggle_vertical()  # 縦書きへ戻す
+
+        window_with_text.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
+
+        assert window_with_text.state.selected_text.direction == "vertical"
+
+    def test_向きは既にあるセリフを巻き込まない(self, window_with_text):
+        """引き継ぎ先は「これから作るもの」だけ（→ `test_既にあるセリフは巻き込まない`）。"""
+        古い = window_with_text.state.selected_text
+        古いid, 古い向き = 古い.id, 古い.direction
+
+        window_with_text.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
+        window_with_text.toggle_vertical()
+
+        assert window_with_text.state.page.find(古いid).direction == 古い向き
+
     def test_取り消した書式は引き継がない(self, window_with_text, monkeypatch):
         before = window_with_text.state.next_text_font
         _choose_font(monkeypatch, points=24.0, accept=False)
@@ -738,7 +770,18 @@ class Test次のセリフの書式:
     def test_太字は表示にも出る(self, window_with_text):
         window_with_text.toggle_bold()
         window_with_text.state.set_tool(TOOL_TEXT)
-        assert window_with_text._hint().endswith(" 太字")
+        assert " 太字" in window_with_text._hint()
+
+    def test_向きも表示に出る(self, window_with_text):
+        """向きも引き継ぐので、置く前に名乗る（→ `MainWindow._next_font_label`）。"""
+        window = window_with_text
+        window.state.set_tool(TOOL_TEXT)
+        assert window._hint().endswith(" 縦書き")
+
+        window.state.set_tool(TOOL_SELECT)
+        window.toggle_vertical()  # 横書きへ
+        window.state.set_tool(TOOL_TEXT)
+        assert window._hint().endswith(" 横書き")
 
 
 class Test選択なしで書式を決める:
