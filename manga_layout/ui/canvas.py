@@ -1555,8 +1555,8 @@ class PageView(QGraphicsView):
         self._hint_shown: str | None = None
         self._text_editor: TextEditorItem | None = None
         # 今開いている入力欄が「置いたばかりのセリフ」のものか。
-        # 空のまま閉じたときに、追加ごと取り消すかどうかの判断に使う
-        # （→ `finish_text_edit`）
+        # 空のまま閉じた・Esc で取り消したときに、追加ごと取り消すか
+        # どうかの判断に使う（→ `finish_text_edit`）
         self._text_editor_is_new = False
         # 押される直前に選ばれていたもの。ダブルクリックの巡回で使う
         # （→ `mouseDoubleClickEvent`、要件定義 6.25）
@@ -2177,8 +2177,8 @@ class PageView(QGraphicsView):
         """セリフの入力を始める。始められたら True。
 
         `is_new` は**置いたばかりのセリフを打ち始めるとき**だけ真にする
-        （→ `_apply_create_text`）。空のまま閉じたときに追加ごと取り消す
-        のは、このときに限る（→ `finish_text_edit`）。
+        （→ `_apply_create_text`）。空のまま閉じた・Esc で取り消したときに
+        追加ごと取り消すのは、このときに限る（→ `finish_text_edit`）。
         """
         self.finish_text_edit(commit=True)
 
@@ -2210,14 +2210,19 @@ class PageView(QGraphicsView):
     def finish_text_edit(self, commit: bool = True) -> None:
         """入力を終える。`commit` が False なら書き戻さない。
 
-        **置いたばかりのセリフを1文字も入れずに閉じたら、追加ごと取り消す**
+        **置いたばかりのセリフが空のまま残るなら、追加ごと取り消す**
         （要件定義 6.5）。押し間違いで置いてしまっただけのときに、中身の
-        無い枠が残る。見えるのは選んだときの枠だけなので、**残っていること
-        自体に気づけない**（本人の指摘 2026-08-07）。
+        無い枠が残る。画面に出るのは薄い点線だけで（`render._draw_text`）、
+        書き出しでは何も描かれないので、**残っていること自体に気づけない**
+        （本人の指摘 2026-08-07）。
 
-        取り消しは確定（Ctrl+Enter・欄の外を押す）と取り消し（Esc）の両方で
-        行う。どちらで抜けても中身が空なのは変わらず、片方だけ残しても
-        「Esc だと残る」という覚え直しが要るだけになる。
+        当てはまるのは次の2つ。**どちらも「残るのは中身の無い枠」で同じ**
+        なので、片方だけ残しても覚え直しが要るだけになる。
+
+        - 1文字も入れずに閉じた（確定・取り消しのどちら経由でも）
+        - 打ってから **Esc で取り消した**（`commit=False`）。Esc は打った
+          内容を捨てるので、書き戻さない以上そのセリフは空のまま残る。
+          置く前へ戻すのが「取り消し」の意味に合う（2026-08-08）
 
         空白だけの入力も空として扱う（全角空白を含む）。描いても何も
         出ないので、枠だけが残るのと区別が付かない。
@@ -2235,11 +2240,20 @@ class PageView(QGraphicsView):
         self._scene.editing_text_id = None
         self._scene.removeItem(editor)
 
-        if is_new and not content.strip():
+        if is_new and (not commit or not content.strip()):
             # **確定していない中身は捨ててから消す。** 追加した時点の
-            # 状態へ戻すので、`commit` がどちらでも結果は同じ
+            # 状態へ戻すので、書き戻す前でも結果は同じ。
+            #
+            # 直前の1手が「セリフの追加」でなければ `discard_last_edit` は
+            # 何もしない（間に別の編集が挟まった場合の保険）。そのときは
+            # 下へ抜けるが、`commit=False` なら書き戻しも起きないので
+            # 空のセリフがそのまま残る——**消せないより、消し間違えない**
             if self.state.discard_last_edit("セリフの追加"):
-                self.state.message.emit("空のままだったので、セリフは作りませんでした")
+                self.state.message.emit(
+                    "取り消したので、セリフは作りませんでした"
+                    if content.strip()
+                    else "空のままだったので、セリフは作りませんでした"
+                )
                 self.viewport().update()
                 return
 
@@ -2807,8 +2821,8 @@ class PageView(QGraphicsView):
         作っただけでは空の枠が残るだけなので、続けて打てる状態にする。
         道具は選択に戻す（コマ・吹き出しと同じ「1回きり」）。
 
-        **1文字も入れずに閉じたら、この追加ごと無かったことになる**
-        （→ `finish_text_edit`）。ここで先に作って履歴へ積むのは、
+        **空のまま閉じるか Esc で取り消したら、この追加ごと無かったことに
+        なる**（→ `finish_text_edit`）。ここで先に作って履歴へ積むのは、
         入力欄が `TextObject` の位置・大きさ・書式を見て開くため
         （作る前に開くと、どこへどの大きさで出すかが決められない）。
         """

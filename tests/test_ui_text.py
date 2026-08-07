@@ -886,10 +886,14 @@ def _text_menu(window):
 
 
 class Test空のまま閉じたセリフ:
-    """置いたばかりのセリフを1文字も入れずに閉じたら、追加ごと取り消す。
+    """置いたばかりのセリフが空のまま残るなら、追加ごと取り消す。
 
     押し間違いで置いてしまっただけのときに中身の無い枠が残り、**残って
     いること自体に気づけない**（本人の指摘 2026-08-07）。
+
+    1文字も入れずに閉じた場合と、**打ってから Esc で取り消した場合**の
+    両方が対象（2026-08-08）。Esc は打った内容を捨てるので、どちらも
+    残るのは中身の無い枠で同じ。
     """
 
     def 置く(self, window) -> None:
@@ -953,6 +957,55 @@ class Test空のまま閉じたセリフ:
         view.finish_text_edit(commit=True)
 
         assert window_with_text.state.page.find(text_id).content == ""
+
+    def test_打ってから取り消しても作られない(self, window_with_balloon):
+        """Esc は打った内容を捨てるので、残るのは中身の無い枠になる。
+
+        以前はここだけ枠が残っていた（2026-08-08 の修正）。空のまま
+        閉じた場合と見た目は同じなのに、片方だけ残っていた。
+        """
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あいうえお")
+        window_with_balloon.view.finish_text_edit(commit=False)
+
+        assert self.texts(window_with_balloon) == []
+
+    def test_打ってから取り消すと履歴にも残らない(self, window_with_balloon):
+        depth = window_with_balloon.state.history.depth
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あいうえお")
+        window_with_balloon.view.finish_text_edit(commit=False)
+
+        assert window_with_balloon.state.history.depth == depth
+        assert not window_with_balloon.state.history.can_redo
+        assert window_with_balloon.state.selected_id is None
+
+    def test_取り消したことを状態表示で知らせる(self, window_with_balloon):
+        """黙って消すと、置いたはずのものが無い理由が分からない。"""
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あいうえお")
+        window_with_balloon.view.finish_text_edit(commit=False)
+
+        assert "作りませんでした" in window_with_balloon.statusBar().currentMessage()
+
+    def test_打ってから確定すれば残る(self, window_with_balloon):
+        """取り消しでないなら消さない（→ `test_1文字でも入れれば残る`）。"""
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あいうえお")
+        window_with_balloon.view.finish_text_edit(commit=True)
+
+        assert [t.content for t in self.texts(window_with_balloon)] == ["あいうえお"]
+
+    def test_既にあるセリフは取り消しても消さない(self, window_with_text):
+        """F2 で打ち直して Esc は「元の文へ戻る」。セリフ自体は残る。"""
+        view = window_with_text.view
+        text_id = window_with_text.state.selected_text.id
+
+        view.begin_text_edit(text_id)
+        view._text_editor.setPlainText("打ち直した文")
+        view.finish_text_edit(commit=False)
+
+        assert window_with_text.state.page.find(text_id).content == "セリフ"
 
 
 class TestConfirmHint:
