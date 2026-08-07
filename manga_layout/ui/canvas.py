@@ -18,13 +18,17 @@ from __future__ import annotations
 import dataclasses
 import math
 import pathlib
+from functools import partial
 
 from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QCursor,
     QFont,
     QFontMetricsF,
+    QGuiApplication,
+    QImage,
     QPainter,
     QPen,
     QTextCursor,
@@ -38,6 +42,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import MangaLayoutError
+from ..fetch import display_name, fetch_bytes, is_fetchable
 from ..flow import (
     angle_at as flow_angle_at,
     handle_point as flow_handle_point,
@@ -55,6 +60,7 @@ from ..geometry import (
     rotated_rect_contains,
     unrotate_point,
 )
+from ..images import to_png_bytes
 from ..layout import (
     aspect_of,
     balloon_pick_at,
@@ -3005,6 +3011,15 @@ class PageView(QGraphicsView):
             self.state.message.emit("コマを分割しました")
 
     # -- ドラッグ&ドロップ --------------------------------------------------
+    #
+    # 落とされ方は3通りある。**手前のものほど確実で速いので、この順に見る。**
+    #
+    # 1. 手元のファイル（エクスプローラーから）
+    # 2. 絵そのもの（画像を持たせて渡してくるアプリ）
+    # 3. 住所だけ（ブラウザから。取りに行かないと絵が手に入らない）
+    #
+    # ブラウザは 2 と 3 の両方を渡してくることがある。2 を先に見れば、
+    # 手元にある絵を捨ててわざわざ取りに行く、という無駄が起きない。
 
     def _dropped_images(self, mime) -> list[pathlib.Path]:
         """ドロップされたもののうち、画像として扱えるファイル。"""
@@ -3019,8 +3034,54 @@ class PageView(QGraphicsView):
                 files.append(path)
         return files
 
+    def _dropped_image_data(self, mime) -> QImage | None:
+        """ドロップに絵そのものが入っていれば、それ。"""
+        if not mime.hasImage():
+            return None
+        data = mime.imageData()
+        image = data if isinstance(data, QImage) else QImage(data)
+        return None if image.isNull() else image
+
+    def _dropped_urls(self, mime) -> list[str]:
+        """取りに行ける住所。
+
+        **拡張子では絞らない。** 配信元が住所に拡張子を含めないことは普通に
+        あり（`.../photo?id=1`）、そこで弾くと落とせる絵のほうが少なくなる。
+        画像かどうかは取ってきてから `images.decode` が見る
+        """
+        if not mime.hasUrls():
+            return []
+        return [
+            url.toString()
+            for url in mime.urls()
+            if not url.isLocalFile() and is_fetchable(url.scheme())
+        ]
+
+    def _dropped_sources(self, mime) -> tuple[list[tuple[str, object]], bool]:
+        """落とされたものを「名前 → 中身を作る手順」の並びと、通信の要否にする。
+
+        **中身をまだ取り出さない。** 取りに行くのは落とし先が決まってから。
+        先に取ってしまうと、コマの外に落として断られるたびに通信が走る
+        """
+        files = self._dropped_images(mime)
+        if files:
+            return ([(path.name, path.read_bytes) for path in files], False)
+
+        image = self._dropped_image_data(mime)
+        if image is not None:
+            return ([("ドロップされた画像", lambda: to_png_bytes(image))], False)
+
+        urls = self._dropped_urls(mime)
+        return ([(display_name(u), partial(fetch_bytes, u)) for u in urls], bool(urls))
+
+    def _droppable(self, mime) -> bool:
+        """落とせる状態に見せてよいか。ドラッグ中に何度も呼ばれるので軽く。"""
+        return bool(
+            self._dropped_images(mime) or mime.hasImage() or self._dropped_urls(mime)
+        )
+
     def dragEnterEvent(self, event) -> None:
-        if self._dropped_images(event.mimeData()):
+        if self._droppable(event.mimeData()):
             event.acceptProposedAction()
             return
         super().dragEnterEvent(event)
@@ -3028,14 +3089,20 @@ class PageView(QGraphicsView):
     def dragMoveEvent(self, event) -> None:
         # ここを受け取らないと、Windows では入った瞬間だけ許可されて
         # 動かした途端に拒否に変わり、落とせなくなる
-        if self._dropped_images(event.mimeData()):
+        if self._droppable(event.mimeData()):
             event.acceptProposedAction()
             return
         super().dragMoveEvent(event)
 
     def dropEvent(self, event) -> None:
-        files = self._dropped_images(event.mimeData())
-        if not files:
+        sources, from_network = self._dropped_sources(event.mimeData())
+        if not sources:
+            if self._droppable(event.mimeData()):
+                # 受けると見せておいて何も起きないのが一番困る。
+                # `_droppable` は軽さを取って中身まで見ないので、ここで拾う
+                self.state.message.emit("落とされたものから画像を取り出せませんでした")
+                event.ignore()
+                return
             super().dropEvent(event)
             return
 
@@ -3048,19 +3115,37 @@ class PageView(QGraphicsView):
             return
 
         event.acceptProposedAction()
-        placed = 0
-        for path in files:
-            try:
-                self.state.place_image(panel.id, path.read_bytes())
-            except (MangaLayoutError, OSError) as e:
-                self.state.message.emit(f"{path.name}: {e}")
-                continue
-            placed += 1
+        if from_network:
+            # 取り終わるまで画面が止まる。何も出さないと固まったように見える
+            self.state.message.emit(f"{len(sources)} 枚を取り込んでいます…")
+        placed = self._place_dropped(panel.id, sources, wait=from_network)
 
         if placed:
             self.state.message.emit(
                 f"{placed} 枚を置きました。コマを埋めるなら Ctrl+Shift+F"
             )
+
+    def _place_dropped(self, panel_id: str, sources, *, wait: bool) -> int:
+        """落とされたものを順に置く。置けた枚数を返す。
+
+        1つ失敗しても残りを続ける。まとめて落とすのが普通の使い方なので、
+        1枚で全部止めると、どれが原因かも分からないまま何も置かれない
+        """
+        if wait:
+            QGuiApplication.setOverrideCursor(QCursor(Qt.CursorShape.WaitCursor))
+        try:
+            placed = 0
+            for name, load in sources:
+                try:
+                    self.state.place_image(panel_id, load())
+                except (MangaLayoutError, OSError) as e:
+                    self.state.message.emit(f"{name}: {e}")
+                    continue
+                placed += 1
+            return placed
+        finally:
+            if wait:
+                QGuiApplication.restoreOverrideCursor()
 
     def leaveEvent(self, event) -> None:
         if self._scene.split_preview is not None:

@@ -33,6 +33,15 @@ class ExportError(MangaLayoutError):
     """
 
 
+class ImageFetchError(MangaLayoutError):
+    """ネット上の画像を取ってこられなかった。
+
+    ブラウザから絵を直接ドラッグしたときの経路（→ `fetch.py`）。
+    つながらない・断られた・大きすぎる・時間切れをまとめて表す。
+    どれも利用者が落とし直すか諦めるかで済む話なので、区別しない。
+    """
+
+
 class AssetError(MangaLayoutError):
     """assets/ の操作に失敗した。"""
 
