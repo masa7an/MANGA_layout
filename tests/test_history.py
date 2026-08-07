@@ -272,6 +272,69 @@ class TestFailedEdit:
         assert history.undo_label == "成功する操作"
 
 
+class TestDiscardLast:
+    """直前の1手を、やり直せる形を残さず取り消す（→ `discard_last`）。
+
+    空のまま確定したセリフの追加を消すのに使う。置いた覚えの無いものを
+    Undo で呼び戻せても仕方がないので、Redo には積まない。
+    """
+
+    def _add(self, history: History, label: str) -> None:
+        with history.edit(label) as project:
+            project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+
+    def test_取り消せば追加前へ戻る(self, sample_project):
+        history = History(sample_project)
+        before = len(history.project.pages[0].panels)
+        self._add(history, "コマの追加")
+
+        assert history.discard_last("コマの追加")
+        assert len(history.project.pages[0].panels) == before
+
+    def test_やり直しには積まない(self, sample_project):
+        history = History(sample_project)
+        self._add(history, "コマの追加")
+
+        history.discard_last("コマの追加")
+
+        assert history.depth == 0
+        assert not history.can_redo
+
+    def test_名前が違えば何もしない(self, sample_project):
+        """間に別の編集が挟まっていたときに、そちらを消さないための保険。"""
+        history = History(sample_project)
+        self._add(history, "コマの追加")
+        count = len(history.project.pages[0].panels)
+
+        assert not history.discard_last("セリフの追加")
+        assert history.depth == 1
+        assert len(history.project.pages[0].panels) == count
+
+    def test_何も積まれていなければ何もしない(self, sample_project):
+        history = History(sample_project)
+        assert not history.discard_last("コマの追加")
+
+    def test_取り消した後も普通に戻せる(self, sample_project):
+        history = History(sample_project)
+        self._add(history, "1手目")
+        self._add(history, "2手目")
+
+        history.discard_last("2手目")
+
+        assert history.undo() == "1手目"
+
+    def test_保存の印も戻る(self, sample_project):
+        """取り消した結果が保存時と同じなら、未保存の印は消えていること。"""
+        history = History(sample_project)
+        history.mark_saved()
+        self._add(history, "コマの追加")
+        assert history.is_dirty
+
+        history.discard_last("コマの追加")
+
+        assert not history.is_dirty
+
+
 class TestLimit:
     def test_上限を超えたら古い手から捨てる(self, sample_project):
         history = History(sample_project, limit=5)

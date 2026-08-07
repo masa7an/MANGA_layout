@@ -1542,6 +1542,10 @@ class PageView(QGraphicsView):
         # 状態表示に出している案内。同じ文を出し続けないための控え
         self._hint_shown: str | None = None
         self._text_editor: TextEditorItem | None = None
+        # 今開いている入力欄が「置いたばかりのセリフ」のものか。
+        # 空のまま閉じたときに、追加ごと取り消すかどうかの判断に使う
+        # （→ `finish_text_edit`）
+        self._text_editor_is_new = False
         # 押される直前に選ばれていたもの。ダブルクリックの巡回で使う
         # （→ `mouseDoubleClickEvent`、要件定義 6.25）
         self._selected_before_press: str | None = None
@@ -2157,8 +2161,13 @@ class PageView(QGraphicsView):
     def is_editing_text(self) -> bool:
         return self._text_editor is not None
 
-    def begin_text_edit(self, text_id: str) -> bool:
-        """セリフの入力を始める。始められたら True。"""
+    def begin_text_edit(self, text_id: str, *, is_new: bool = False) -> bool:
+        """セリフの入力を始める。始められたら True。
+
+        `is_new` は**置いたばかりのセリフを打ち始めるとき**だけ真にする
+        （→ `_apply_create_text`）。空のまま閉じたときに追加ごと取り消す
+        のは、このときに限る（→ `finish_text_edit`）。
+        """
         self.finish_text_edit(commit=True)
 
         text = self.state.page.find(text_id)
@@ -2171,6 +2180,7 @@ class PageView(QGraphicsView):
         self._scene.addItem(editor)
         self._scene.editing_text_id = text_id
         self._text_editor = editor
+        self._text_editor_is_new = is_new
 
         editor.setFocus(Qt.FocusReason.MouseFocusReason)
         cursor = editor.textCursor()
@@ -2186,17 +2196,40 @@ class PageView(QGraphicsView):
         return True
 
     def finish_text_edit(self, commit: bool = True) -> None:
-        """入力を終える。`commit` が False なら書き戻さない。"""
+        """入力を終える。`commit` が False なら書き戻さない。
+
+        **置いたばかりのセリフを1文字も入れずに閉じたら、追加ごと取り消す**
+        （要件定義 6.5）。押し間違いで置いてしまっただけのときに、中身の
+        無い枠が残る。見えるのは選んだときの枠だけなので、**残っていること
+        自体に気づけない**（本人の指摘 2026-08-07）。
+
+        取り消しは確定（Ctrl+Enter・欄の外を押す）と取り消し（Esc）の両方で
+        行う。どちらで抜けても中身が空なのは変わらず、片方だけ残しても
+        「Esc だと残る」という覚え直しが要るだけになる。
+
+        空白だけの入力も空として扱う（全角空白を含む）。描いても何も
+        出ないので、枠だけが残るのと区別が付かない。
+        """
         editor = self._text_editor
         if editor is None:
             return
 
         text_id = self._scene.editing_text_id
         content = editor.close_editor()
+        is_new = self._text_editor_is_new
 
         self._text_editor = None
+        self._text_editor_is_new = False
         self._scene.editing_text_id = None
         self._scene.removeItem(editor)
+
+        if is_new and not content.strip():
+            # **確定していない中身は捨ててから消す。** 追加した時点の
+            # 状態へ戻すので、`commit` がどちらでも結果は同じ
+            if self.state.discard_last_edit("セリフの追加"):
+                self.state.message.emit("空のままだったので、セリフは作りませんでした")
+                self.viewport().update()
+                return
 
         if commit and text_id is not None:
             current = self.state.page.find(text_id)
@@ -2730,6 +2763,11 @@ class PageView(QGraphicsView):
 
         作っただけでは空の枠が残るだけなので、続けて打てる状態にする。
         道具は選択に戻す（コマ・吹き出しと同じ「1回きり」）。
+
+        **1文字も入れずに閉じたら、この追加ごと無かったことになる**
+        （→ `finish_text_edit`）。ここで先に作って履歴へ積むのは、
+        入力欄が `TextObject` の位置・大きさ・書式を見て開くため
+        （作る前に開くと、どこへどの大きさで出すかが決められない）。
         """
         minimum = MIN_CREATE_PX / self.view_scale
         if rect.w < minimum or rect.h < minimum:
@@ -2744,7 +2782,7 @@ class PageView(QGraphicsView):
 
         text = self.state.add_text(rect)
         self.state.set_tool(TOOL_SELECT)
-        self.begin_text_edit(text.id)
+        self.begin_text_edit(text.id, is_new=True)
 
     def _apply_tail(self, balloon_id: str, tip: tuple[float, float]) -> None:
         balloon = self.state.page.find(balloon_id)

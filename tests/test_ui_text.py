@@ -465,6 +465,136 @@ def _choose_font(
     monkeypatch.setattr("manga_layout.ui.window.QFontDialog.getFont", fake)
 
 
+class Test次のセリフの書式:
+    """指定した書式は、次に作るセリフへ引き継ぐ（本人の指摘 2026-08-07）。
+
+    以前は選択中の1つにしか効かず、次に置いたセリフは毎回既定へ戻っていた。
+    「選んだのに反映されない」と見えるのがいちばんの躓きだった。
+    """
+
+    def test_選んだ書式が次のセリフに乗る(self, window_with_text, monkeypatch):
+        _choose_font(monkeypatch, points=24.0)
+        window_with_text.choose_font()
+
+        window_with_text.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
+
+        # 24pt は 150dpi 換算で 50px
+        assert window_with_text.state.selected_text.font.size_px == pytest.approx(50.0)
+
+    def test_大きさと太字も引き継ぐ(self, window_with_text):
+        """引き継ぎは書式を指定する操作すべてに掛かる（→ `set_text_font`）。"""
+        window_with_text.step_text_size(1)
+        window_with_text.toggle_bold()
+        期待 = window_with_text.state.selected_text.font
+
+        window_with_text.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
+
+        assert window_with_text.state.selected_text.font == 期待
+
+    def test_取り消した書式は引き継がない(self, window_with_text, monkeypatch):
+        before = window_with_text.state.next_text_font
+        _choose_font(monkeypatch, points=24.0, accept=False)
+
+        window_with_text.choose_font()
+
+        assert window_with_text.state.next_text_font == before
+
+    def test_既にあるセリフは巻き込まない(self, window_with_text):
+        """引き継ぎ先は「これから作るもの」だけ。前に置いたものは動かさない。"""
+        古い = window_with_text.state.selected_text
+        古いid, 古い書式 = 古い.id, 古い.font
+
+        window_with_text.state.add_text(Rect(700.0, 600.0, 120.0, 60.0))
+        window_with_text.step_text_size(1)
+
+        assert window_with_text.state.page.find(古いid).font == 古い書式
+
+    def test_道具を持つと状態表示に出る(self, window):
+        """置く前に何の書式で置かれるかが分かる。置いてから直すのは手数が同じ。"""
+        window.state.set_tool(TOOL_TEXT)
+        assert window._hint().startswith("セリフを追加: ")
+        assert window.state.next_text_font.family in window._hint()
+
+    def test_何も選んでいなくても出る(self, window):
+        window.state.select(None)
+        assert "次のセリフ: " in window._hint()
+
+    def test_太字は表示にも出る(self, window_with_text):
+        window_with_text.toggle_bold()
+        window_with_text.state.set_tool(TOOL_TEXT)
+        assert window_with_text._hint().endswith(" 太字")
+
+
+class Test空のまま閉じたセリフ:
+    """置いたばかりのセリフを1文字も入れずに閉じたら、追加ごと取り消す。
+
+    押し間違いで置いてしまっただけのときに中身の無い枠が残り、**残って
+    いること自体に気づけない**（本人の指摘 2026-08-07）。
+    """
+
+    def 置く(self, window) -> None:
+        window.state.set_tool(TOOL_TEXT)
+        click(window.view, *BALLOON.center)
+
+    def texts(self, window) -> list:
+        return [f for f in window.state.page.floating if isinstance(f, TextObject)]
+
+    def test_空のまま確定すると作られない(self, window_with_balloon):
+        self.置く(window_with_balloon)
+        window_with_balloon.view.finish_text_edit(commit=True)
+
+        assert self.texts(window_with_balloon) == []
+
+    def test_取り消しで抜けても作られない(self, window_with_balloon):
+        """Esc でも同じ。片方だけ残すと「Esc だと残る」の覚え直しが要る。"""
+        self.置く(window_with_balloon)
+        window_with_balloon.view.finish_text_edit(commit=False)
+
+        assert self.texts(window_with_balloon) == []
+
+    def test_空白だけでも作られない(self, window_with_balloon):
+        """描いても何も出ないので、枠だけが残るのと区別が付かない。"""
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText(" 　\n ")
+        window_with_balloon.view.finish_text_edit(commit=True)
+
+        assert self.texts(window_with_balloon) == []
+
+    def test_履歴にも残らない(self, window_with_balloon):
+        """置いた覚えの無いものを Undo で呼び戻せても仕方がない。"""
+        depth = window_with_balloon.state.history.depth
+        self.置く(window_with_balloon)
+        window_with_balloon.view.finish_text_edit(commit=True)
+
+        assert window_with_balloon.state.history.depth == depth
+        assert not window_with_balloon.state.history.can_redo
+
+    def test_選択も外れる(self, window_with_balloon):
+        self.置く(window_with_balloon)
+        window_with_balloon.view.finish_text_edit(commit=True)
+
+        assert window_with_balloon.state.selected_id is None
+
+    def test_1文字でも入れれば残る(self, window_with_balloon):
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あ")
+        window_with_balloon.view.finish_text_edit(commit=True)
+
+        assert [t.content for t in self.texts(window_with_balloon)] == ["あ"]
+        assert window_with_balloon.state.history.undo_label == "セリフの入力"
+
+    def test_既にあるセリフは空にしても消さない(self, window_with_text):
+        """一度消して打ち直す操作を塞がない。取り消しの対象は置いた直後だけ。"""
+        view = window_with_text.view
+        text_id = window_with_text.state.selected_text.id
+
+        view.begin_text_edit(text_id)
+        view._text_editor.setPlainText("")
+        view.finish_text_edit(commit=True)
+
+        assert window_with_text.state.page.find(text_id).content == ""
+
+
 class TestConfirmHint:
     """入力欄の外に出す「確定」の目印。
 

@@ -212,6 +212,25 @@ class History:
         """確定していない変更を捨てて、直前の確定状態へ戻す。履歴には積まない。"""
         self._project = _decode(self._baseline)
 
+    def discard_last(self, label: str) -> bool:
+        """直前の1手を、**無かったことにして**取り消す。取り消せたら True。
+
+        `undo()` と違い、**やり直し（Redo）には積まない**。取り消したこと
+        自体を利用者に見せない用途のためのもの。空のまま確定したセリフの
+        追加を消すのに使う（→ `PageView.finish_text_edit`）。置いた覚えの
+        無いものを Undo で呼び戻せても仕方がない。
+
+        `label` は保険。直前の1手が期待した操作でなければ何もせず False を
+        返す。**間に別の編集が挟まっていた場合に、そちらを消さない**ため。
+        """
+        if not self._undo or self._undo[-1].label != label:
+            return False
+        step = self._undo.pop()
+        self._baseline = step.state
+        self._project = _decode(step.state)
+        self._merge_key = None
+        return True
+
     def replace(self, project: Project, label: str) -> bool:
         """作品まるごとを別のものへ差し替え、**1手として積む**。
 

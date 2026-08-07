@@ -487,6 +487,13 @@ class MainWindow(QMainWindow):
             )
             return f"トーン範囲を調整中: {where} / {ADJUST_TOOL_EXIT}"
 
+        # **セリフを置く道具では、置く前に書式を名乗る。** 書式は最後に
+        # 指定したものを引き継ぐので（→ `EditorState.next_text_font`）、
+        # 何で置かれるのかは置いてみるまで分からない。置いてから直すのは
+        # 選び直しと同じ手数になる（本人の指摘 2026-08-07）
+        if self.state.tool == TOOL_TEXT:
+            return f"セリフを追加: {self._next_font_label()}"
+
         image = self.state.selected_image
         if image is not None:
             r = image.rect
@@ -542,7 +549,13 @@ class MainWindow(QMainWindow):
             locked = " / ロック中" if self.state.is_locked_selection else ""
             return f"コマを選択中: {b.w:.0f} × {b.h:.0f} px{inside}{lines}{locked}"
 
-        return "コマ未選択"
+        return f"コマ未選択 / 次のセリフ: {self._next_font_label()}"
+
+    def _next_font_label(self) -> str:
+        """次に作るセリフの書式（→ `EditorState.next_text_font`）。"""
+        font = self.state.next_text_font
+        weight = " 太字" if font.bold else ""
+        return f"{font.family} {self._size_label(font.size_px)}{weight}"
 
     def _sync_tool_actions(self) -> None:
         self._tool_actions[self.state.tool].setChecked(True)

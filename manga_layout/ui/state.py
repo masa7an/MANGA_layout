@@ -58,6 +58,7 @@ from ..model import (
     BalloonObject,
     FlowLines,
     FocusLines,
+    Font,
     ImageObject,
     Page,
     PageNote,
@@ -292,6 +293,15 @@ class EditorState(QObject):
         # `project.json` ではなく `settings.json` から来る。窓が起動時と
         # ラフを読み込む直前に入れ直す（→ `MainWindow.load_rough`）
         self.rough_opacity = ROUGH_OPACITY_DEFAULT
+        # 次に作るセリフの書式（→ 要件定義 6.5）。**書式を指定した操作が
+        # ここへ写り、以後の「セリフの追加」がこれを使う。** 選んだ書式が
+        # 選択中の1つにしか効かず、次に置いたセリフが毎回既定へ戻るのが
+        # 分かりにくかった（本人の指摘 2026-08-07）。
+        #
+        # **作品ではなく好みなので `project.json` には載せない。** 別の
+        # 作品を開いても持ち越す（`reset` で戻さない）のは `rough_opacity`
+        # と同じ扱い。アプリを閉じると既定へ戻る
+        self.next_text_font = Font()
         # 点検で見つかったページの id（→ 要件定義 10.1）。**保存形式には
         # 載せない。** 作品ではなく「いま押した結果」なので、`Page` に
         # 持たせると Undo・サムネイルの指紋・project.json の全部に絡む
@@ -503,6 +513,19 @@ class EditorState(QObject):
             self.message.emit("やり直せる操作がありません")
             return
         self._after_history_move(f"やり直しました: {label}")
+
+    def discard_last_edit(self, label: str) -> bool:
+        """直前の1手を、やり直せる形を残さず取り消す（→ `History.discard_last`）。
+
+        取り消した1手で作られたものは消えるので、**選択も外す**。id は
+        残っていても引き当たらないだけだが、状態表示が「セリフを選択中」の
+        まま残る（`selected_text` が None を返すので中身は空）。
+        """
+        if not self.history.discard_last(label):
+            return False
+        self.select(None)
+        self.changed.emit()
+        return True
 
     def _after_history_move(self, message: str) -> None:
         # ページが減っていた場合に備えて番号を丸める
@@ -1552,6 +1575,10 @@ class EditorState(QObject):
         **吹き出しの上なら、その吹き出しに紐づける**（要件定義 6.5）。
         吹き出しはコマの中で単独に動かせるので、コマだけに紐づけると
         吹き出しを動かしたときにセリフが取り残される。
+
+        **書式は `next_text_font`（最後に指定したもの）を使う。** 作品の
+        中でセリフの書体と大きさが揃っているのが普通なので、1つ選ぶたびに
+        既定へ戻ると、置くたびに選び直すことになる。
         """
         page = self.page
         balloon = balloon_at(page, *rect.center)
@@ -1561,6 +1588,7 @@ class EditorState(QObject):
             text = project.add_text(
                 project.pages[self._page_index], content, rect, panel_id
             )
+            text.font = dataclasses.replace(self.next_text_font)
             text.attached_balloon_id = balloon.id if balloon is not None else None
         self.select(text.id)
         return text
@@ -1602,19 +1630,25 @@ class EditorState(QObject):
         size_px: float | None = None,
         bold: bool | None = None,
     ) -> None:
-        with self._edit_text(text_id, "セリフの書式") as text:
-            text.font = dataclasses.replace(
-                text.font,
-                **{
-                    key: value
-                    for key, value in (
-                        ("family", family),
-                        ("size_px", size_px),
-                        ("bold", bold),
-                    )
-                    if value is not None
-                },
+        """選んでいるセリフの書式を変え、**次に作るセリフにも写す**。
+
+        写すのをここでやるのは、書式を指定する操作（種類を選ぶ・大きさを
+        1段階ずつ・太字）が全部ここを通るため。呼び出し側でやると、
+        3か所のうち1つを直し忘れたときに「この操作だけ引き継がれない」
+        という説明の付かない差ができる（→ `next_text_font`）。
+        """
+        changes = {
+            key: value
+            for key, value in (
+                ("family", family),
+                ("size_px", size_px),
+                ("bold", bold),
             )
+            if value is not None
+        }
+        with self._edit_text(text_id, "セリフの書式") as text:
+            text.font = dataclasses.replace(text.font, **changes)
+        self.next_text_font = dataclasses.replace(self.next_text_font, **changes)
 
     def _edit_balloon(self, balloon_id: str, label: str):
         """id で引き直してから触るための小さな入れ物。
