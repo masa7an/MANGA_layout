@@ -8,6 +8,7 @@
 
 # バイナリ（差分を取らない）
 *.png binary
+*.gif binary
 *.jpg binary
 *.psd binary
 *.ico binary
