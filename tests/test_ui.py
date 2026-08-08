@@ -1887,3 +1887,63 @@ class Test斜めのコマの大きさ変更:
         assert len(after.slant_pairs) == 1
         assert after.slant_bounds(after.slant_pairs[0]).h == pytest.approx(outer.h)
         assert window.state.history.can_undo
+
+
+class Test壊れた作品を開く:
+    """開けないほどではない壊れ方は、直して開いて理由を返す（→ 5章）。"""
+
+    def _write(self, tmp_path, **overrides):
+        """最小限の project.json を書いて、その作品フォルダを返す。"""
+        data = {
+            "format_version": 2,
+            "app": "MANGA_layout",
+            "title": "こわれもの",
+            "default_page_size": {"w": 1240, "h": 1754},
+            "reading_direction": "rtl",
+            "next_id": 1,
+            "pages": [],
+        }
+        data.update(overrides)
+        (tmp_path / "project.json").write_text(
+            json.dumps(data, ensure_ascii=False), encoding="utf-8"
+        )
+        return tmp_path
+
+    def test_ページが0枚でも開けて操作できる(self, window, tmp_path):
+        """0枚のまま通していた頃は、開いた先で IndexError になっていた。
+
+        しかも例外が `changed` などのシグナルの中で起き、PySide6 が
+        握り潰すので**エラーの窓すら出ないまま窓だけが固まる**
+        （2026-08-09 に発見）。`fit_page` は直に呼ぶ経路なので、
+        そちらでも漏れないことを併せて見る。
+        """
+        warnings = window.state.load(self._write(tmp_path))
+
+        assert any("ページが1枚もなかった" in w for w in warnings)
+        assert window.state.page_count == 1
+        # 開いたあとに画面側が触る経路（どれも `state.page` を引く）
+        window.view.fit_page()
+        window._refresh()
+        window.view._scene.update_scene_rect()
+
+    def test_ページが0枚でも編集を続けられる(self, window, tmp_path):
+        """足したページは普通のページ。コマを置いて戻せる。"""
+        window.state.load(self._write(tmp_path))
+        window.add_full_page_panel()
+        assert len(window.state.page.panels) == 1
+
+        window.state.undo()
+        assert window.state.page.panels == []
+        window.state.redo()
+        assert len(window.state.page.panels) == 1
+
+    def test_直したぶんは保存するまで残らない(self, window, tmp_path):
+        """足したページは**その場の直し**で、保存すれば普通の作品になる。
+
+        開き直したときに「また直しました」と言われないこと。
+        """
+        window.state.load(self._write(tmp_path))
+        window.state.save(tmp_path)
+
+        assert load_project(tmp_path).load_warnings == []
+        assert len(load_project(tmp_path).pages) == 1

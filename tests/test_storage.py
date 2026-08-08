@@ -367,8 +367,10 @@ class TestUndoFoundation:
 
 class TestProjectFromDictDirect:
     def test_最小限のJSONから開ける(self):
-        # 手書きの project.json でも開けること
+        # 手書きの project.json でも開けること。
+        # **ページは1枚補われる**（0枚では画面が表示するものを持てない
+        # → `Project._repair_after_load`）
         project = Project.from_dict({"format_version": 2, "pages": []})
-        assert project.pages == []
+        assert len(project.pages) == 1
         assert project.reading_direction == "rtl"
         assert project.default_page_size.w == 1240.0

@@ -644,6 +644,45 @@ class TestRepair:
     def test_問題がなければ警告は出ない(self, sample_project):
         assert Project.from_dict(sample_project.to_dict()).load_warnings == []
 
+    def test_ページが1枚も無ければ足す(self):
+        """0枚のまま通すと、画面側が `pages[page_index]` で落ちる。
+
+        しかも例外がシグナルの中で握り潰され、エラーの窓すら出ないまま
+        窓だけが固まっていた（2026-08-09 に発見）。
+        """
+        data = new_project().to_dict()
+        data["pages"] = []
+
+        project = Project.from_dict(data)
+
+        assert len(project.pages) == 1
+        assert project.pages[0].panels == []
+        assert any("ページが1枚もなかった" in w for w in project.load_warnings)
+
+    def test_足したページは採番と衝突しない(self):
+        """`next_id` の繰り上げより先に足すので、以降の走査に乗る。"""
+        data = new_project().to_dict()
+        data["pages"] = []
+        data["next_id"] = 40
+
+        project = Project.from_dict(data)
+
+        assert project.pages[0].id == "page_0040"
+        assert project.next_id == 41
+        # 採番の直しは要らない。空回りの警告が増えていないこと
+        assert not any("next_id" in w for w in project.load_warnings)
+
+    def test_足したあとは往復しても増えない(self):
+        """直したものを保存して開き直しても、2枚目が生えない。"""
+        data = new_project().to_dict()
+        data["pages"] = []
+
+        once = Project.from_dict(data)
+        twice = Project.from_dict(once.to_dict())
+
+        assert len(twice.pages) == 1
+        assert twice.load_warnings == []
+
 
 class TestAssetReferences:
     def test_参照している画像を集められる(self, sample_project):
