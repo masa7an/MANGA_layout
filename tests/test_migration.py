@@ -15,7 +15,14 @@ from __future__ import annotations
 
 import pytest
 
-from manga_layout import Project, Rect, SlantPair, UnsupportedVersionError, new_project
+from manga_layout import (
+    Project,
+    ProjectFormatError,
+    Rect,
+    SlantPair,
+    UnsupportedVersionError,
+    new_project,
+)
 from manga_layout.model import FORMAT_VERSION, MM_TO_PX
 
 # 旧形式（mm）で書かれた最小限の作品。手で書いた JSON を想定している
@@ -213,6 +220,43 @@ class Test欠けた項目の既定値:
         project = Project.from_dict(self._v1_with())
         assert project.pages[0].panels[0].border.width == pytest.approx(px(0.6))
         assert project.pages[0].floating[1].font.size_px == pytest.approx(px(3.5))
+
+
+class Test型の違う値には触らない:
+    """欠けた項目を埋める処理が、**型の間違いを握り潰さない**こと。
+
+    埋める側が `{**値}` で組み立てるため、辞書でない値（文字列・数値・
+    `null`）を通すと生の `TypeError` になる。開く側は `MangaLayoutError`
+    しか捕まえないので、アプリごと落ちていた（2026-08-09 に発見）。
+
+    **`ProjectFormatError` で「どこが」まで言えること**を見る。version 2
+    の同じファイルと同じ扱いになるのが正しい姿（→ `v.pixel_size` と同じ
+    線引き）。
+    """
+
+    def _v1_broken(self, place: str, value) -> dict:
+        import copy
+
+        data = copy.deepcopy(V1)
+        if place == "panel_border":
+            data["pages"][0]["panels"][0]["border"] = value
+        elif place == "balloon_tail":
+            data["pages"][0]["floating"][0]["tail"] = value
+        else:
+            data["pages"][0]["floating"][1]["font"] = value
+        return data
+
+    @pytest.mark.parametrize("value", ["thick", 12, None, [1, 2]])
+    @pytest.mark.parametrize("place", ["panel_border", "balloon_tail", "font"])
+    def test_辞書でない値は場所つきで報告される(self, place, value):
+        with pytest.raises(ProjectFormatError) as e:
+            Project.from_dict(self._v1_broken(place, value))
+        assert "pages[0]" in str(e.value)
+
+    def test_空の辞書なら今までどおり既定で埋まる(self):
+        """型が合っていれば、中身が空でも「欠けている」として扱う。"""
+        project = Project.from_dict(self._v1_broken("font", {}))
+        assert project.pages[0].floating[1].font.size_px == pytest.approx(42.0)
 
 
 class Test斜めのコマ:

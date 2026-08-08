@@ -274,7 +274,7 @@ class Test件数の知らせ:
 
 class Test画像の実体は展開せず調べる:
     """全ページを巡回するので、まだ画面に出していない画像の展開を挟むと
-    その場で固まる（2026-08-08 発見）。ファイルの有無だけで判定する
+    その場で固まる（2026-08-08 発見）。展開せずに判定する
     `state.has_asset` を通ることを確かめる（→ `EditorState.has_asset`）。
     """
 
@@ -300,10 +300,10 @@ class Test画像の実体は展開せず調べる:
 
         window.run_check()
 
-        assert "実体の見つからない画像" not in result_text(window)
+        assert "使えない画像" not in result_text(window)
 
     def test_実体が無ければ拾う(self, window, png_bytes, tmp_path):
-        """保存したあと実体を消せば「実体の見つからない画像」に拾われる。"""
+        """保存したあと実体を消せば「使えない画像」に拾われる。"""
         from manga_layout import AssetStore
 
         window.add_full_page_panel()
@@ -315,4 +315,42 @@ class Test画像の実体は展開せず調べる:
 
         window.run_check()
 
-        assert "実体の見つからない画像" in result_text(window)
+        assert "使えない画像" in result_text(window)
+
+    def test_実体が壊れていても拾う(self, window, png_bytes, tmp_path):
+        """**実体はあるが画像として開けない**場合も同じ扱い（2026-08-09）。
+
+        以前は実体の有無しか見ておらず、点検は「問題なし」と答える一方で
+        書き出し前の警告は数に入れていた。**同じ画像に2つの答え**があった
+        （→ `EditorState.has_asset`）。
+        """
+        from manga_layout import AssetStore
+
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        ref = window.state.place_image(panel_id, png_bytes).asset
+        window.state.save(tmp_path)
+        window.state.load(tmp_path)
+        # 名前はそのまま、中身だけ画像でないものに差し替える
+        AssetStore(tmp_path).resolve(ref).write_bytes(b"not an image at all")
+
+        window.run_check()
+
+        assert "使えない画像" in result_text(window)
+
+    def test_書き出し前の警告と数が合う(self, window, png_bytes, tmp_path):
+        """壊れた画像1枚に対して、点検と書き出し前の警告が同じ答えを返す。"""
+        from manga_layout import AssetStore
+        from manga_layout.ui.export import missing_assets_in
+
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        ref = window.state.place_image(panel_id, png_bytes).asset
+        window.state.save(tmp_path)
+        window.state.load(tmp_path)
+        AssetStore(tmp_path).resolve(ref).write_bytes(b"not an image at all")
+
+        window.run_check()
+
+        assert "使えない画像" in result_text(window)
+        assert missing_assets_in(window.state, [0]) == 1

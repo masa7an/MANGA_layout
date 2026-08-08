@@ -72,6 +72,7 @@ from ..layout import (
     keep_anchor,
     next_in_stack,
     panel_at,
+    panel_rect_orphans,
     pick_stack,
     resize_rect,
     resize_rect_keep_aspect,
@@ -2935,6 +2936,24 @@ class PageView(QGraphicsView):
             return "やや下"
         return "下端"
 
+    def _orphan_rejected(self, image: ImageObject, rect: Rect, reason: str) -> bool:
+        """その矩形にすると画像が自分のコマの外へ完全に出るか。出るなら断る。
+
+        弾くのは重なりが無くなるときだけ（→ `_apply_tone_area` と同じ
+        考え方）。コマの縁を大きく越えるはみ出し自体は今までどおり通す
+        （→ `layout.image_orphaned_at`）。
+
+        **断ったら理由を状態表示に出し、その場に留める。** 黙って引き戻すと、
+        なぜ動かなかった（大きさが変わらなかった）のか分からない。
+        `reason` だけを差し替えるのは、移動と大きさ変更で言い方が変わる
+        ため——止めている理由は同じなので、前半は共通の文言にする。
+        """
+        panel = self.state.page.panel_of_image(image.id)
+        if panel is None or not image_orphaned_at(panel, rect, image.rotation):
+            return False
+        self.state.message.emit(f"コマの外まで出ると選べなくなるので、{reason}")
+        return True
+
     def _apply_move(self, origin: Rect, final: Rect) -> None:
         dx, dy = final.x - origin.x, final.y - origin.y
         if dx == 0.0 and dy == 0.0:
@@ -2945,15 +2964,8 @@ class PageView(QGraphicsView):
 
         image = self.state.selected_image
         if image is not None and image.id == object_id:
-            panel = self.state.page.panel_of_image(image.id)
             moved = image.rect.translated(dx, dy)
-            if panel is not None and image_orphaned_at(panel, moved, image.rotation):
-                # 弾くのは重なりが無くなるときだけ（→ `_apply_tone_area` と
-                # 同じ考え方）。コマの縁を大きく越えるはみ出し自体は
-                # 今までどおり通す（→ `layout.image_orphaned_at`）
-                self.state.message.emit(
-                    "コマの外まで出ると選べなくなるので、そこまでは動かせません"
-                )
+            if self._orphan_rejected(image, moved, "そこまでは動かせません"):
                 return
 
         for getter, cls, name in _MOVE_TARGETS:
@@ -2999,6 +3011,13 @@ class PageView(QGraphicsView):
                 continue
             if obj.rect == rect:
                 return
+            # 画像は大きさ変更でもコマの外へ完全に出せる。つまみを反対側へ
+            # 大きく引くと矩形が向こう側へ回り込むので、移動と同じ穴が開く
+            # （2026-08-09 に発見 → `_orphan_rejected`）
+            if isinstance(obj, ImageObject) and self._orphan_rejected(
+                obj, rect, "その大きさにはできません"
+            ):
+                return
             object_id = obj.id
             with self.state.edit_page(f"{name}の大きさ変更") as page:
                 target = page.find(object_id)
@@ -3018,6 +3037,16 @@ class PageView(QGraphicsView):
         if pair is not None:
             if self.state.page.slant_bounds(pair) == rect:
                 return
+            # **判定は組の外側の矩形で行う。** 作り直したあとの1枚ずつの形は
+            # ここでは分からないので、2枚ぶんの画像をまとめて外側と見比べる。
+            # 外側にも掛からない画像だけを弾くぶん甘いが、斜めのコマでは
+            # もともと外接矩形で近似している（→ `layout.image_orphaned_in`）
+            if any(
+                panel_rect_orphans(self.state.page.panel(member), rect.normalized())
+                for member in pair.members()
+            ):
+                self._reject_panel_resize()
+                return
             # 割れない大きさなら断りが状態表示に出て False が返る
             # （反転・境界の移動と共通 → `EditorState._edit_slant`）
             if self.state.set_slant_rect(panel_id, rect):
@@ -3026,9 +3055,26 @@ class PageView(QGraphicsView):
 
         if panel.shape.bounds() == rect:
             return
+        # コマ側を動かしても、中の画像は付いて回らない（→ `set_panel_rect`）。
+        # 縮めた先で1枚も掛からなくなると、その画像は二度と選べない
+        # （2026-08-09 に発見 → `layout.panel_rect_orphans`）
+        if panel_rect_orphans(panel, rect.normalized()):
+            self._reject_panel_resize()
+            return
         with self.state.edit_page("コマの大きさ変更") as page:
             set_panel_rect(page.panel(panel_id), rect)
         self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
+
+    def _reject_panel_resize(self) -> None:
+        """コマの大きさ変更を、中の画像が孤児になるので断る。
+
+        言い方を画像側（`_orphan_rejected`）と分けているのは、**動かないのが
+        押しているつまみの側ではない**ため。「画像が」と言わないと、コマが
+        止まった理由に見当が付かない。
+        """
+        self.state.message.emit(
+            "中の画像がコマの外へ出て選べなくなるので、そこまでは変えられません"
+        )
 
     # -- 分割 --------------------------------------------------------------
 

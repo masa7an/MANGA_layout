@@ -236,7 +236,7 @@ class Test絵の入っていないコマ:
         assert inspect_project(project) == []
 
 
-class Test実体の見つからない画像:
+class Test使えない画像:
     @pytest.fixture
     def project(self):
         project = new_project()

@@ -189,7 +189,7 @@ def existing_paths(paths) -> list[pathlib.Path]:
 
 
 def missing_assets_in(state, indexes) -> int:
-    """書き出す範囲にある「実体が見つからない画像」の数。
+    """書き出す範囲にある「使えない画像」の数。
 
     書き出しでは目印を描かない（`PageRenderer(aids=False)`）ので、
     黙って穴が空く。数だけ先に数えて、書き出す前に知らせる。
@@ -198,12 +198,18 @@ def missing_assets_in(state, indexes) -> int:
     直下にあってコマの子ではないが、画面では同じ×印が出る
     （`render._draw_image_upright`）。ここで数え漏らすと、マークだけが
     欠けている作品が警告なしで白く抜ける。
+
+    **判定は点検（`check.inspect_project`）と同じ `state.has_asset`。**
+    以前はここだけ `state.preview()` で展開まで試しており、壊れた画像1枚に
+    対して点検と違う答えを返していた（2026-08-09 に集約）。ついでに、
+    書き出しの直前に全ページぶんの縮小版を作る無駄も無くなった——書き出し
+    本体が使うのは原寸側（`FullImages`）で、ここで作った縮小版は誰も使わない。
     """
     count = 0
     for i in indexes:
         page = state.project.pages[i]
         for image in page_assets(page):
-            if state.preview(image.asset) is None:
+            if not image.asset or not state.has_asset(image.asset):
                 count += 1
     return count
 

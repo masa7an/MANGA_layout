@@ -1424,26 +1424,40 @@ def _fill_legacy_length_defaults(pages_raw: list) -> None:
         for panel in page.get("panels", None) or []:
             if not isinstance(panel, dict):
                 continue
-            _fill_missing_width(panel, "border", panel_width)
+            _fill_missing_length(panel, "border", ("width",), panel_width)
         for obj in page.get("floating", None) or []:
             if not isinstance(obj, dict):
                 continue
             if obj.get("type") == "balloon":
-                _fill_missing_width(obj, "border", balloon_width)
-                _fill_missing_width(obj, "tail", tail_width)
+                _fill_missing_length(obj, "border", ("width",), balloon_width)
+                _fill_missing_length(obj, "tail", ("width",), tail_width)
             elif obj.get("type") == "text":
-                font = obj.get("font")
-                if not isinstance(font, dict) or (
-                    "size_px" not in font and "size_mm" not in font
-                ):
-                    obj["font"] = {**(font or {}), "size_px": font_size / MM_TO_PX}
+                _fill_missing_length(obj, "font", ("size_px", "size_mm"), font_size)
 
 
-def _fill_missing_width(obj: dict, key: str, default_px: float) -> None:
-    """`obj[key]["width"]` が丸ごと欠けていれば、換算前の既定値を差し込む。"""
+def _fill_missing_length(
+    obj: dict, key: str, names: tuple[str, ...], default_px: float
+) -> None:
+    """`obj[key]` の中に `names` のどれも無ければ、換算前の既定値を差し込む。
+
+    埋めるのは `names` の先頭（px 側の名前）。`size_mm` のような mm 時代の
+    別名を併せて渡すのは、**どちらか一方でも書いてあれば「値がある」**と
+    見なすため。
+
+    **`obj[key]` が辞書でないときは何もしない。** 書いてあるのが文字列や
+    数値だった場合にここで埋めると、`{**"thick"}` のような**生の
+    `TypeError`** になり、開く側（`ui.project_io`）が拾えずアプリごと落ちる。
+    型の間違いを「どこが」付きで報告するのは `Border.from_dict` などの
+    検証層の役目なので、素通しでそちらへ渡す（2026-08-09 に発見。
+    `src_px` を `v.pixel_size` へ通したのと同じ線引き）。**`null` も同じ**
+    ——欠けているのではなく「型の違う値が書いてある」ので、直さず報告する。
+    """
     sub = obj.get(key)
-    if not isinstance(sub, dict) or "width" not in sub:
-        obj[key] = {**(sub or {}), "width": default_px / MM_TO_PX}
+    if key in obj and not isinstance(sub, dict):
+        return
+    if isinstance(sub, dict) and any(name in sub for name in names):
+        return
+    obj[key] = {**(sub or {}), names[0]: default_px / MM_TO_PX}
 
 
 @dataclass

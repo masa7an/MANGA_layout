@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import pathlib
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -77,6 +78,24 @@ def decode(data: bytes) -> QImage:
 
 def size_px(image: QImage) -> tuple[int, int]:
     return (image.width(), image.height())
+
+
+def readable_file(path: pathlib.Path) -> bool:
+    """そのファイルが画像として開ける形か。**画素は展開しない。**
+
+    `QImageReader.size()` が読むのはヘッダーだけ（→ `decode` の注記）。
+    ファイルの中身も先頭しか触らないので、実体をまるごと読む `decode` と
+    違って**全ページ分を巡っても待たされない**。点検（`check.inspect_project`）
+    と書き出し前の警告（`ui.export.missing_assets_in`）が、**同じ問い**
+    ——「書き出すとそこが白く抜けるか」——にこれで答える。
+
+    **展開まで試さないぶん、取りこぼす形が1つある。** ヘッダーは正しいのに
+    画素の途中で切れているファイルは、ここでは「読める」と答えてしまう。
+    そこまで見るには結局すべて展開するしかなく、それが固まる原因だった
+    （2026-08-09 に集約したときの判断）。画面には従来どおり×印が出るので、
+    見落としたまま気づけないわけではない。
+    """
+    return QImageReader(str(path)).size().isValid()
 
 
 def to_png_bytes(image: QImage) -> bytes:

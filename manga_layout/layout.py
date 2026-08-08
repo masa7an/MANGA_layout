@@ -262,26 +262,53 @@ def image_at(panel: Panel, x: float, y: float) -> ImageObject | None:
     return None
 
 
-def image_orphaned_at(panel: Panel, moved_rect: Rect, rotation: float) -> bool:
-    """画像を `moved_rect`（傾き `rotation`）へ動かすと、自分のコマの外へ
-    完全に出て、二度と選べなくなるか。
+def image_orphaned_in(bounds: Rect, image_rect: Rect, rotation: float) -> bool:
+    """コマの外接矩形 `bounds` と、傾き `rotation` の画像が1pxも重ならないか。
 
-    `image_at` は「コマの中 かつ 画像の中」の点を要求する。矩形がコマと
-    1pxも重ならなくなると、どの点を押してもこの条件を満たせなくなり、
-    Undo 以外に取り戻す手段が無い「見えない孤児」になる
-    （2026-08-08 に発見。移動と複製の両方から起こり得る）。
+    `image_at` は「コマの中 かつ 画像の中」の点を要求する。両者が1pxも
+    重ならなくなると、どの点を押してもこの条件を満たせなくなり、Undo 以外に
+    取り戻す手段が無い「見えない孤児」になる（2026-08-08 に発見）。
 
     重なりは外接矩形どうしで見る。**傾いた形での正確な重なりではない。**
     ふつうの矩形のコマではこれがそのままコマの形と一致するので判定は
     正確になる。斜めに割ったコマ（→ 6.10）だけは外接矩形が実際の多角形
     よりわずかに広いが、それでも「制約なし」だった今までより安全で、
     万一のときは Undo で戻せる。
+
+    **動かすのが画像側かコマ側かをここでは決めない。** 画像を動かす・
+    複製する側は `image_orphaned_at`、コマの大きさを変える側は
+    `panel_rect_orphans` が、それぞれ何を変えるかを決めて呼ぶ。
     """
-    moved = rotated_bounds(moved_rect, rotation)
-    bounds = panel.shape.bounds()
+    moved = rotated_bounds(image_rect, rotation)
     overlap_w = min(moved.right, bounds.right) - max(moved.x, bounds.x)
     overlap_h = min(moved.bottom, bounds.bottom) - max(moved.y, bounds.y)
     return overlap_w < 1.0 or overlap_h < 1.0
+
+
+def image_orphaned_at(panel: Panel, moved_rect: Rect, rotation: float) -> bool:
+    """画像を `moved_rect`（傾き `rotation`）にすると、自分のコマの外へ
+    完全に出て、二度と選べなくなるか（→ `image_orphaned_in`）。
+
+    **動かす場合と大きさを変える場合の両方で使う。** どちらも「コマは
+    そのままで、画像の矩形だけが変わる」形なので、渡す矩形が違うだけ
+    （移動と複製は 2026-08-08、画像のリサイズは 2026-08-09 に追加）。
+    """
+    return image_orphaned_in(panel.shape.bounds(), moved_rect, rotation)
+
+
+def panel_rect_orphans(panel: Panel, bounds: Rect) -> bool:
+    """コマの外接矩形を `bounds` にすると、中の画像が1枚でも孤児になるか。
+
+    **コマの大きさ変更は中の画像を動かさない**（→ `set_panel_rect`。絵に
+    対する窓の大きさを変える操作なので、中身が付いて回らないほうが扱い
+    やすい）。そのため、つまみを反対側へ大きく引いてコマを画像の外へ
+    出すと、移動で塞いだのと同じ「見えない孤児」が作れていた
+    （2026-08-09 に発見。移動側の穴と対）。
+    """
+    return any(
+        image_orphaned_in(bounds, child.rect, child.rotation)
+        for child in panel.children
+    )
 
 
 def pick_stack(page: Page, x: float, y: float) -> list[str]:

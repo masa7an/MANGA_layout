@@ -37,6 +37,7 @@ from ..images import (
     Preview,
     ToneCache,
     preview_from_bytes,
+    readable_file,
     rough_preview_from_bytes,
 )
 from ..layout import (
@@ -759,18 +760,34 @@ class EditorState(QObject):
         return store.read(ref) if store.exists(ref) else None
 
     def has_asset(self, ref: str) -> bool:
-        """画像の実体があるか。**展開はしない**（→ `preview` との違い）。
+        """その画像が使えるか（実体があり、画像として開ける形か）。
 
-        抜けチェック（`check.inspect_project`）向け。全ページ分を巡回する
-        処理なので、まだ画面に出しておらずキャッシュに乗っていない画像が
-        あると、`preview()` 経由では展開待ちで固まる（2026-08-08 発見）。
-        「実体が見つからない」の判定に展開結果までは要らない。
+        **展開はしない**（→ `preview` との違い）。全ページ分を巡回する
+        処理から呼ぶので、まだ画面に出しておらずキャッシュに乗っていない
+        画像があると、`preview()` 経由では展開待ちで固まる（2026-08-08 発見）。
+        ヘッダーだけを見る `images.readable_file` で足りる。
+
+        **「無い」と「開けない」を分けない。** 書き出した結果はどちらも
+        同じ——そこが白く抜ける——で、利用者に伝えたいこともそこだから。
+        分けていた頃は、点検（`check.inspect_project`）が実体の有無だけを
+        見て「問題なし」と答える一方、書き出し前の警告
+        （`ui.export.missing_assets_in`）は展開できるかを見ていたため、
+        **壊れた画像1枚で2つの機能が違う答えを返していた**
+        （2026-08-09 に発見。両方をここへ集約した）。
         """
         if ref in self.pending_assets:
+            # 預かり分は取り込み時に `images.decode` を通っている（→ 5章）。
+            # 開けることが確認済みなので、読み直さない
             return True
         if self.project_dir is None:
             return False
-        return AssetStore(self.project_dir).exists(ref)
+        store = AssetStore(self.project_dir)
+        try:
+            path = store.resolve(ref)
+        except AssetError:
+            # 参照の形自体が壊れている（`assets/` の外を指すなど）
+            return False
+        return path.is_file() and readable_file(path)
 
     def preview(self, ref: str) -> Preview | None:
         """画面に描くための1枚。無い・壊れているときは None。

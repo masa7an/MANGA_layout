@@ -434,18 +434,22 @@ class ProjectIO:
         return export_dir_of(self._state)
 
     def _confirm_missing(self, indexes: list[int]) -> bool:
-        """実体の無い画像があれば知らせる。続けてよければ True。
+        """使えない画像があれば知らせる。続けてよければ True。
 
         画面では×印が出ているが、書き出しには目印を描かない（作品ではない
         ため）。黙って白く抜けるので、ここで必ず言う。
+
+        **「見つからない」と言い切らない。** 実体はあるが開けない場合も
+        同じ数に入る（→ 点検と共通の `EditorState.has_asset`）。無いものを
+        探しに行かせないよう、言い方を結果のほうへ寄せる。
         """
         count = missing_assets_in(self._state, indexes)
         if count == 0:
             return True
         answer = QMessageBox.warning(
             self._window,
-            "画像が見つかりません",
-            f"実体の見つからない画像が {count} 個あります。\n"
+            "使えない画像があります",
+            f"実体が無いか、画像として読めないものが {count} 個あります。\n"
             "その場所は白いまま書き出されます。続けますか。",
             QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,

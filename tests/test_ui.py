@@ -885,6 +885,103 @@ class TestImageMoveGuard:
         assert window_with_image.state.selected_image.rect == final
 
 
+class TestImageResizeGuard:
+    """**大きさ変更からも同じ孤児が作れた**（2026-08-09 に発見）。
+
+    `TestImageMoveGuard` は移動と複製だけを塞いでいた。つまみを反対側へ
+    大きく引くと矩形が向こう側へ回り込むので、動かさなくてもコマの外へ
+    出せてしまう。断り方は移動と揃える（その場に留めて理由を出す）。
+    """
+
+    def _outside(self, window) -> Rect:
+        """コマと1pxも重ならない矩形。"""
+        bounds = window.state.page.panels[0].shape.bounds()
+        return Rect(bounds.right + 10.0, bounds.y, 60.0, 40.0)
+
+    def test_コマの外へ完全に出る大きさは弾かれる(self, window_with_image):
+        origin = window_with_image.state.selected_image.rect
+
+        window_with_image.view._apply_resize(self._outside(window_with_image))
+
+        assert window_with_image.state.selected_image.rect == origin
+
+    def test_理由を状態表示に出す(self, window_with_image):
+        window_with_image.view._apply_resize(self._outside(window_with_image))
+
+        assert "選べなくなる" in window_with_image.statusBar().currentMessage()
+
+    def test_履歴には積まれない(self, window_with_image):
+        depth = window_with_image.state.history.depth
+
+        window_with_image.view._apply_resize(self._outside(window_with_image))
+
+        assert window_with_image.state.history.depth == depth
+
+    def test_縁を大きく越えるだけなら今までどおり変えられる(self, window_with_image):
+        """重なりが少しでも残るはみ出しは制約しない（移動と同じ）。"""
+        bounds = window_with_image.state.page.panels[0].shape.bounds()
+        target = Rect(bounds.right - 5.0, bounds.y, 400.0, 300.0)
+
+        window_with_image.view._apply_resize(target)
+
+        assert window_with_image.state.selected_image.rect == target
+
+
+class TestPanelResizeGuard:
+    """コマを縮めて、中の画像を置き去りにする経路（2026-08-09 に発見）。
+
+    **コマの大きさ変更は中の画像を動かさない**（→ `layout.set_panel_rect`）
+    ので、コマだけが画像の外へ出れば同じ「見えない孤児」になる。画像側を
+    いくら塞いでも、コマ側から作れては塞いだことにならない。
+    """
+
+    def _elsewhere(self, window) -> Rect:
+        """中の画像と1pxも重ならない位置へコマを持っていく矩形。"""
+        image = window.state.page.panels[0].children[0].rect
+        return Rect(image.right + 10.0, image.y, 200.0, 200.0)
+
+    def test_中の画像を置き去りにする大きさは弾かれる(self, window_with_image):
+        page = window_with_image.state.page
+        window_with_image.state.select(page.panels[0].id)
+        before = page.panels[0].shape.bounds()
+
+        window_with_image.view._apply_resize(self._elsewhere(window_with_image))
+
+        after = window_with_image.state.page.panels[0].shape.bounds()
+        assert after == before
+
+    def test_理由には画像のことを書く(self, window_with_image):
+        """止まったのが押しているつまみの側ではないので、そう言わないと伝わらない。"""
+        page = window_with_image.state.page
+        window_with_image.state.select(page.panels[0].id)
+
+        window_with_image.view._apply_resize(self._elsewhere(window_with_image))
+
+        assert "中の画像" in window_with_image.statusBar().currentMessage()
+
+    def test_画像の入っていないコマは今までどおり変えられる(self, window):
+        """指摘の前後で壊してはいけない、既存の正常系。"""
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        target = Rect(10.0, 10.0, 200.0, 200.0)
+
+        window.view._apply_resize(target)
+
+        assert window.state.page.panel(panel_id).shape.bounds() == target
+
+    def test_画像に掛かったままなら変えられる(self, window_with_image):
+        """縮めること自体は制約しない。重なりが無くなるときだけ弾く。"""
+        page = window_with_image.state.page
+        window_with_image.state.select(page.panels[0].id)
+        image = page.panels[0].children[0].rect
+        # 画像の左上の隅にだけ掛かる小さなコマ
+        target = Rect(image.x - 100.0, image.y - 100.0, 150.0, 150.0)
+
+        window_with_image.view._apply_resize(target)
+
+        assert window_with_image.state.page.panels[0].shape.bounds() == target
+
+
 class Testドラッグ中のUndo:
     """マウスを掴んだまま Ctrl+Z（Undo）を押した場合。
 
@@ -1104,8 +1201,15 @@ class TestImageEditing:
         assert window_with_image.state.page.panels[0].shape.bounds() == panel_before
 
     def test_画像の大きさを変えられる(self, window_with_image):
-        window_with_image.view._apply_resize(Rect(20.0, 20.0, 60.0, 40.0))
-        assert window_with_image.state.selected_image.rect == Rect(20.0, 20.0, 60.0, 40.0)
+        # **コマに掛かる矩形を渡す。** コマから完全に外れる大きさは弾かれる
+        # ようになった（→ `TestImageResizeGuard`。2026-08-09、それまでは
+        # ページ左上の座標を直に書いていて、コマとの位置関係が偶然だった）
+        bounds = window_with_image.state.page.panels[0].shape.bounds()
+        target = Rect(bounds.x + 20.0, bounds.y + 20.0, 60.0, 40.0)
+
+        window_with_image.view._apply_resize(target)
+
+        assert window_with_image.state.selected_image.rect == target
 
     def test_コマを動かすと中の画像も動く(self, window_with_image):
         page = window_with_image.state.page

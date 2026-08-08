@@ -18,6 +18,7 @@ from manga_layout.layout import (
     image_at,
     image_orphaned_at,
     panel_at,
+    panel_rect_orphans,
     resize_rect,
     resize_rect_keep_aspect,
     set_panel_rect,
@@ -415,6 +416,44 @@ class TestImageOrphanedAt:
         # 45度傾けると、40×40 の外接矩形が約 56.6×56.6 に広がり
         # (中心 125,100 のまま) x が 96.7〜153.3 になってコマまで届く
         assert not image_orphaned_at(panel, rect, 45.0)
+
+
+class TestPanelRectOrphans:
+    """**コマ側を動かしても同じ孤児になる**（2026-08-09 に発見）。
+
+    コマの大きさ変更は中の画像を動かさない（→ `set_panel_rect`）ので、
+    画像の移動を塞いでも、コマを画像の外へ出せば同じ状態が作れた。
+    """
+
+    @pytest.fixture
+    def panel(self):
+        project = new_project()
+        panel = project.add_panel(project.pages[0], Rect(0.0, 0.0, 100.0, 100.0))
+        project.add_image(panel, "assets/a.png", Rect(20.0, 20.0, 60.0, 60.0), (60, 60))
+        return panel
+
+    def test_画像に掛かったままなら孤児にならない(self, panel):
+        # 画像（20〜80）の左上の隅にだけ掛かる
+        assert not panel_rect_orphans(panel, Rect(-50.0, -50.0, 80.0, 80.0))
+
+    def test_画像から完全に外れると孤児になる(self, panel):
+        assert panel_rect_orphans(panel, Rect(200.0, 0.0, 100.0, 100.0))
+        assert panel_rect_orphans(panel, Rect(0.0, 200.0, 100.0, 100.0))
+
+    def test_画像が無ければ何をしても孤児にならない(self):
+        project = new_project()
+        empty = project.add_panel(project.pages[0], Rect(0.0, 0.0, 100.0, 100.0))
+        assert not panel_rect_orphans(empty, Rect(900.0, 900.0, 10.0, 10.0))
+
+    def test_1枚でも置き去りになれば真(self):
+        """**残る画像があっても許さない。** 1枚失われれば同じこと。"""
+        project = new_project()
+        panel = project.add_panel(project.pages[0], Rect(0.0, 0.0, 100.0, 100.0))
+        project.add_image(panel, "assets/a.png", Rect(20.0, 20.0, 60.0, 60.0), (60, 60))
+        project.add_image(panel, "assets/b.png", Rect(210.0, 10.0, 40.0, 40.0), (40, 40))
+
+        # 2枚目には掛かるが、1枚目（20〜80）からは完全に外れる
+        assert panel_rect_orphans(panel, Rect(200.0, 0.0, 100.0, 100.0))
 
 
 class TestImageAtZ同値:
