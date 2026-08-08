@@ -2259,8 +2259,19 @@ class PageView(QGraphicsView):
 
         if commit and text_id is not None:
             current = self.state.page.find(text_id)
-            if isinstance(current, TextObject) and current.content != content:
-                self.state.set_text_content(text_id, content)
+            if isinstance(current, TextObject):
+                if current.content != content:
+                    self.state.set_text_content(text_id, content)
+            elif content.strip():
+                # 書き戻す先が今のページに無い。**黙って捨てない。**
+                #
+                # 入力中にページが変わると起きる。項目の実行は必ず確定を
+                # 挟むようにしたので（→ `MainWindow.run_action`）今は通れ
+                # ないが、**通れたときに何も言わずに消えるのが元の壊れ方**
+                # だった。打った内容が消えたことに気づけるようにしておく
+                self.state.message.emit(
+                    "書き戻す先のセリフが見つからず、打った内容を残せませんでした"
+                )
         self.viewport().update()
 
     def _tail_tip_at(self, x: float, y: float) -> bool:

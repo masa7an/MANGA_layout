@@ -1176,6 +1176,123 @@ class TestDirection:
         assert "左寄せ" in window_with_text._hint()
 
 
+class Test入力中に項目が押されたとき:
+    """メニューの項目は、実行の前に入力を確定する（→ `MainWindow.run_action`）。
+
+    「入力中は1つも横取りしない」の防壁はキーが画面へ届いた場合にしか
+    効かず、**メニューのショートカットはそれより手前で解決される**。
+    塞ぐ前は、入力中の `F7` や `PgDown` がそのまま発火していた
+    （2026-08-08 に発見）。
+
+    ここは**項目を押す道**（`trigger()`）だけを見る。キーの解決そのものは
+    Qt の領分で、offscreen では窓が活性にならず再現できない。
+    """
+
+    def 置く(self, window) -> None:
+        window.state.set_tool(TOOL_TEXT)
+        click(window.view, *BALLOON.center)
+
+    def texts(self, window) -> list:
+        return [f for f in window.state.page.floating if isinstance(f, TextObject)]
+
+    def item(self, window, menu_name: str, label: str):
+        """メニューバーから項目を1つ取る。
+
+        **押す道を通したい**ので、スロット（`window.add_page` など）を
+        直に呼んではいけない。確定を挟むのは項目のほう（→ `run_action`）
+        """
+        for top in window.menuBar().actions():
+            if top.text().startswith(menu_name):
+                for action in top.menu().actions():
+                    if action.text() == label:
+                        return action
+        raise AssertionError(f"項目が見つかりません: {menu_name} / {label}")
+
+    def test_書式の項目で打った内容が確定する(self, window_with_balloon):
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あいうえお")
+
+        window_with_balloon.text_menu.vertical_action.trigger()
+
+        assert window_with_balloon.view._text_editor is None, "入力欄が残っている"
+        assert [t.content for t in self.texts(window_with_balloon)] == ["あいうえお"]
+
+    def test_書式の項目のあとに空の枠が残らない(self, window_with_balloon):
+        """打ってから項目 → Esc で、中身の無い枠が残っていた。
+
+        項目が履歴に1手挟むと、置いたばかりのセリフを追加ごと取り消す
+        処理（→ `Test空のまま閉じたセリフ`）の照合が外れる。先に確定すれば
+        入力から抜けているので、Esc はセリフの取り消しに回らない。
+        """
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あいうえお")
+
+        window_with_balloon.text_menu.vertical_action.trigger()
+        window_with_balloon.view.finish_text_edit(commit=False)  # Esc 相当
+
+        assert [t.content for t in self.texts(window_with_balloon)] == ["あいうえお"]
+
+    def test_空のまま項目を押せば追加ごと取り消す(self, window_with_balloon):
+        """確定を挟むので、空のセリフの扱いは閉じたときと同じになる。"""
+        self.置く(window_with_balloon)
+
+        window_with_balloon.text_menu.vertical_action.trigger()
+
+        assert self.texts(window_with_balloon) == []
+
+    def test_ページを移す項目で打った内容が消えない(self, window_with_text):
+        """入力欄を開いたままページだけ変わると、書き戻し先を見失う。
+
+        確定は今のページからセリフを探すので、**打った文字が黙って捨てられ**、
+        元のページには中身の無い枠が残っていた（この修正の主目的）。
+        """
+        view = window_with_text.view
+        text_id = window_with_text.state.selected_text.id
+        view.begin_text_edit(text_id)
+        view._text_editor.setPlainText("消えては困る文")
+
+        self.item(window_with_text, "ページ", "ページを追加").trigger()
+
+        assert window_with_text.state.page_count == 2
+        assert view._text_editor is None, "入力欄が残っている"
+        first = window_with_text.state.history.project.pages[0]
+        assert first.find(text_id).content == "消えては困る文"
+
+    def test_道具の項目でも確定する(self, window_with_balloon):
+        """道具の切り替えも同じ道を通す（→ `_build_tool_actions`）。"""
+        self.置く(window_with_balloon)
+        window_with_balloon.view._text_editor.setPlainText("あいうえお")
+
+        window_with_balloon._tool_actions[TOOL_SELECT].trigger()
+
+        assert window_with_balloon.view._text_editor is None
+        assert [t.content for t in self.texts(window_with_balloon)] == ["あいうえお"]
+
+    def test_引数を取る項目も壊さない(self, window_with_text):
+        """`triggered` が渡す checked を、包んだあとも落として呼ぶ。
+
+        整列の項目は `lambda _=False, a=align:` の形で、包み方を間違えると
+        既定値のほうが使われて別の値が入る
+        """
+        self.item(window_with_text, "セリフ", "左寄せ").trigger()
+
+        assert window_with_text.state.selected_text.align == "left"
+
+    def test_書き戻せなければ知らせる(self, window_with_text):
+        """項目を通らずにページが変わった場合の受け皿（→ `finish_text_edit`）。
+
+        今はここへ来る道が無いが、**黙って捨てるのが元の壊れ方**だった。
+        """
+        view = window_with_text.view
+        view.begin_text_edit(window_with_text.state.selected_text.id)
+        view._text_editor.setPlainText("打った文")
+
+        window_with_text.state.add_page()  # 確定を挟まずにページだけ移す
+        view.finish_text_edit(commit=True)
+
+        assert "残せませんでした" in window_with_text.statusBar().currentMessage()
+
+
 class TestTextMenu:
     def items(self, window):
         for action in window.menuBar().actions():

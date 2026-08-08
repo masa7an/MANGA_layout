@@ -287,9 +287,36 @@ class MainWindow(QMainWindow):
             action.setShortcut(QKeySequence(shortcut))
         if tip:
             action.setStatusTip(tip)
-        action.triggered.connect(slot)
+        action.triggered.connect(lambda *_, slot=slot: self.run_action(slot))
         self.addAction(action)
         return action
+
+    def run_action(self, slot) -> None:
+        """項目を1つ実行する。**その前に、開いている入力欄を確定する。**
+
+        `PageView.keyPressEvent` の「入力中は1つも横取りしない」は、キーが
+        画面まで届いた場合にしか効かない。**メニューのショートカットは
+        それより手前で解決される**ので、入力欄を開いたまま素通りして発火する
+        （Qt が入力欄に譲るのは Ctrl+Z・Delete など標準の編集キーだけ）。
+
+        塞がずにいると、打った文字が黙って消えることまで起きる。入力中に
+        ページを移す項目（`PgDown` など）が通ると、**入力欄は開いたまま
+        ページだけが変わる**。確定時の書き戻しは今のページからセリフを
+        探すので見つからず、打った内容が捨てられて、元のページには中身の
+        無い枠が残る（2026-08-08 に発見）。書式の項目（`F7`・`Ctrl+B`）が
+        通った場合も、履歴に1手挟まって「置いたばかりのセリフを Esc で
+        追加ごと取り消す」（→ `PageView.finish_text_edit`）が効かなくなる。
+
+        **先に確定してから項目を実行する**、という形に揃えた。画面を触った
+        ときと右クリックのときが既にこの形で（→ `PageView.contextMenuEvent`）、
+        メニューを押した場合も焦点が外れて同じ道を通っている。**残るのは
+        ショートカットだけ**だったので、項目の実行を1箇所に集めて塞ぐ。
+
+        トーンの連打キー（`Shift+]` など）が `setShortcut` を避けて画面側で
+        拾っているのは、この穴を1つずつ避けていた形（→ `menus.ToneMenu`）。
+        """
+        self.view.finish_text_edit(commit=True)
+        slot()
 
     def _build_tool_actions(self) -> None:
         """道具の切り替え。メニューより先に作る。
@@ -341,7 +368,12 @@ class MainWindow(QMainWindow):
             action.setCheckable(True)
             if shortcut:
                 action.setShortcut(QKeySequence(shortcut))
-            action.triggered.connect(lambda _checked=False, t=tool: self._pick_tool(t))
+            # 道具の項目も `_act` と同じ道を通す（→ `run_action`）。
+            # 1文字キーは入力欄が先に受け取るので今のところ素通りしないが、
+            # **項目ごとに効く・効かないを覚えるほうが危うい**
+            action.triggered.connect(
+                lambda *_, t=tool: self.run_action(lambda: self._pick_tool(t))
+            )
             group.addAction(action)
             self.addAction(action)
             self._tool_actions[tool] = action
