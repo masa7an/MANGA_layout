@@ -109,6 +109,16 @@ def test_調整の項目は入っているときだけ押せる(window_with_pane
     assert all(action.isEnabled() for action in window.focus_menu.actions)
 
 
+def test_本数太さの増減にも説明が出る(window_with_panel):
+    """カーソルを乗せたときステータスバーに出る説明（statusTip）。
+
+    「白にする」「形を振り直す」には元から付いていたが、増減4項目
+    （本数・太さ）だけ抜けていた（2026-08-08 発見）。
+    """
+    for action in window_with_panel.focus_menu.actions:
+        assert action.statusTip() != ""
+
+
 # -- 本数・太さ・振り直し ----------------------------------------------------
 
 

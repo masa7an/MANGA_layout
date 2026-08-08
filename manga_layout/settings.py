@@ -248,8 +248,15 @@ def ensure_settings_file(path: pathlib.Path | None = None) -> pathlib.Path:
 
     手で書き換える前提のファイルなので、実物が無いと「どこに何を書けば
     いいのか」が分からない。起動時に一度呼んで、空の雛形を置いておく。
+
+    **書き込みに失敗しても起動は止めない**（ディスク容量不足・権限エラー
+    など → 2026-08-08 発見）。雛形が置けないだけで、`load_settings` 側は
+    無ければ既定値を返すので動作に支障は無い。
     """
     path = path or settings_path()
     if not path.is_file():
-        save_settings(load_settings(path), path)
+        try:
+            save_settings(load_settings(path), path)
+        except OSError:
+            pass
     return path

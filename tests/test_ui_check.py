@@ -270,3 +270,49 @@ class Test件数の知らせ:
         window.state.message.connect(seen.append)
         window.run_check()
         assert seen and "見つかりませんでした" in seen[-1]
+
+
+class Test画像の実体は展開せず調べる:
+    """全ページを巡回するので、まだ画面に出していない画像の展開を挟むと
+    その場で固まる（2026-08-08 発見）。ファイルの有無だけで判定する
+    `state.has_asset` を通ることを確かめる（→ `EditorState.has_asset`）。
+    """
+
+    def test_展開しないこと(self, window, png_bytes, tmp_path, monkeypatch):
+        """`images.decode` を呼んだら失敗させ、それでも点検が終わること。
+
+        **保存して開き直す。** キャッシュに乗ったままだと展開済みで、
+        「まだ画面に出していない画像」の場面を再現できない
+        （→ `EditorState.reset` がキャッシュを空にする）。
+        """
+        import manga_layout.images as images_module
+
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        window.state.place_image(panel_id, png_bytes)
+        window.state.save(tmp_path)
+        window.state.load(tmp_path)
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("抜けチェックが画像を展開しようとした")
+
+        monkeypatch.setattr(images_module, "decode", _boom)
+
+        window.run_check()
+
+        assert "実体の見つからない画像" not in result_text(window)
+
+    def test_実体が無ければ拾う(self, window, png_bytes, tmp_path):
+        """保存したあと実体を消せば「実体の見つからない画像」に拾われる。"""
+        from manga_layout import AssetStore
+
+        window.add_full_page_panel()
+        panel_id = window.state.selected_panel.id
+        ref = window.state.place_image(panel_id, png_bytes).asset
+        window.state.save(tmp_path)
+        window.state.load(tmp_path)
+        AssetStore(tmp_path).resolve(ref).unlink()
+
+        window.run_check()
+
+        assert "実体の見つからない画像" in result_text(window)

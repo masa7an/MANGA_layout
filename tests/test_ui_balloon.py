@@ -353,6 +353,21 @@ class TestAdd:
         click(window_with_panel.view, 360.0, 300.0)
         assert window_with_panel.state.page.floating[0].tail.enabled is True
 
+    def test_しっぽが無ければ形は変えず知らせる(self, window_with_balloon, messages):
+        """`turn_tail` と同じガード（2026-08-08 発見）。
+
+        しっぽを消した状態でも押せてしまい、実際には見えない形の変更を
+        した上で「しっぽを丸くしました」と成功報告していた。
+        """
+        state = window_with_balloon.state
+        state.set_tail_enabled(state.selected_balloon.id, False)
+        shape = state.selected_balloon.tail.shape
+
+        window_with_balloon.toggle_tail_shape()
+
+        assert state.selected_balloon.tail.shape == shape
+        assert messages[-1] == "しっぽが出ていません"
+
     def test_しっぽを丸くできる(self, window_with_balloon):
         """三角 ⇄ 丸い飛びしっぽ（心の声・独り言 → 要件定義 10.1）。"""
         window = window_with_balloon

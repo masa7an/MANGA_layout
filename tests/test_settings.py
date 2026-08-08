@@ -174,6 +174,21 @@ class Test雛形の用意:
 
         assert path.read_bytes() == before
 
+    def test_書き込みに失敗しても起動は止めない(self, path, monkeypatch):
+        """ディスク容量不足・権限エラーなどで雛形が置けなくても、
+        起動時の未処理例外にはしない（2026-08-08 発見）。
+        """
+        import manga_layout.settings as settings_module
+
+        def _boom(*args, **kwargs):
+            raise OSError("disk full")
+
+        monkeypatch.setattr(settings_module, "atomic_write_text", _boom)
+
+        ensure_settings_file(path)  # 例外を出さずに戻ってくること
+
+        assert not path.is_file()
+
 
 class Test置き場所:
     """作業フォルダの `data/` に置く。

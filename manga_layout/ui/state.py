@@ -748,6 +748,20 @@ class EditorState(QObject):
         store = AssetStore(self.project_dir)
         return store.read(ref) if store.exists(ref) else None
 
+    def has_asset(self, ref: str) -> bool:
+        """画像の実体があるか。**展開はしない**（→ `preview` との違い）。
+
+        抜けチェック（`check.inspect_project`）向け。全ページ分を巡回する
+        処理なので、まだ画面に出しておらずキャッシュに乗っていない画像が
+        あると、`preview()` 経由では展開待ちで固まる（2026-08-08 発見）。
+        「実体が見つからない」の判定に展開結果までは要らない。
+        """
+        if ref in self.pending_assets:
+            return True
+        if self.project_dir is None:
+            return False
+        return AssetStore(self.project_dir).exists(ref)
+
     def preview(self, ref: str) -> Preview | None:
         """画面に描くための1枚。無い・壊れているときは None。
 

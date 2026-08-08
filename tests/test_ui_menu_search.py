@@ -109,6 +109,16 @@ class Test探す:
     def test_大文字小文字を区別しない(self, entries):
         assert trails(search(entries, "BACKUP")) == trails(search(entries, "backup"))
 
+    def test_全角英数でも当たる(self, entries):
+        """`casefold()` だけでは全角半角の違いを潰せない（2026-08-08 発見）。
+
+        `_fold`（NFKC正規化＋casefold）を通す必要がある。
+        """
+        assert trails(search(entries, "ｐｎｇ")) == trails(search(entries, "png"))
+        assert trails(search(entries, "ＢＡＣＫＵＰ")) == trails(
+            search(entries, "backup")
+        )
+
     def test_空白で区切ると全部を含むものに絞る(self, entries):
         both = search(entries, "ファイル 書き出し")
         assert both

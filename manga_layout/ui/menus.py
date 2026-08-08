@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import functools
 import pathlib
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
@@ -124,6 +125,27 @@ LOCK_TOGGLE_LABELS = {
     False: "ロックする",
     True: "\N{LOCK}ロックを解除",
 }
+
+
+def _add_adjust_action(
+    window: MainWindow,
+    menu: QMenu,
+    actions: list[QAction],
+    label: str,
+    slot,
+    tip: str = "",
+) -> QAction:
+    """畳みの中の調整項目を1つ足す。**入れているときだけ押せる項目を集める。**
+
+    FocusMenu・FlowMenu・ToneMenu が同じ形のクロージャをそれぞれ定義していた
+    （2026-08-08、コードレビューの指摘で1箇所にまとめた）。各クラスからは
+    `functools.partial(_add_adjust_action, window, menu, self.actions)` を
+    `add` として使う。
+    """
+    action = window._act(label, slot, None, tip)
+    menu.addAction(action)
+    actions.append(action)
+    return action
 
 
 def items_to_copy(
@@ -484,18 +506,29 @@ class FocusMenu:
 
         # ここから下は集中線の入ったコマにだけ効く
         self.actions: list[QAction] = []
+        add = functools.partial(_add_adjust_action, window, menu, self.actions)
 
-        def add(label: str, slot, tip: str = "") -> QAction:
-            action = window._act(label, slot, None, tip)
-            menu.addAction(action)
-            self.actions.append(action)
-            return action
-
-        add("線を増やす", lambda: window.state.step_focus_count(1))
-        add("線を減らす", lambda: window.state.step_focus_count(-1))
+        add(
+            "線を増やす",
+            lambda: window.state.step_focus_count(1),
+            "放射状の線の本数を1本増やす",
+        )
+        add(
+            "線を減らす",
+            lambda: window.state.step_focus_count(-1),
+            "放射状の線の本数を1本減らす",
+        )
         menu.addSeparator()
-        add("線を太く", lambda: window.state.step_focus_width(1))
-        add("線を細く", lambda: window.state.step_focus_width(-1))
+        add(
+            "線を太く",
+            lambda: window.state.step_focus_width(1),
+            "放射状の線を1段太くする",
+        )
+        add(
+            "線を細く",
+            lambda: window.state.step_focus_width(-1),
+            "放射状の線を1段細くする",
+        )
         menu.addSeparator()
         # 「白にする／黒に戻す」も入れる／消すと同じく1項目の文言を入れ替える
         # （要件定義 6.19。単純な色違いなので、色を選ぶメニューにはしない）
@@ -553,21 +586,40 @@ class FlowMenu:
 
         # ここから下は流線の入ったコマにだけ効く
         self.actions: list[QAction] = []
+        add = functools.partial(_add_adjust_action, window, menu, self.actions)
 
-        def add(label: str, slot, tip: str = "") -> QAction:
-            action = window._act(label, slot, None, tip)
-            menu.addAction(action)
-            self.actions.append(action)
-            return action
-
-        add("線を増やす", lambda: window.state.step_flow_count(1))
-        add("線を減らす", lambda: window.state.step_flow_count(-1))
+        add(
+            "線を増やす",
+            lambda: window.state.step_flow_count(1),
+            "平行な効果線の本数を1本増やす",
+        )
+        add(
+            "線を減らす",
+            lambda: window.state.step_flow_count(-1),
+            "平行な効果線の本数を1本減らす",
+        )
         menu.addSeparator()
-        add("線を太く", lambda: window.state.step_flow_width(1))
-        add("線を細く", lambda: window.state.step_flow_width(-1))
+        add(
+            "線を太く",
+            lambda: window.state.step_flow_width(1),
+            "平行な効果線を1段太くする",
+        )
+        add(
+            "線を細く",
+            lambda: window.state.step_flow_width(-1),
+            "平行な効果線を1段細くする",
+        )
         menu.addSeparator()
-        add("線を長く", lambda: window.state.step_flow_length(1))
-        add("線を短く", lambda: window.state.step_flow_length(-1))
+        add(
+            "線を長く",
+            lambda: window.state.step_flow_length(1),
+            "平行な効果線を1段長くする",
+        )
+        add(
+            "線を短く",
+            lambda: window.state.step_flow_length(-1),
+            "平行な効果線を1段短くする",
+        )
         menu.addSeparator()
         self.color_action = add(
             "白にする",
@@ -639,12 +691,7 @@ class ToneMenu:
 
         # ここから下はトーンの入った画像にだけ効く
         self.actions: list[QAction] = []
-
-        def add(label: str, slot, tip: str = "") -> QAction:
-            action = window._act(label, slot, None, tip)
-            menu.addAction(action)
-            self.actions.append(action)
-            return action
+        add = functools.partial(_add_adjust_action, window, menu, self.actions)
 
         # 増減する項目には**今が何段目かを添える**（→ 要件定義 6.27）。
         # `refresh` が書き換えるので、ここで渡すのは入っていないときの文言。

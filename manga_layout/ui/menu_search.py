@@ -433,13 +433,13 @@ def search(entries: list[MenuEntry], query: str) -> list[MenuEntry]:
     空のときは全部返す。**この窓をメニューの一覧としても使えるように
     するため**で、打ち始める前に何があるかを眺められる。
     """
-    words = [read_as(word.casefold()) for word in query.replace("　", " ").split()]
+    words = [read_as(_fold(word)) for word in query.replace("　", " ").split()]
     if not words:
         return list(entries)
     return [
         entry
         for entry in entries
-        if all(word in entry.haystack.casefold() for word in words)
+        if all(word in _fold(entry.haystack) for word in words)
     ]
 
 

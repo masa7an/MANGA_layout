@@ -1002,6 +1002,9 @@ class MainWindow(QMainWindow):
         balloon = self.state.selected_balloon
         if balloon is None:
             return
+        if not balloon.tail.enabled:
+            self.state.message.emit("しっぽが出ていません")
+            return
         shape = (
             TAIL_SHAPE_TRIANGLE
             if balloon.tail.shape == TAIL_SHAPE_BUBBLES
@@ -1316,9 +1319,7 @@ class MainWindow(QMainWindow):
         **作品には一切書かない。** 印は画面の状態（`state.check_marks`）
         だけに持つので、Undo にも保存形式にもサムネイルの指紋にも乗らない。
         """
-        findings = inspect_project(
-            self.state.project, lambda ref: self.state.preview(ref) is not None
-        )
+        findings = inspect_project(self.state.project, self.state.has_asset)
         self.state.set_check_marks(marked_page_ids(findings))
 
         if self._check_dialog is None:
