@@ -66,6 +66,7 @@ COMPRESSION_RLE = 1
 # PackBits のひとかたまりの上限（127+1 個）
 _MAX_RUN = 128
 
+
 @dataclass(frozen=True)
 class PsdLayer:
     """PSD に並べる1枚。
