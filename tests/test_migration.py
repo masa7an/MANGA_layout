@@ -163,6 +163,58 @@ class Test触らないもの:
         assert text.attached_balloon_id == "bal_0004"
 
 
+class Test欠けた項目の既定値:
+    """v1 ファイルで文字・枠線・しっぽ幅が丸ごと欠けている場合。
+
+    `Panel.from_dict` などの「項目が無いときの既定値」は今の px 基準の値
+    （例: `Border().width == 3.5`）。素朴に読むと、これが換算（≈5.9倍）の
+    対象に入り、文字サイズの既定が 42 × 5.9 ≈ 248px になるなど、値が
+    大きく壊れる（2026-08-08 に発見）。
+
+    ここでは**欠けている**場合だけを見る。値がある場合は
+    `Test長さの換算` が別に押さえている。
+    """
+
+    def _v1_with(self, **overrides) -> dict:
+        import copy
+
+        data = copy.deepcopy(V1)
+        panel = data["pages"][0]["panels"][0]
+        balloon = data["pages"][0]["floating"][0]
+        text = data["pages"][0]["floating"][1]
+        if overrides.get("no_panel_border"):
+            del panel["border"]
+        if overrides.get("no_balloon_border"):
+            del balloon["border"]
+        if overrides.get("no_tail_width"):
+            del balloon["tail"]["width"]
+        if overrides.get("no_font"):
+            del text["font"]
+        return data
+
+    def test_コマの枠線が欠けていれば今の既定になる(self):
+        project = Project.from_dict(self._v1_with(no_panel_border=True))
+        assert project.pages[0].panels[0].border.width == pytest.approx(3.5)
+
+    def test_吹き出しの枠線が欠けていれば今の既定になる(self):
+        project = Project.from_dict(self._v1_with(no_balloon_border=True))
+        assert project.pages[0].floating[0].border.width == pytest.approx(2.5)
+
+    def test_しっぽ幅が欠けていれば今の既定になる(self):
+        project = Project.from_dict(self._v1_with(no_tail_width=True))
+        assert project.pages[0].floating[0].tail.width == pytest.approx(35.0)
+
+    def test_フォントが丸ごと欠けていれば今の既定になる(self):
+        project = Project.from_dict(self._v1_with(no_font=True))
+        assert project.pages[0].floating[1].font.size_px == pytest.approx(42.0)
+
+    def test_値があれば今までどおり換算される(self):
+        """欠けた項目の対処が、ある項目の換算を壊していないこと。"""
+        project = Project.from_dict(self._v1_with())
+        assert project.pages[0].panels[0].border.width == pytest.approx(px(0.6))
+        assert project.pages[0].floating[1].font.size_px == pytest.approx(px(3.5))
+
+
 class Test斜めのコマ:
     """`ratio` と `angle` は単位を持たない。"""
 

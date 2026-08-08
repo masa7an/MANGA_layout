@@ -15,6 +15,7 @@ from manga_layout.layout import (
     full_page_rect,
     handle_at,
     handle_positions,
+    image_at,
     image_orphaned_at,
     panel_at,
     resize_rect,
@@ -62,6 +63,20 @@ class TestPanelAt:
         back = project.add_panel(page, Rect(10.0, 10.0, 100.0, 100.0))
         front = project.add_panel(page, Rect(20.0, 20.0, 50.0, 50.0))
         assert front.z > back.z
+        assert panel_at(page, 30.0, 30.0) is front
+
+    def test_zが同値でも後から描いたものが返る(self):
+        """描く順（render.py の昇順ソート）と当たり判定の順が食い違って
+        いた（2026-08-08 に発見）。`z` が同じとき、`sorted(reverse=True)`
+        は同値の並びをそのまま保つため、描画では手前に来る後方の要素が、
+        判定では逆に後回しになっていた。
+        """
+        project = new_project()
+        page = project.pages[0]
+        back = project.add_panel(page, Rect(10.0, 10.0, 100.0, 100.0))
+        front = project.add_panel(page, Rect(20.0, 20.0, 50.0, 50.0))
+        front.z = back.z  # 同値にする
+
         assert panel_at(page, 30.0, 30.0) is front
 
 
@@ -400,6 +415,20 @@ class TestImageOrphanedAt:
         # 45度傾けると、40×40 の外接矩形が約 56.6×56.6 に広がり
         # (中心 125,100 のまま) x が 96.7〜153.3 になってコマまで届く
         assert not image_orphaned_at(panel, rect, 45.0)
+
+
+class TestImageAtZ同値:
+    """`image_at` も `panel_at` と同じ食い違いを持っていた（2026-08-08）。"""
+
+    def test_zが同値でも後から置いたものが返る(self):
+        project = new_project()
+        page = project.pages[0]
+        panel = project.add_panel(page, Rect(0.0, 0.0, 100.0, 100.0))
+        back = project.add_image(panel, "assets/a.png", Rect(0.0, 0.0, 100.0, 100.0), (10, 10))
+        front = project.add_image(panel, "assets/b.png", Rect(0.0, 0.0, 100.0, 100.0), (10, 10))
+        front.z = back.z
+
+        assert image_at(panel, 50.0, 50.0) is front
 
 
 class TestResizeKeepAspect:

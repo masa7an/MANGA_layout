@@ -28,6 +28,7 @@ from manga_layout.model import (
     TAIL_SHAPE_BUBBLES,
     TAIL_SHAPE_TRIANGLE,
     PageNote,
+    SlantPair,
     Tail,
 )
 
@@ -302,6 +303,29 @@ class TestPanelMove:
         free = sample_project.add_balloon(page, Rect(100.0, 100.0, 20.0, 20.0))
         page.move_panel(page.panels[0].id, 20.0, 0.0)
         assert free.rect.x == 100.0
+
+    def test_コマとフキダシへ二重に紐づいたセリフは二重に動かない(self, sample_project):
+        """斜めの組は2枚それぞれについて `_move_panel_only` を呼ぶ。
+
+        以前は「動かした id の控え」を呼び出しごとに持っていたため、
+        コマAに紐づく吹き出しの上のセリフが**コマBにも直接紐づいている**
+        （手編集ファイルでのみ起こる二重紐づけ）と、Aの回・Bの回それぞれで
+        動かされて2回分ずれていた（2026-08-08 に発見）。
+        """
+        project = sample_project
+        page = project.pages[0]
+        left = project.add_panel(page, Rect(0.0, 0.0, 100.0, 100.0))
+        right = project.add_panel(page, Rect(100.0, 0.0, 100.0, 100.0))
+        page.slant_pairs.append(SlantPair(left.id, right.id, 0.5, 12.0, "/"))
+        balloon = project.add_balloon(page, Rect(10.0, 10.0, 40.0, 30.0), attached_panel_id=left.id)
+        # 本来は片方だけのはずの紐づけを、手編集ファイルを模して二重にする
+        text = project.add_text(page, "あ", Rect(15.0, 15.0, 20.0, 15.0), attached_panel_id=right.id)
+        text.attached_balloon_id = balloon.id
+        before = text.rect.x
+
+        page.move_panel(left.id, 20.0, 0.0)
+
+        assert text.rect.x == pytest.approx(before + 20.0)
 
     def test_コマを消してもセリフは残る(self, sample_project):
         # セリフはコマより手間がかかっているので、巻き添えで消さない

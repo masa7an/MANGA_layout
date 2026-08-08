@@ -1230,25 +1230,33 @@ class Page:
         噛み合っていた斜めの辺が離れ、組の意味が無くなる。
         """
         pair = self.slant_pair_of(panel_id)
+        # **組の2枚を通じて1つの控え。** 別々に持つと、「コマAに紐づく
+        # 吹き出しの上のセリフ」が「コマBにも直接紐づいている」ような
+        # 手編集ファイルで、Aの回・Bの回それぞれから動かされて二重に
+        # ずれる（2026-08-08 に発見）
+        moved: set[str] = set()
         for target in (pair.members() if pair is not None else (panel_id,)):
-            self._move_panel_only(target, dx, dy)
+            self._move_panel_only(target, dx, dy, moved)
 
-    def _move_panel_only(self, panel_id: str, dx: float, dy: float) -> None:
+    def _move_panel_only(
+        self, panel_id: str, dx: float, dy: float, moved: set[str]
+    ) -> None:
         """コマ1枚とその持ち物だけを動かす。
 
         要件定義 4章で狙った挙動そのもの。吹き出しは親子関係ではなく
         `attached_panel_id` の紐づけなので、追随はするが切り抜かれない。
 
         吹き出しの上に乗ったセリフも連れていく。**同じものを2回動かさない**
-        よう、動かした id を控えながら進む。コマにもその上の吹き出しにも
-        紐づいたセリフがあると、二重に動いて位置がずれる。
+        よう、動かした id を `moved` に控えながら進む。コマにもその上の
+        吹き出しにも紐づいたセリフがあると、二重に動いて位置がずれる。
+        `moved` は呼び出し元（`move_panel`）が持ち、斜めの組の2回の呼び出し
+        を通じて共有する。
         """
         panel = self.panel(panel_id)
         panel.shape = panel.shape.translated(dx, dy)
         for child in panel.children:
             child.rect = child.rect.translated(dx, dy)
 
-        moved: set[str] = set()
         for obj in self.attached_to(panel_id):
             if obj.id in moved:
                 continue
@@ -1377,6 +1385,59 @@ def _detached_copy(obj: SceneObject) -> Any:
     複製でも落ちるので、抜けが1か所に集まる。
     """
     return type(obj).from_dict(obj.to_dict(), f"{obj.id} の複製")
+
+
+def _fill_legacy_length_defaults(pages_raw: list) -> None:
+    """v1（mm 時代）ファイルの生の辞書に、欠けた長さの既定値を先回りで埋める。
+
+    `Panel.from_dict` などが「項目が無いときの既定値」に使うのは**今の
+    px 基準の値**（例: `Border().width == 3.5`）。version 1 のファイルは
+    `Project.from_dict` が組み立て後に丸ごと `scale_lengths(MM_TO_PX)`
+    （≈5.9倍）で換算するため、この既定値がそのまま換算対象に入ると
+    二重に掛かる（文字サイズ 42px の既定が 42 × 5.9 ≈ 248px になる、
+    枠線なら 3.5 → 20.7px。2026-08-08 に発見）。
+
+    ここでは v1 ファイルに限り、**値が丸ごと欠けている項目にだけ**
+    「今の既定値 ÷ MM_TO_PX」を先に埋める。あとの `scale_lengths` が
+    掛け戻すので、結果は今の既定値と一致する（＝手で壊れた箇所は
+    「今の新規作成と同じ見た目」で開ける）。**値がある項目には一切
+    触らない**——本物の mm 値まで書き換えると、正しく保存されていた
+    ファイルまで壊してしまう。
+
+    アプリが書いた v1 ファイルは `to_dict()` が全項目を書くため、
+    実際に効くのは手で編集して項目を削ったファイルだけ。
+    """
+    panel_width = Border().width
+    balloon_width = BalloonObject(id="_").border.width
+    tail_width = Tail().width
+    font_size = Font().size_px
+
+    for page in pages_raw:
+        if not isinstance(page, dict):
+            continue
+        for panel in page.get("panels", None) or []:
+            if not isinstance(panel, dict):
+                continue
+            _fill_missing_width(panel, "border", panel_width)
+        for obj in page.get("floating", None) or []:
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("type") == "balloon":
+                _fill_missing_width(obj, "border", balloon_width)
+                _fill_missing_width(obj, "tail", tail_width)
+            elif obj.get("type") == "text":
+                font = obj.get("font")
+                if not isinstance(font, dict) or (
+                    "size_px" not in font and "size_mm" not in font
+                ):
+                    obj["font"] = {**(font or {}), "size_px": font_size / MM_TO_PX}
+
+
+def _fill_missing_width(obj: dict, key: str, default_px: float) -> None:
+    """`obj[key]["width"]` が丸ごと欠けていれば、換算前の既定値を差し込む。"""
+    sub = obj.get(key)
+    if not isinstance(sub, dict) or "width" not in sub:
+        obj[key] = {**(sub or {}), "width": default_px / MM_TO_PX}
 
 
 @dataclass
@@ -1658,6 +1719,10 @@ class Project:
             )
 
         pages_raw = v.req_list(d.get("pages", []), f"{where}.pages")
+        if version < 2:
+            # v1 ファイルで文字・枠線・しっぽ幅が丸ごと欠けている場合の
+            # 備え。詳しくは `_fill_legacy_length_defaults` を参照
+            _fill_legacy_length_defaults(pages_raw)
         project = cls(
             title=v.text(d, "title", where, ""),
             default_page_size=Size.from_dict(

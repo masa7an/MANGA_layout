@@ -214,8 +214,16 @@ TAIL_PICK_NARROW = 0.6
 
 
 def panel_at(page: Page, x: float, y: float) -> Panel | None:
-    """その位置にあるコマ。重なっている場合は手前のものを返す。"""
-    for panel in sorted(page.panels, key=lambda p: p.z, reverse=True):
+    """その位置にあるコマ。重なっている場合は手前のものを返す。
+
+    **描く順（`render.py` の昇順ソート）を逆に辿る。** `z` が同じ2つが
+    重なると、`sorted(..., reverse=True)` は同値の並びをそのまま保つため、
+    描画では後ろ（手前に描かれる）ものが、この判定では逆に後回しになり、
+    見えているものと掴めるものがずれていた（2026-08-08 に発見）。
+    昇順ソートしてから並びごと逆順に辿れば、同値の並びも一緒にひっくり
+    返るので、最後に描かれた（＝一番手前の）ものが最初に来る。
+    """
+    for panel in reversed(sorted(page.panels, key=lambda p: p.z)):
         if panel.shape.contains(x, y):
             return panel
     return None
@@ -229,7 +237,7 @@ def image_at(panel: Panel, x: float, y: float) -> ImageObject | None:
     """
     if not panel.shape.contains(x, y):
         return None
-    for image in sorted(panel.children, key=lambda i: i.z, reverse=True):
+    for image in reversed(sorted(panel.children, key=lambda i: i.z)):
         if rotated_rect_contains(image.rect, x, y, image.rotation):
             return image
     return None
@@ -273,13 +281,13 @@ def pick_stack(page: Page, x: float, y: float) -> list[str]:
     この並びの目的で、選択枠は最前面に描かれるので選べば必ず見える。
     """
     stack: list[str] = []
-    for panel in sorted(page.panels, key=lambda p: p.z, reverse=True):
+    for panel in reversed(sorted(page.panels, key=lambda p: p.z)):
         if not panel.shape.contains(x, y):
             continue
         stack.append(panel.id)
         stack.extend(
             image.id
-            for image in sorted(panel.children, key=lambda i: i.z, reverse=True)
+            for image in reversed(sorted(panel.children, key=lambda i: i.z))
             if rotated_rect_contains(image.rect, x, y, image.rotation)
         )
     return stack
@@ -1323,7 +1331,7 @@ def balloon_at(page: Page, x: float, y: float) -> BalloonObject | None:
     選ぶときは代わりに `balloon_pick_at` を使う。
     """
     balloons = [f for f in page.floating if isinstance(f, BalloonObject)]
-    for balloon in sorted(balloons, key=lambda b: b.z, reverse=True):
+    for balloon in reversed(sorted(balloons, key=lambda b: b.z)):
         if balloon_contains(balloon, x, y):
             return balloon
     return None
@@ -1349,7 +1357,7 @@ def balloon_pick_at(
     奥の吹き出しの本体が勝ってしまい、描いてある前後と食い違う。
     """
     balloons = [f for f in page.floating if isinstance(f, BalloonObject)]
-    for balloon in sorted(balloons, key=lambda b: b.z, reverse=True):
+    for balloon in reversed(sorted(balloons, key=lambda b: b.z)):
         if balloon_contains(balloon, x, y):
             return balloon
         if tail_body_contains(balloon, x, y, settings, TAIL_PICK_NARROW):
@@ -1394,7 +1402,7 @@ def sticker_at(page: Page, x: float, y: float) -> StickerObject | None:
     掴みにくさが実際に出てから入れる（要件定義 6.14）。
     """
     stickers = [f for f in page.floating if isinstance(f, StickerObject)]
-    for sticker in sorted(stickers, key=lambda s: s.z, reverse=True):
+    for sticker in reversed(sorted(stickers, key=lambda s: s.z)):
         if sticker.rect.contains(x, y):
             return sticker
     return None
@@ -1485,7 +1493,7 @@ def text_at(page: Page, x: float, y: float) -> TextObject | None:
     **枠の矩形ではなく、字の並んでいる範囲で判定する**（→ `text_ink_bands`）。
     """
     texts = [f for f in page.floating if isinstance(f, TextObject)]
-    for text in sorted(texts, key=lambda t: t.z, reverse=True):
+    for text in reversed(sorted(texts, key=lambda t: t.z)):
         if text_contains(text, x, y):
             return text
     return None
