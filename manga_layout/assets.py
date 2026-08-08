@@ -222,14 +222,25 @@ class PendingAssets:
         return self._data.get(ref)
 
     def flush_to(self, store: AssetStore) -> list[str]:
-        """預かっている画像をすべて書き出し、控えを手放す。
+        """預かっている画像をすべて書き出す。**控えはここでは手放さない。**
 
         **参照されていないものも書き出す。** 保存の時点で参照が無くても、
         Undo で戻せば復活する（要件定義 5章「assets/ の扱い」）。
         余ったファイルは利用者が「未使用ファイルを整理」を選んだときに片付く。
+
+        呼ぶ側（`EditorState.save`）は、この後に `project.json` を書く。
+        そちらが失敗した場合に備えて、控えは呼ぶ側が成功を確かめてから
+        `clear()` で手放す。**先に手放すと、失敗を跨いで控えが消え、
+        別の場所へ保存し直しても実体が書かれないまま project.json だけが
+        できる**（2026-08-08 に発見）。`add_bytes` は内容ハッシュ名で
+        既にあれば書き直さないため、ここで何度呼んでも安全
+        （＝失敗しての再試行でも重複や余計な書き込みは起きない）。
         """
         written = sorted(self._data)
         for ref in written:
             store.add_bytes(self._data[ref])
-        self._data.clear()
         return written
+
+    def clear(self) -> None:
+        """控えを手放す。呼ぶのは書き出しの成功を確かめたあと（→ `flush_to`）。"""
+        self._data.clear()

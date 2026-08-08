@@ -1857,7 +1857,13 @@ class EditorState(QObject):
         self._carry_assets_to(store)
         self.pending_assets.flush_to(store)
 
+        # **控えを手放すのは project.json の書き込みが終わってから。**
+        # 実体は書けたのにここで例外が飛ぶと（ロック・ディスク満杯など）、
+        # 保存は失敗として返る。そこで控えを先に空にしていると、続けて
+        # 別の場所へ保存し直したときに実体が書かれず、参照だけが残った
+        # project.json ができてしまう（2026-08-08 に発見）
         path = save_project(self.project, target)
+        self.pending_assets.clear()
         self.project_dir = target
         self.history.mark_saved()
         return path

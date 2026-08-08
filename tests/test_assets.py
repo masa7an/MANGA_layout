@@ -146,7 +146,7 @@ class TestPending:
         assert pending.get(ref) == png_bytes
         assert pending.get("assets/none.png") is None
 
-    def test_書き出すと実体になり控えは空になる(self, tmp_path, png_bytes):
+    def test_書き出すと実体になる(self, tmp_path, png_bytes):
         pending = PendingAssets()
         ref = pending.add(png_bytes)
         store = AssetStore(tmp_path)
@@ -155,6 +155,46 @@ class TestPending:
 
         assert store.exists(ref)
         assert store.read(ref) == png_bytes
+
+    def test_書き出しただけでは控えは空にならない(self, tmp_path, png_bytes):
+        """空にするのは呼ぶ側が `clear()` で明示したときだけ。
+
+        `EditorState.save` は、この直後に project.json を書く。そちらが
+        失敗した場合に備えて控えを残しておかないと、失敗を跨いで控えが
+        消え、別の場所へ保存し直しても実体が書かれない（2026-08-08 に発見）。
+        """
+        pending = PendingAssets()
+        pending.add(png_bytes)
+        store = AssetStore(tmp_path)
+
+        pending.flush_to(store)
+
+        assert len(pending) == 1
+
+    def test_続けて呼んでも書き直さない(self, tmp_path, png_bytes):
+        """控えを持ったまま呼び直せる（失敗しての再試行を想定）。
+
+        内容ハッシュ名なので、既にある実体への2回目の書き込みは
+        `add_bytes` の側で無視される（→ 重複や余計な書き込みが起きない）。
+        """
+        pending = PendingAssets()
+        ref = pending.add(png_bytes)
+        store = AssetStore(tmp_path)
+
+        pending.flush_to(store)
+        written_again = pending.flush_to(store)
+
+        assert written_again == [ref]
+        assert store.read(ref) == png_bytes
+
+    def test_clearで控えを手放せる(self, tmp_path, png_bytes):
+        pending = PendingAssets()
+        pending.add(png_bytes)
+        store = AssetStore(tmp_path)
+        pending.flush_to(store)
+
+        pending.clear()
+
         assert len(pending) == 0
 
     def test_参照が無くなったものも書き出す(self, tmp_path, fixture_dir):

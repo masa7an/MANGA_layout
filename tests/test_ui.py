@@ -511,6 +511,65 @@ class TestImageAssets:
         assert AssetStore(second).list_refs() == []
         assert len(AssetStore(first).list_refs()) == 1
 
+    def test_project_json書き込みが失敗しても預かり分は残る(
+        self, window_with_image, tmp_path, monkeypatch
+    ):
+        """実体は書けたが project.json の書き込みで失敗したとき。
+
+        以前は画像実体を書き出すのと同時に控え（`pending_assets`）を
+        手放していたため、ここで失敗すると控えが空のまま保存だけ失敗した
+        扱いになっていた。続けて**別の場所**へ保存し直すと、実体が
+        書かれないまま project.json だけができ、参照が切れていた
+        （2026-08-08 に発見）。
+        """
+        from manga_layout.ui import state as state_module
+
+        ref = window_with_image.state.selected_image.asset
+        first = tmp_path / "元"
+
+        def 失敗する保存(*args, **kwargs):
+            raise OSError("模擬した書き込み失敗")
+
+        monkeypatch.setattr(state_module, "save_project", 失敗する保存)
+        with pytest.raises(OSError):
+            window_with_image.state.save(first)
+
+        assert len(window_with_image.state.pending_assets) == 1
+        assert ref in window_with_image.state.pending_assets
+
+    def test_失敗のあと別の場所へ保存し直しても実体が書かれる(
+        self, window_with_image, png, tmp_path, monkeypatch
+    ):
+        """↑の続き。控えが残っていれば、次の保存でちゃんと書かれる。"""
+        from manga_layout import AssetStore, find_missing_assets
+        from manga_layout.ui import state as state_module
+
+        ref = window_with_image.state.selected_image.asset
+        first = tmp_path / "元"
+        second = tmp_path / "別名"
+
+        real_save_project = state_module.save_project
+        calls = []
+
+        def 一度だけ失敗する保存(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise OSError("模擬した書き込み失敗")
+            return real_save_project(*args, **kwargs)
+
+        monkeypatch.setattr(state_module, "save_project", 一度だけ失敗する保存)
+        with pytest.raises(OSError):
+            window_with_image.state.save(first)
+
+        window_with_image.state.save(second)
+
+        # 実体は project.json より先に書くので、失敗した保存先（元）にも
+        # 残る（無害な余り）。**肝心なのは、控えが生きていたおかげで
+        # 「別の場所」（second）にも実体がちゃんと書かれること**
+        assert AssetStore(second).read(ref) == png
+        assert find_missing_assets(load_project(second), second) == []
+        assert len(window_with_image.state.pending_assets) == 0
+
     def test_元の実体が欠けていても別名保存は止まらない(
         self, window, png, png_bytes, tmp_path
     ):
