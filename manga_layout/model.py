@@ -1706,8 +1706,15 @@ class Project:
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> Project:
-        where = "project.json"
+    def from_dict(cls, data: Any, where: str = "project.json") -> Project:
+        """保存形式の辞書からプロジェクトを組み立てる。
+
+        `where` はエラー文言の先頭に出す名前。**既定は本体
+        `project.json` のもの**だが、`backup/` の世代を読むときは呼ぶ側
+        （`storage.read_project_file`）が実ファイル名を渡す。渡さないと、
+        壊れているのが世代のファイルでも「project.json」を名指しして
+        しまい、本体が壊れていると誤解させる（2026-08-08 に発見）。
+        """
         d = v.req_mapping(data, where)
 
         version = v.integer(d, "format_version", where, 1)

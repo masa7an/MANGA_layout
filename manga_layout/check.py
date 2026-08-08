@@ -22,8 +22,8 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .layout import balloon_contains, text_ink_bands
-from .model import BalloonObject, Page, Project, StickerObject, TextObject
+from .layout import balloon_contains, page_assets, text_ink_bands
+from .model import BalloonObject, Page, Project, TextObject
 from .vertical import COLUMN_PITCH
 
 # 拾うものの種類（→ 要件定義 6.29）
@@ -122,9 +122,8 @@ def inspect_page(
         found.append(hit(KIND_BLANK_PAGE))
 
     if has_asset is not None:
-        # **コマの中の画像とマークの両方を見る。** マークはコマの子ではないが
-        # 実体が無ければ同じように白く抜ける（→ `ui/export.missing_assets_in`）
-        for obj in _asset_objects(page):
+        # **コマの中の画像とマークの両方を見る**（→ `layout.page_assets`）
+        for obj in page_assets(page):
             if not obj.asset or not has_asset(obj.asset):
                 found.append(hit(KIND_MISSING_ASSET, obj.id))
 
@@ -151,15 +150,6 @@ def inspect_page(
         found.append(hit(KIND_NOTE_LEFT))
 
     return found
-
-
-def _asset_objects(page: Page):
-    """画像の実体を持つもの（コマの中の画像とマーク）。"""
-    for panel in page.panels:
-        yield from panel.children
-    for obj in page.floating:
-        if isinstance(obj, StickerObject):
-            yield obj
 
 
 def text_overflows(text: TextObject, balloon: BalloonObject) -> bool:

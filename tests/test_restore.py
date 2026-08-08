@@ -109,6 +109,21 @@ class Test世代を読む:
         with pytest.raises(ProjectFormatError):
             load_backup(path)
 
+    def test_検証で壊れていれば実ファイル名を名指しする(self, tmp_path):
+        """JSON としては読めるが、中身が壊れている場合。
+
+        以前は `Project.from_dict` がエラーの先頭を「project.json」に
+        固定していたため、壊れているのが世代のファイルでも本体
+        project.json が壊れていると誤読させていた（2026-08-08 に発見）。
+        """
+        path = tmp_path / "autosave.1.json"
+        path.write_text('{"pages": "配列ではない"}', encoding="utf-8")
+        with pytest.raises(ProjectFormatError) as exc:
+            load_backup(path)
+        message = str(exc.value)
+        assert "autosave.1.json" in message
+        assert "project.json" not in message
+
 
 class Test履歴への差し替え:
     def test_1手として積まれる(self, sample_project):

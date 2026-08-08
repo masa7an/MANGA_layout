@@ -1283,7 +1283,15 @@ class MainWindow(QMainWindow):
             )
             return
 
-        moved = prune_unused_assets(self.state.project, self.state.project_dir)
+        try:
+            moved = prune_unused_assets(self.state.project, self.state.project_dir)
+        except OSError as e:
+            # 対象の画像が他アプリ（ビューアなど）で開かれたままだと、
+            # 移動しようとした os.replace / unlink が失敗する。ここが
+            # 無防備だと、Qt のスロットの中で例外が漏れるだけになる
+            # （2026-08-08 に発見）
+            QMessageBox.critical(self, "整理できません", str(e))
+            return
         if not moved:
             self.state.message.emit("使われていない画像はありませんでした")
             return

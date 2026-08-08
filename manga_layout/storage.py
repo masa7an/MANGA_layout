@@ -94,13 +94,21 @@ def atomic_write_text(path: pathlib.Path, text: str) -> None:
 
     `fsync` は、OS の書き込みキャッシュに載っただけの状態で
     名前を入れ替えてしまわないために挟んでいる。
+
+    **`os.replace` 自体が失敗しても `.tmp` を残さない。** 他アプリに
+    `path` を掴まれているなどで置き換えが失敗すると、以前は書きかけの
+    `.tmp` がそのまま作品フォルダに残っていた（2026-08-08 に発見）。
     """
     tmp = path.with_name(path.name + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        os.replace(tmp, path)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _shift_generations(backup_dir: pathlib.Path, prefix: str, generations: int) -> None:
@@ -123,6 +131,12 @@ def _rotate_backups(project_dir: pathlib.Path) -> None:
 
     退避は移動ではなく複製。移動にすると、複製と書き込みの合間に落ちた場合に
     project.json が消えたままになる。
+
+    **複製自体も別名で書き切ってから置き換える。** `shutil.copy2` を直接
+    `project.1.json` へ書くと、複製の途中で落ちたときに切れた内容が
+    世代として残る（本体は無事で、繰り下げ済みの旧1番も `project.2.json`
+    に残っているため実害は無いが、復元一覧でその世代だけ「読めません」に
+    なる。2026-08-08 に発見）。
     """
     current = project_dir / PROJECT_FILENAME
     if not current.is_file():
@@ -131,7 +145,10 @@ def _rotate_backups(project_dir: pathlib.Path) -> None:
     backup_dir = project_dir / BACKUP_DIRNAME
     backup_dir.mkdir(parents=True, exist_ok=True)
     _shift_generations(backup_dir, "project", BACKUP_GENERATIONS)
-    shutil.copy2(current, backup_dir / "project.1.json")
+    dest = backup_dir / "project.1.json"
+    tmp = dest.with_name(dest.name + ".tmp")
+    shutil.copy2(current, tmp)
+    os.replace(tmp, dest)
 
 
 def _project_text(project: Project) -> str:
@@ -207,7 +224,7 @@ def read_project_file(path: pathlib.Path | str) -> Project:
             f"{BACKUP_DIRNAME}/ に直前の保存内容が残っている可能性があります。"
         ) from e
 
-    return Project.from_dict(data)
+    return Project.from_dict(data, where=path.name)
 
 
 def load_project(project_dir: pathlib.Path | str) -> Project:

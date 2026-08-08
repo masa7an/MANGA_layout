@@ -23,6 +23,7 @@ from manga_layout.storage import (
     BACKUP_DIRNAME,
     BACKUP_GENERATIONS,
     PROJECT_FILENAME,
+    atomic_write_text,
     write_autosave,
 )
 
@@ -54,6 +55,26 @@ class TestSaveLoad:
 
     def test_書き込み途中のファイルを残さない(self, tmp_path, sample_project):
         save_project(sample_project, tmp_path)
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_置き換え自体が失敗してもtmpを残さない(self, tmp_path, monkeypatch):
+        """`os.replace` が失敗する場合（他アプリに掴まれているなど）。
+
+        以前は書き切った `.tmp` の後始末が無く、失敗のたびに作品フォルダへ
+        残骸が積み上がっていた（2026-08-08 に発見）。
+        """
+        import manga_layout.storage as storage_module
+
+        path = tmp_path / "project.json"
+
+        def 失敗するreplace(src, dst):
+            raise OSError("模擬した置き換え失敗")
+
+        monkeypatch.setattr(storage_module.os, "replace", 失敗するreplace)
+
+        with pytest.raises(OSError):
+            atomic_write_text(path, "内容")
+
         assert list(tmp_path.glob("*.tmp")) == []
 
     def test_座標は1行に畳まれる(self, tmp_path, sample_project):
@@ -137,6 +158,40 @@ class TestBackup:
     def test_初回保存では退避しない(self, tmp_path, sample_project):
         save_project(sample_project, tmp_path)
         assert not (tmp_path / BACKUP_DIRNAME).exists()
+
+    def test_退避にtmpを残さない(self, tmp_path):
+        project = new_project(title="1回目")
+        save_project(project, tmp_path)
+        project.title = "2回目"
+        save_project(project, tmp_path)
+
+        assert list((tmp_path / BACKUP_DIRNAME).glob("*.tmp")) == []
+
+    def test_退避も別名で書いてから置き換える(self, tmp_path, monkeypatch):
+        """複製の途中で落ちても、`project.1.json` が半端な内容にならない。
+
+        以前は `shutil.copy2` で直接 `project.1.json` へ複製しており、
+        途中で失敗すると切れた内容がその名前で残った（2026-08-08 に発見）。
+        """
+        import manga_layout.storage as storage_module
+
+        project = new_project(title="1回目")
+        save_project(project, tmp_path)
+
+        real_copy2 = storage_module.shutil.copy2
+
+        def 失敗するcopy2(src, dst):
+            real_copy2(src, dst)
+            raise OSError("模擬した複製失敗")
+
+        monkeypatch.setattr(storage_module.shutil, "copy2", 失敗するcopy2)
+        project.title = "2回目"
+        with pytest.raises(OSError):
+            save_project(project, tmp_path)
+
+        # 複製先が半端な内容のまま project.1.json を名乗っていないこと
+        dest = tmp_path / BACKUP_DIRNAME / "project.1.json"
+        assert not dest.exists()
 
     def test_退避を止められる(self, tmp_path, sample_project):
         save_project(sample_project, tmp_path)

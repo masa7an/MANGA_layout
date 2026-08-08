@@ -265,6 +265,16 @@ class Test実体の見つからない画像:
         found = inspect_project(project, lambda ref: ref == "assets/ok.png")
         assert kinds(found) == [KIND_MISSING_ASSET, KIND_MISSING_ASSET]
 
+    def test_書き出しの数え方と同じ関数を使う(self):
+        """「実体の無い画像」の数え方が check.py と ui/export.py で
+        別々に定義され、中身も一字一句同じだった。片方だけ直る危険を
+        避けるため `layout.page_assets` へ集約した（2026-08-08 に発見）。
+        """
+        from manga_layout.layout import page_assets as layout_page_assets
+        from manga_layout.ui.export import page_assets as export_page_assets
+
+        assert export_page_assets is layout_page_assets
+
 
 class Test付箋の残り:
     def test_貼ってあれば拾う(self):

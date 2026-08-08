@@ -343,7 +343,16 @@ class ProjectIO:
         状態表示には出さない——5分ごとに「何もしませんでした」と出ても
         邪魔なだけで、しかも見ていないうちに消える。記録は同じ内容が
         続く間 1 行にまとめるので、増え続けることはない。
+
+        **間隔も、発火のたびに読み直す。**`default_parent` と同じ理由で、
+        起動時に一度読むだけだと `settings.json` を書き換えてもアプリを
+        開き直すまで効かなかった（2026-08-08 に発見）。次に発火するまでは
+        古い間隔のままだが、それでも「開き直すまで無反応」よりずっとよい。
         """
+        interval_ms = load_settings(self._window.settings_file).autosave_interval_sec * 1000
+        if self.autosave_timer.interval() != interval_ms:
+            self.autosave_timer.setInterval(interval_ms)
+
         try:
             path = self._state.autosave()
         except (MangaLayoutError, OSError) as e:

@@ -604,6 +604,41 @@ class TestImageAssets:
         assert len(window_with_image.state.image_cache) == 0
 
 
+class Test未使用ファイルを整理:
+    """メニューの「未使用ファイルを整理」（`MainWindow.prune_assets`）。"""
+
+    def test_整理できないと分かるエラーになる(
+        self, window_with_image, png_bytes, tmp_path, monkeypatch
+    ):
+        """対象の画像が他アプリで開かれたままなど、移動そのものが失敗する場合。
+
+        以前はここが無防備で、Qt のスロットの中で例外が漏れるだけだった
+        （2026-08-08 に発見）。
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        panel_id = window_with_image.state.page.panels[0].id
+        window_with_image.state.place_image(panel_id, png_bytes)
+        window_with_image.state.save(tmp_path)
+        window_with_image.state.undo()  # 2枚目を置く前まで戻し、未使用を作る
+        window_with_image.state.save(tmp_path)  # 戻した状態を保存し直し、未保存を消す
+
+        shown: list[str] = []
+        monkeypatch.setattr(
+            "manga_layout.ui.window.prune_unused_assets",
+            lambda *a, **k: (_ for _ in ()).throw(OSError("模擬した移動失敗")),
+        )
+        monkeypatch.setattr(
+            QMessageBox,
+            "critical",
+            lambda self, title, text: (shown.append(text), QMessageBox.StandardButton.Ok)[1],
+        )
+
+        window_with_image.prune_assets()  # 例外を投げずに終わること
+
+        assert shown and "模擬した移動失敗" in shown[0]
+
+
 class TestImageSelection:
     def test_ダブルクリックで画像を選ぶ(self, window_with_image):
         image = window_with_image.state.selected_image
@@ -1306,6 +1341,29 @@ class TestAutosave:
         try:
             assert win.files.autosave_timer.interval() == 30_000
             assert win.files.autosave_timer.isActive()
+        finally:
+            win.state.history.mark_saved()
+            win.close()
+
+    def test_発火のたびに間隔を読み直す(self, qapp, tmp_path):
+        """`default_parent` と同じく、使う直前（＝発火のたび）に読み直す。
+
+        以前は起動時に一度読むだけだったため、`settings.json` を書き換えて
+        も、開き直すまでタイマーの間隔に反映されなかった
+        （2026-08-08 に発見）。
+        """
+        from manga_layout.settings import AppSettings, save_settings
+
+        win = MainWindow(EditorState())
+        win.settings_file = tmp_path / "settings.json"
+        save_settings(AppSettings(autosave_interval_sec=300), win.settings_file)
+        win.files.autosave_timer.setInterval(300_000)
+        try:
+            save_settings(AppSettings(autosave_interval_sec=7), win.settings_file)
+
+            win.files.autosave()
+
+            assert win.files.autosave_timer.interval() == 7_000
         finally:
             win.state.history.mark_saved()
             win.close()

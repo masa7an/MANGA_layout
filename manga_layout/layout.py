@@ -213,6 +213,25 @@ TAIL_PICK_NARROW = 0.6
 # --------------------------------------------------------------------------
 
 
+def page_assets(page: Page):
+    """ページにある「画像の実体を持つもの」を順に返す。
+
+    **コマの中の画像とマークの両方。** マーク（→ 6.14）はページ直下に
+    あってコマの子ではないが、実体が無ければ画面でも書き出しでも同じ×印
+    で欠けが分かる（`render._draw_image_upright`）ので、数える側もここで
+    一緒に扱う。
+
+    以前は `ui.export.missing_assets_in` が使う版と `check.py` が使う版が
+    別々に定義され、中身も一字一句同じだった。片方だけ直る危険を避けるため
+    ここへ集約した（2026-08-08 に発見）。
+    """
+    for panel in page.panels:
+        yield from panel.children
+    for obj in page.floating:
+        if isinstance(obj, StickerObject):
+            yield obj
+
+
 def panel_at(page: Page, x: float, y: float) -> Panel | None:
     """その位置にあるコマ。重なっている場合は手前のものを返す。
 

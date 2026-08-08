@@ -51,7 +51,8 @@ from ..errors import ExportError
 from ..export_io import replace_or_raise, tmp_path_for
 from ..geometry import Size
 from ..images import ImageCache, Preview, ToneCache, full_from_bytes
-from ..model import DEFAULT_PAGE_SIZE, Page, StickerObject
+from ..layout import page_assets
+from ..model import DEFAULT_PAGE_SIZE, Page
 from .render import PAGE_BG, PageRenderer
 
 EXPORT_DIRNAME = "export"
@@ -205,15 +206,6 @@ def missing_assets_in(state, indexes) -> int:
             if state.preview(image.asset) is None:
                 count += 1
     return count
-
-
-def page_assets(page: Page):
-    """ページにある「画像の実体を持つもの」を順に返す。"""
-    for panel in page.panels:
-        yield from panel.children
-    for obj in page.floating:
-        if isinstance(obj, StickerObject):
-            yield obj
 
 
 # -- 描画 --------------------------------------------------------------------
