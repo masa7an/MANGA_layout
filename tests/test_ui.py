@@ -1806,3 +1806,84 @@ class TestSlantSlideUI:
         window.view._apply_slant(page.panels[0].id, 0.02)
         ratio = window.state.page.slant_pairs[0].ratio
         assert 0.02 < ratio < 0.5
+
+
+class Test斜めのコマの大きさ変更:
+    """**掴んだ辺だけが止まる**ことを、画面側の経路で固定する（2026-08-09）。
+
+    `clamp_slant_rect` に掴んでいるつまみを渡していなかった頃は、常に
+    「上端を据え置いて高さを削る」形だったため、左右のつまみで高さが潰れ、
+    上辺のつまみで下端が歩いた。幅が一定以下では高さ 0 の矩形ができ、
+    確定時の `ValueError` が `mouseReleaseEvent` を突き抜けていた。
+
+    **既定の設定でしか再現しない。** `tests/test_slant.py` の SETTINGS は
+    隙間 6 / 最小 5 で、`slant_max_height` が負にならない
+    （→ そちらの `Testリサイズの押し戻し`）。
+    """
+
+    def _split(self, window, rect=Rect(100.0, 400.0, 200.0, 300.0)):
+        """既定の設定で、指定の矩形を中央で斜めに割って選んでおく。
+
+        ページ全面（幅 1062px）では、上辺を用紙の外まで引いても押し戻しの
+        領域へ入れない（幅が足りなくなるのは高さ 4,500px から）。狭い組を
+        自分で置く。
+        """
+        with window.state.edit("コマの追加") as project:
+            panel = project.add_panel(project.pages[0], rect)
+        window.view._apply_split(
+            rect.center[0], rect.center[1], tool=TOOL_SPLIT_SLANT
+        )
+        page = window.state.page
+        window.state.select(panel.id)
+        return page, page.slant_pairs[0]
+
+    def test_右辺を引き切っても高さと左辺が動かない(self, window):
+        """症状A。横のつまみしか掴んでいないのに高さが潰れていた。"""
+        page, pair = self._split(window)
+        outer = page.slant_bounds(pair)
+        view = window.view
+
+        press(view, outer.right, outer.y + outer.h / 2.0)
+        assert view._drag is not None and view._drag.handle == "e"
+        move_to(view, outer.x + 10.0, outer.y + outer.h / 2.0)
+        release(view, outer.x + 10.0, outer.y + outer.h / 2.0)
+
+        after = window.state.page.slant_bounds(window.state.page.slant_pairs[0])
+        assert after.h == pytest.approx(outer.h), "高さまで潰れている"
+        assert after.x == pytest.approx(outer.x), "掴んでいない左辺が動いた"
+        assert after.w < outer.w, "幅が縮んでいない"
+
+    def test_上辺を引き切っても下端が動かない(self, window):
+        """症状B。固定されるはずの下端が上へ歩いていた。"""
+        page, pair = self._split(window)
+        outer = page.slant_bounds(pair)
+        view = window.view
+
+        press(view, outer.x + outer.w / 2.0, outer.y)
+        assert view._drag is not None and view._drag.handle == "n"
+        move_to(view, outer.x + outer.w / 2.0, outer.y - 200.0)
+        release(view, outer.x + outer.w / 2.0, outer.y - 200.0)
+
+        after = window.state.page.slant_bounds(window.state.page.slant_pairs[0])
+        assert after.bottom == pytest.approx(outer.bottom), "下端が動いた"
+        assert after.w == pytest.approx(outer.w), "掴んでいない幅が動いた"
+        assert after.h > outer.h, "高さが伸びていない"
+
+    def test_限界より細く引いても例外が漏れない(self, window):
+        """症状C。以前はここで ValueError が `mouseReleaseEvent` を抜けた。
+
+        押し戻したうえで受け付けるので、`can_undo` が立ち、組も生きたまま。
+        """
+        page, pair = self._split(window)
+        outer = page.slant_bounds(pair)
+        view = window.view
+
+        press(view, outer.right, outer.y + outer.h / 2.0)
+        # 左辺を通り越すところまで引く（`resize_rect` の最小 30px で止まる）
+        move_to(view, outer.x - 500.0, outer.y + outer.h / 2.0)
+        release(view, outer.x - 500.0, outer.y + outer.h / 2.0)
+
+        after = window.state.page
+        assert len(after.slant_pairs) == 1
+        assert after.slant_bounds(after.slant_pairs[0]).h == pytest.approx(outer.h)
+        assert window.state.history.can_undo

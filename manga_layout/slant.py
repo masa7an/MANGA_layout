@@ -351,7 +351,10 @@ def flip_slant_pair(
 
 
 def clamp_slant_rect(
-    pair: SlantPair, rect: Rect, settings: LayoutSettings = DEFAULT_SETTINGS
+    pair: SlantPair,
+    rect: Rect,
+    settings: LayoutSettings = DEFAULT_SETTINGS,
+    handle: str = "",
 ) -> Rect:
     """リサイズ中の外側の矩形を、割れる大きさまで押し戻す。
 
@@ -359,11 +362,58 @@ def clamp_slant_rect(
     大きさで止まるのと同じ感触にするため、断らずに止める。
 
     幅と高さは独立していない。高さを伸ばすほど斜めの振れ幅が増え、
-    必要な幅も増えるので、掴んだ辺の側だけを押し戻す。
+    必要な幅も増える。
+
+    **押し戻すのは、掴んでいるつまみが動かせる軸だけ**（`handle` は
+    `layout.HANDLES` の名前）。左右のつまみは高さを変えられないので幅を
+    押し戻し、上下のつまみは幅を変えられないので高さを削る。
+    **押し戻した先でも、掴んでいない側の辺は動かさない**（`resize_rect` が
+    最小の大きさで止まるときと同じ）。
+
+    2026-08-09 まではこの区別が無く、常に「上端を据え置いて高さを削る」
+    形だった。そのため次の3つが起きていた。
+
+    - 左右のつまみを引いただけで**高さまで潰れた**（400×300 の組で幅を
+      120 まで引くと高さが 114 になり、下端が 186px 跳ね上がった）
+    - 上辺のつまみで、**固定されるはずの下端が上へ歩いた**
+      （170×300 の組で上端を 0 まで引くと下端が 400 → 349 へ）
+    - 幅が一定以下では `slant_max_height` が 0 に丸められて高さ 0 の矩形が
+      でき、確定時に `check_slant` が `ValueError` を投げた。例外は
+      `mouseReleaseEvent` を突き抜け、**状態表示には何も出ないまま
+      大きさ変更だけが無言で失敗していた**
+
+    押し戻した先は、どちらの軸でも「細いほうがちょうど `min_panel_size`」に
+    なる（`check_slant` が `EPS` ぶん緩めてあるのはこのため）。
     """
     r = rect.normalized()
-    min_w = slant_min_width(r.h, pair.ratio, pair.angle, settings)
-    if r.w >= min_w:
+    if r.w >= slant_min_width(r.h, pair.ratio, pair.angle, settings):
         return r
+
+    # 左右のつまみ（角のつまみも含む）は幅を動かせる。高さは利用者が
+    # 引いたままにして、幅だけを下限で止める
+    if "w" in handle or "e" in handle:
+        return _resized_width(
+            r, slant_min_width(r.h, pair.ratio, pair.angle, settings), handle
+        )
+
+    # 上下のつまみ（と、つまみが分からないとき）は高さで吸収する
     max_h = slant_max_height(r.w, pair.ratio, pair.angle, settings)
-    return Rect(r.x, r.y, r.w, min(r.h, max_h))
+    if max_h >= settings.min_panel_size:
+        return _resized_height(r, min(r.h, max_h), handle)
+
+    # その幅ではどんな高さでも割れない。**手で書き換えた project.json の
+    # ように、元から割れない大きさの組でしかここへ来ない。** 掴んでいない
+    # 軸を動かすことになるが、幅を押し戻さないと `check_slant` を通せない
+    return _resized_width(
+        r, slant_min_width(r.h, pair.ratio, pair.angle, settings), handle
+    )
+
+
+def _resized_width(rect: Rect, w: float, handle: str) -> Rect:
+    """幅だけ差し替える。**掴んでいない側の辺は動かさない。**"""
+    return Rect(rect.right - w if "w" in handle else rect.x, rect.y, w, rect.h)
+
+
+def _resized_height(rect: Rect, h: float, handle: str) -> Rect:
+    """高さだけ差し替える。**掴んでいない側の辺は動かさない。**"""
+    return Rect(rect.x, rect.bottom - h if "n" in handle else rect.y, rect.w, h)

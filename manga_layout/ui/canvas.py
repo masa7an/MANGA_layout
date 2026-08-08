@@ -514,10 +514,14 @@ class ResizeDrag(Drag):
         # 動いて見えないよう、ここで戻す
         resized = keep_anchor(self.origin_rect, resized, self.handle, rotation)
         # 斜めの組は、細いほうが最小幅を割る手前で止める。下見のうちに
-        # 押し戻しておけば、離した瞬間に形が飛ぶことがない
+        # 押し戻しておけば、離した瞬間に形が飛ぶことがない。
+        # **掴んでいるつまみを渡す。** 渡さないと、押し戻す軸と掴んでいる
+        # 軸が食い違い、引いていない辺まで動く（→ `clamp_slant_rect`）
         pair = view.state.selected_slant_pair
         if pair is not None:
-            resized = clamp_slant_rect(pair, resized, view.state.settings)
+            resized = clamp_slant_rect(
+                pair, resized, view.state.settings, self.handle
+            )
         self.preview_rect = resized
 
     def commit(self, view: PageView) -> None:
@@ -3013,10 +3017,20 @@ class PageView(QGraphicsView):
         if pair is not None:
             if self.state.page.slant_bounds(pair) == rect:
                 return
-            with self.state.edit_page("斜めのコマの大きさ変更") as page:
-                set_slant_pair_rect(
-                    page, page.slant_pair_of(panel_id), rect, self.state.settings
-                )
+            # **断りは状態表示に出す**（分割と同じ扱い → `_apply_split`）。
+            # `clamp_slant_rect` が下見のうちに押し戻すので普段は通らないが、
+            # 元から割れない大きさの組（手で書き換えた project.json）では
+            # ここが最後の受け皿になる。捕まえないと例外が
+            # `mouseReleaseEvent` を突き抜け、**何も起きなかったようにしか
+            # 見えないまま**大きさ変更が失敗する（2026-08-09 に発見）
+            try:
+                with self.state.edit_page("斜めのコマの大きさ変更") as page:
+                    set_slant_pair_rect(
+                        page, page.slant_pair_of(panel_id), rect, self.state.settings
+                    )
+            except ValueError as e:
+                self.state.message.emit(str(e))
+                return
             self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return
 

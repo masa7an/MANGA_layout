@@ -12,6 +12,7 @@ import pytest
 
 from manga_layout import Polygon, Rect, new_project
 from manga_layout.layout import (
+    HANDLES,
     LayoutSettings,
     image_at,
     panel_at,
@@ -417,3 +418,110 @@ class TestSlideSlant:
         clamped = clamp_slant_rect(pair, Rect(0.0, 0.0, 20.0, 100.0), SETTINGS)
         set_slant_pair_rect(page, pair, clamped, SETTINGS)
         assert page.slant_bounds(pair).h == pytest.approx(clamped.h)
+
+
+# **既定の設定で確かめる。** 上の SETTINGS は検証しやすさを取って
+# 隙間 6 / 最小 5 にしてあるが、その値では `slant_max_height` が負にならず、
+# 高さ 0 の矩形ができる領域へ入れない。実機で起きた不具合は既定
+# （隙間 35 / 最小 30）でしか再現しない（2026-08-09）
+PROD = LayoutSettings()
+
+# 既定の設定で割れる大きさ。ratio 0.5 のとき、高さ 300 に必要な幅は約 160px
+PROD_RECT = Rect(100.0, 100.0, 400.0, 300.0)
+
+
+@pytest.fixture
+def prod_pair():
+    """既定の設定で中央を斜めに割った組と、そのページ。"""
+    project = new_project()
+    page = project.pages[0]
+    panel = project.add_panel(page, PROD_RECT)
+    split_panel_slant(
+        project, page, panel.id, position=PROD_RECT.center[0], settings=PROD
+    )
+    return page, page.slant_pairs[0]
+
+
+class Testリサイズの押し戻し:
+    """**掴んだつまみが動かす辺だけが止まる**ことを固定する（2026-08-09）。
+
+    以前は掴んだつまみに関わらず「上端を据え置いて高さを削る」形だったため、
+    左右のつまみで高さが潰れ、上辺のつまみで下端が歩き、幅が一定以下では
+    高さ 0 の矩形ができて確定時に ValueError で落ちていた。
+    """
+
+    def test_左右のつまみでは高さが変わらない(self, prod_pair):
+        """症状A。幅を限界より細く引いても、高さと対辺は動かない。"""
+        _, pair = prod_pair
+        for width in (120.0, 100.0, 96.0, 30.0):
+            # 右辺を左へ引いた形。左辺（x=100）が動かない側
+            clamped = clamp_slant_rect(
+                pair, Rect(100.0, 100.0, width, 300.0), PROD, "e"
+            )
+            assert clamped.h == pytest.approx(300.0)
+            assert clamped.y == pytest.approx(100.0)
+            assert clamped.x == pytest.approx(100.0)
+            assert clamped.w > width  # 限界まで押し戻されている
+            check_slant(clamped, pair.ratio, pair.angle, PROD)
+
+    def test_左辺を引くと右辺が動かない(self, prod_pair):
+        """押し戻す先も、掴んでいない側の辺は固定する。"""
+        _, pair = prod_pair
+        for width in (120.0, 30.0):
+            clamped = clamp_slant_rect(
+                pair, Rect(500.0 - width, 100.0, width, 300.0), PROD, "w"
+            )
+            assert clamped.right == pytest.approx(500.0)
+            assert clamped.h == pytest.approx(300.0)
+            check_slant(clamped, pair.ratio, pair.angle, PROD)
+
+    def test_上辺のつまみでは下端が動かない(self, prod_pair):
+        """症状B。高さを削って合わせるときも、対辺は据え置く。"""
+        _, pair = prod_pair
+        for top in (50.0, 20.0, 0.0):
+            clamped = clamp_slant_rect(
+                pair, Rect(100.0, top, 170.0, 400.0 - top), PROD, "n"
+            )
+            assert clamped.bottom == pytest.approx(400.0)
+            assert clamped.w == pytest.approx(170.0)
+            check_slant(clamped, pair.ratio, pair.angle, PROD)
+
+    def test_下辺のつまみでは上端が動かない(self, prod_pair):
+        _, pair = prod_pair
+        for height in (400.0, 600.0, 900.0):
+            clamped = clamp_slant_rect(
+                pair, Rect(100.0, 100.0, 170.0, height), PROD, "s"
+            )
+            assert clamped.y == pytest.approx(100.0)
+            assert clamped.w == pytest.approx(170.0)
+            check_slant(clamped, pair.ratio, pair.angle, PROD)
+
+    def test_どのつまみでどこまで引いても作り直せる(self, prod_pair):
+        """症状C。押し戻した結果はそのまま `set_slant_pair_rect` に通る。
+
+        以前は幅 96px 未満で高さ 0 の矩形ができ、`check_slant` が投げる
+        ValueError が `mouseReleaseEvent` を突き抜けていた。
+        """
+        page, pair = prod_pair
+        for handle in HANDLES:
+            for rect in (
+                Rect(100.0, 100.0, 30.0, 300.0),
+                Rect(100.0, 100.0, 30.0, 30.0),
+                Rect(100.0, 100.0, 400.0, 2000.0),
+                Rect(100.0, 100.0, 60.0, 900.0),
+            ):
+                clamped = clamp_slant_rect(pair, rect, PROD, handle)
+                assert clamped.w > 0.0, handle
+                assert clamped.h > 0.0, handle
+                # 落ちないことがこのテストの主眼。形は上の3つで見ている
+                set_slant_pair_rect(page, pair, clamped, PROD)
+
+    def test_つまみを渡さなくても割れる大きさに収まる(self, prod_pair):
+        """`handle` は既定値のままでも `check_slant` を通す。
+
+        渡し忘れた呼び出しが例外の経路へ落ちないことの保険。
+        """
+        _, pair = prod_pair
+        for rect in (Rect(0.0, 0.0, 30.0, 300.0), Rect(0.0, 0.0, 400.0, 2000.0)):
+            clamped = clamp_slant_rect(pair, rect, PROD)
+            check_slant(clamped, pair.ratio, pair.angle, PROD)
