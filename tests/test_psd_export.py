@@ -572,6 +572,26 @@ class Testトーンを4枚に分ける:
         assert "白ベタ" not in names and "トーン" not in names
         assert "トーン範囲" in names, "目印だけは出す"
 
+    def test_不透明度が1未満なら分けない(self, with_tone):
+        """分けると絵・白ベタ・トーンの別々のレイヤーへ不透明度が個別に
+        掛かるが、焼き込み（PNG）は合成してから1回だけ掛けるため、
+        分けたままでは重ね直した結果が PNG と一致しなくなる
+        （2026-08-08 に発見）。
+        """
+        with with_tone.edit("不透明度を下げる") as project:
+            project.pages[0].panels[0].children[0].opacity = 0.5
+        names = flat_names(page_layers(with_tone, with_tone.project.pages[0], 1.0))
+        assert "白ベタ" not in names and "トーン" not in names
+        assert "トーン範囲" in names, "目印だけは出す"
+
+    def test_不透明度が1未満でも重ね直せばPNGと一致する(self, with_tone):
+        with with_tone.edit("不透明度を下げる") as project:
+            project.pages[0].panels[0].children[0].opacity = 0.5
+        page = with_tone.project.pages[0]
+        width, height = round(page.size.w), round(page.size.h)
+        layers = page_layers(with_tone, page, 1.0)
+        assert max_difference(flatten(layers, width, height), render_page(with_tone, page, 1.0)) <= 1
+
     def test_重ねていても重ね直せばPNGと一致する(self, with_tone, dark_png):
         ref, px = with_tone.import_bytes(dark_png)
         with with_tone.edit("重ねる") as project:
@@ -663,6 +683,20 @@ class Testファイルに書く:
         path = export_psd_pages(state, [0], tmp_path, 0.5)[0]
         parsed = parse_psd(path.read_bytes())
         assert (parsed["width"], parsed["height"]) == (150, 200)
+
+    def test_画像の確保に失敗すると分かるエラーになる(self, state, tmp_path, monkeypatch):
+        """PNG 側（`export.render_page`）と同じ守りを PSD 側にも持たせる。
+
+        以前はここだけ `isNull()` を確認しておらず、確保に失敗すると
+        ヌルの画像のまま進んで、無関係な例外か誤った文言になっていた
+        （実際の到達には巨大なページ＋メモリ逼迫が要るため、ここでは
+        `isNull` を差し替えて模擬する。2026-08-08 に発見）。
+        """
+        from PySide6.QtGui import QImage
+
+        monkeypatch.setattr(QImage, "isNull", lambda self: True)
+        with pytest.raises(ExportError, match="確保できませんでした"):
+            export_psd_pages(state, [0], tmp_path, 1.0)
 
 
 class Test途中で止める:

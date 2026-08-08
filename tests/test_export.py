@@ -630,6 +630,47 @@ class Test画面からの書き出し:
         dest = export_dir_of(window.state)
         assert sorted(p.name for p in dest.iterdir()) == ["p01.png", "p02.png", "p03.png"]
 
+    def test_完了メッセージの画素数は書き出したページのもの(self, window, monkeypatch):
+        """以前は表示中のページの寸法で決めていた。
+
+        ページごとに大きさが違う作品（→ 要件定義 6.1）で全ページ書き出すと、
+        表示中のページと違う画素数を書き出した場合に、実際とは違う数字が
+        出ていた（2026-08-08 に発見）。ここは単ページ書き出しなので、
+        「表示中＝書き出した」で以前から一致していた側の確認
+        （→ 下の「サイズが違うと画素数を言わない」と対）。
+        """
+        with window.state.edit("寸法を変える") as project:
+            project.pages[0].size = Size(300.0, 400.0)
+        _accept_dialog(monkeypatch, all_pages=False, scale=1.0)
+
+        window.files.export_image()
+
+        assert "300 × 400 画素" in window.statusBar().currentMessage()
+
+    def test_サイズが違うページを全ページ書き出すと画素数を言わない(
+        self, window, monkeypatch
+    ):
+        with window.state.edit("寸法を変える") as project:
+            project.pages[0].size = Size(300.0, 400.0)
+        window.state.add_page(size=Size(500.0, 600.0))
+        _accept_dialog(monkeypatch, all_pages=True, scale=1.0)
+
+        window.files.export_image()
+
+        message = window.statusBar().currentMessage()
+        assert "×" not in message, "個別の画素数を出してはいけない"
+        assert "ページごとに異なる" in message
+
+    def test_サイズが同じなら全ページ書き出しでも画素数を言う(self, window, monkeypatch):
+        with window.state.edit("寸法を変える") as project:
+            project.pages[0].size = Size(300.0, 400.0)
+        window.state.add_page(size=Size(300.0, 400.0))
+        _accept_dialog(monkeypatch, all_pages=True, scale=1.0)
+
+        window.files.export_image()
+
+        assert "300 × 400 画素" in window.statusBar().currentMessage()
+
     def test_保存前は保存を促す(self, qapp, monkeypatch):
         window = MainWindow(EditorState())
         asked: list[str] = []

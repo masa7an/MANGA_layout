@@ -32,7 +32,6 @@
 
 from __future__ import annotations
 
-import os
 import pathlib
 from collections.abc import Callable
 
@@ -49,6 +48,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..errors import ExportError
+from ..export_io import replace_or_raise, tmp_path_for
 from ..geometry import Size
 from ..images import ImageCache, Preview, ToneCache, full_from_bytes
 from ..model import DEFAULT_PAGE_SIZE, Page, StickerObject
@@ -81,9 +81,6 @@ DEFAULT_SCALE = FULL_SCALE
 # 1辺に許す画素数の上限。A4 相当を 600dpi で描いた 7016px を超える大きさは、
 # 確保できても待たされるだけになる
 MAX_SIDE_PX = 8000
-
-# 書き出し中の PNG が完成品に見えないよう、いったんこの名前で書いて置き換える
-TMP_SUFFIX = ".tmp"
 
 
 # -- 画素数とファイル名 ------------------------------------------------------
@@ -253,8 +250,8 @@ class FullImages:
     def base(self, ref: str) -> Preview | None:
         """トーンを焼く前の1枚。
 
-        **PSD の「トーン範囲」（→ `psd_export.ToneMasks`）も同じ入れ物から
-        引く。** 別に持つと、同じ絵を1ページで2回展開することになる。
+        **PSD の「トーン範囲」（→ `psd_export.TonePieceImages`）も同じ入れ物
+        から引く。** 別に持つと、同じ絵を1ページで2回展開することになる。
         """
         return self._cache.get(ref, lambda: self.state.read_asset(ref))
 
@@ -316,25 +313,19 @@ def write_image(
     """1枚書く。**別名で書き切ってから置き換える。**
 
     上書きの途中で落ちても、前回の書き出しが壊れた状態で残らない。
-    保存（`storage.atomic_write_text`）と同じ考え方。
+    保存（`storage.atomic_write_text`）と同じ考え方。置き換えの最後の
+    1歩は PSD（`psd.write_psd`）と共有（→ `export_io`）。
 
     `quality`（0〜100）は JPG のときだけ効く。PNG では無視される
     （-1 は Qt の既定の圧縮）。既定値の出どころは `AppSettings.jpg_quality`
     （→ 設定に外部化、要件定義 6.7）。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + TMP_SUFFIX)
+    tmp = tmp_path_for(path)
     if not image.save(str(tmp), fmt, quality):
         tmp.unlink(missing_ok=True)
         raise ExportError(f"書き出せませんでした: {path}")
-    try:
-        os.replace(tmp, path)
-    except OSError as e:
-        tmp.unlink(missing_ok=True)
-        raise ExportError(
-            f"{path.name} を置き換えられませんでした（{e}）。"
-            "他のアプリで開いたままになっていないか確かめてください"
-        ) from e
+    replace_or_raise(tmp, path)
 
 
 def export_pages(

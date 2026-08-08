@@ -540,13 +540,28 @@ class ProjectIO:
             return False
 
         where = written[0].name if len(written) == 1 else f"{len(written)} 枚"
-        px = page_px(self._state.page.size, self.export_scale)
         self._state.message.emit(
             f"{dest} に {where} を書き出しました"
             f"（{self.export_format}・{scale_label(self.export_scale)}・"
-            f"{px[0]:,} × {px[1]:,} 画素）"
+            f"{self._exported_px_note(indexes)}）"
         )
         return True
+
+    def _exported_px_note(self, indexes: list[int]) -> str:
+        """書き出した画素数を1行で言う。
+
+        **書き出したページの寸法から出す。** 以前は表示中のページ
+        （`self._state.page`）で決めていたため、ページごとに大きさが
+        違う作品（→ 要件定義 6.1）で全ページ書き出すと、実際とは違う
+        画素数が出ることがあった（2026-08-08 に発見）。
+
+        ページによって大きさが違えば、1つの画素数では言えない。
+        """
+        sizes = {self._state.project.pages[i].size for i in indexes}
+        if len(sizes) > 1:
+            return "画素数はページごとに異なる"
+        px = page_px(next(iter(sizes)), self.export_scale)
+        return f"{px[0]:,} × {px[1]:,} 画素"
 
     # -- 終了時 ------------------------------------------------------------
 

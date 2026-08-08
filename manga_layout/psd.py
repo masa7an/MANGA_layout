@@ -36,8 +36,8 @@ PC で同じ環境を作れなくなる**（`requirements.txt` はバージョ�
 
 from __future__ import annotations
 
-import os
 import pathlib
+import re
 import struct
 import sys
 from dataclasses import dataclass
@@ -46,6 +46,7 @@ from PySide6.QtCore import QRect
 from PySide6.QtGui import QImage
 
 from .errors import ExportError
+from .export_io import replace_or_raise, tmp_path_for
 
 SIGNATURE = b"8BPS"
 VERSION = 1
@@ -64,11 +65,6 @@ COMPRESSION_RLE = 1
 
 # PackBits のひとかたまりの上限（127+1 個）
 _MAX_RUN = 128
-
-# 書き出し中のファイルが完成品に見えないよう、いったんこの名前で書いて
-# 置き換える（`ui.export.write_image` と同じ考え方）
-TMP_SUFFIX = ".tmp"
-
 
 @dataclass(frozen=True)
 class PsdLayer:
@@ -216,11 +212,16 @@ def crop_to_content(image: QImage) -> tuple[QImage, int, int] | None:
 
 # -- 圧縮 --------------------------------------------------------------------
 
-# 「同じ値が3つ以上続く場所」を探すときの手掛かり。**0x00 と 0xFF だけ
-# 見る。** 透明な所（0）と、白・黒で塗られた所（255 / 0）がこの2つで、
-# 長く続くのは実際ほぼこれしかない。絵の部分は元々ほとんど縮まないので、
-# そこを丁寧に探しても待ち時間が増えるだけになる。
-_RUN_SEEDS = (b"\x00\x00\x00", b"\xff\xff\xff")
+# 「同じ値が3つ以上続く場所」を正規表現1つで探す。`[\s\S]` は改行も含めた
+# 任意の1バイトに一致させるため（`.` は既定で改行に一致しない）。
+#
+# **以前は 0x00 / 0xFF の2値だけを種にしていた。** 透明な所（0）と、白・黒で
+# 塗られた所（255 / 0）が長く続く典型例だが、**灰色トーン**（→ 6.27）は
+# 中間値（例: 濃さ 0.35 で RGB=166）のベタが面積いっぱいに続くことがあり、
+# その値は種に無いため見つからずリテラルのまま書かれていた。ファイルが
+# 肥大するだけで壊れはしないが（2026-08-08 に発見）、正規表現なら値を
+# 限定せずに済み、C 実装なので速度もこれまでと変わらない。
+_RUN_RE = re.compile(rb"([\s\S])\1{2,}")
 
 
 def packbits(data: bytes) -> bytes:
@@ -257,12 +258,8 @@ def packbits(data: bytes) -> bytes:
 
 def _next_run(data: bytes, pos: int) -> int:
     """次に同じ値が3つ以上続く場所。見つからなければ -1。"""
-    found = -1
-    for seed in _RUN_SEEDS:
-        i = data.find(seed, pos)
-        if i >= 0 and (found < 0 or i < found):
-            found = i
-    return found
+    match = _RUN_RE.search(data, pos)
+    return match.start() if match else -1
 
 
 def _literals(out: bytearray, data: bytes, start: int, end: int) -> None:
@@ -504,22 +501,15 @@ def write_psd(
 ) -> None:
     """1つ書く。**別名で書き切ってから置き換える。**
 
-    途中で落ちても、前回の書き出しが壊れた状態で残らない
-    （`ui.export.write_image` と同じ）。
+    途中で落ちても、前回の書き出しが壊れた状態で残らない。置き換えの
+    最後の1歩は `ui.export.write_image` と共有（→ `export_io`）。
     """
     data = psd_bytes(layers, merged, dpi)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + TMP_SUFFIX)
+    tmp = tmp_path_for(path)
     try:
         tmp.write_bytes(data)
     except OSError as e:
         tmp.unlink(missing_ok=True)
         raise ExportError(f"書き出せませんでした: {path}（{e}）") from e
-    try:
-        os.replace(tmp, path)
-    except OSError as e:
-        tmp.unlink(missing_ok=True)
-        raise ExportError(
-            f"{path.name} を置き換えられませんでした（{e}）。"
-            "他のアプリで開いたままになっていないか確かめてください"
-        ) from e
+    replace_or_raise(tmp, path)

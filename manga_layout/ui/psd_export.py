@@ -78,6 +78,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter, QPainterPath, QPainterPathStroker
 
+from ..errors import ExportError
 from ..images import ImageCache, Preview, full_from_bytes, full_rough_from_bytes
 from ..model import BalloonObject, ImageObject, Page, Panel, StickerObject, TextObject
 from ..psd import PsdGroup, PsdLayer, crop_to_content, write_psd
@@ -359,11 +360,19 @@ def _splittable(panel: Panel) -> bool:
     そこだけは分けずに焼いた1枚を出す（今までどおり）。**重なっているか
     どうかまでは見ない**——見るには回転を含む形の判定が要るうえ、外した
     ときの結果が「絵の上にトーンが乗る」という気づきにくい間違いになる。
+
+    **不透明度が1.0未満でトーンが入った絵も、分けずに焼いた1枚を出す。**
+    分けると「絵」「白ベタ」「トーン」の別々のレイヤーそれぞれに不透明度が
+    個別に掛かるが、焼き込み（PNG）は合成してから1回だけ掛けるため、
+    数式として一致しない（2026-08-08 に発見。画像の不透明度を変える
+    手段は今の画面に無く、手書きの project.json でのみ到達する）。
     """
     images = sorted(
         (c for c in panel.children if isinstance(c, ImageObject)), key=lambda c: c.z
     )
-    return not any(img.tone is not None for img in images[:-1])
+    if any(img.tone is not None for img in images[:-1]):
+        return False
+    return not any(img.tone is not None and img.opacity < 1.0 for img in images)
 
 
 def _panel_group(
@@ -431,6 +440,14 @@ def _build(
     こととは無関係。
     """
     canvas = QImage(width, height, QImage.Format.Format_ARGB32)
+    if canvas.isNull():
+        # PNG 側（`export.render_page`）と同じ守り。ここだけ抜けていると、
+        # 確保に失敗したときヌルの画像のまま進み、`crop_to_content` の先で
+        # 無関係な例外（または誤ったエラー文言）になる（2026-08-08 に発見）
+        raise ExportError(
+            f"{width} × {height} 画素の画像を確保できませんでした。"
+            "画像サイズを下げてください"
+        )
     canvas.fill(Qt.GlobalColor.transparent)
 
     painter = QPainter(canvas)
@@ -464,6 +481,11 @@ def flatten(
     形式は `render_page` と揃える（`_build` と同じ理由）。
     """
     out = QImage(width, height, QImage.Format.Format_ARGB32)
+    if out.isNull():
+        raise ExportError(
+            f"{width} × {height} 画素の画像を確保できませんでした。"
+            "画像サイズを下げてください"
+        )
     out.fill(Qt.GlobalColor.transparent)
     painter = QPainter(out)
     _paint(painter, layers)
