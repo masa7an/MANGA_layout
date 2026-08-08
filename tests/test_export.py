@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QMessageBox, QProgressDialog
 
 from manga_layout import ExportError, ImageObject, Rect, Size
 from manga_layout.images import PREVIEW_MAX_PX
@@ -398,6 +398,43 @@ class Test書き出しの実行:
             write_image(render_page(saved_state, saved_state.page, 0.5), blocked / "p01.png")
 
 
+class Test途中で止める:
+    """`on_page` の口（→ `project_io._run_export` の進捗窓）。
+
+    全ページを GUI スレッド上で直列に書くため、以前は待機カーソルだけで
+    数十ページの PSD 書き出しが「応答なし」に見えた（2026-08-08 に発見）。
+    ここは Qt に触れずに、渡したコールバックの呼ばれ方だけを見る。
+    """
+
+    def test_1枚ごとに呼ばれる(self, saved_state):
+        saved_state.add_page()
+        saved_state.add_page()
+        dest = export_dir_of(saved_state)
+        seen = []
+
+        export_pages(saved_state, [0, 1, 2], dest, 0.5, on_page=lambda d, t: seen.append((d, t)) or True)
+
+        assert seen == [(1, 3), (2, 3), (3, 3)]
+
+    def test_偽を返すとそこで打ち切る(self, saved_state):
+        saved_state.add_page()
+        saved_state.add_page()
+        dest = export_dir_of(saved_state)
+
+        written = export_pages(saved_state, [0, 1, 2], dest, 0.5, on_page=lambda d, t: d < 2)
+
+        assert [p.name for p in written] == ["p01.png", "p02.png"]
+        assert [p.name for p in dest.iterdir()] == ["p01.png", "p02.png"]
+
+    def test_渡さなければ今までどおり全部書く(self, saved_state):
+        saved_state.add_page()
+        dest = export_dir_of(saved_state)
+
+        written = export_pages(saved_state, [0, 1], dest, 0.5)
+
+        assert len(written) == 2
+
+
 class TestJPG書き出し:
     """PNG に加えて JPG も選べること（要件定義 6.7）。
 
@@ -519,7 +556,7 @@ class Test画面からの書き出し:
 
         captured: dict = {}
 
-        def fake_export_pages(state, indexes, dest, scale, fmt, quality):
+        def fake_export_pages(state, indexes, dest, scale, fmt, quality, on_page=None):
             captured["quality"] = quality
             return [dest / page_filename(indexes[0], state.page_count, fmt)]
 
@@ -536,6 +573,62 @@ class Test画面からの書き出し:
 
         assert not window.files.export_image()
         assert not export_dir_of(window.state).exists()
+
+    def test_進捗窓の中止で途中までしか書かない(self, window, monkeypatch):
+        """全ページ書き出しを、中止ボタンを模して1枚目で止める。
+
+        以前は待機カーソルだけで、数十ページの PSD 書き出しでは画面が
+        固まって「応答なし」に見えた（2026-08-08 に発見）。ここは
+        `QProgressDialog` そのものに触れて中止の経路を確かめる。
+        """
+        window.add_page()
+        window.add_page()
+        _accept_dialog(monkeypatch, all_pages=True)
+
+        real_set_value = QProgressDialog.setValue
+
+        def cancel_after_first_page(self, value):
+            real_set_value(self, value)
+            if value >= 1:
+                # 1枚書けた時点で、利用者が中止ボタンを押したことにする
+                self.cancel()
+
+        monkeypatch.setattr(QProgressDialog, "setValue", cancel_after_first_page)
+
+        assert not window.files.export_image()
+
+        dest = export_dir_of(window.state)
+        assert [p.name for p in dest.iterdir()] == ["p01.png"]
+
+    def test_中止した枚数を状態表示に出す(self, window, monkeypatch):
+        window.add_page()
+        window.add_page()
+        _accept_dialog(monkeypatch, all_pages=True)
+
+        real_set_value = QProgressDialog.setValue
+
+        def cancel_after_first_page(self, value):
+            real_set_value(self, value)
+            if value >= 1:
+                self.cancel()
+
+        monkeypatch.setattr(QProgressDialog, "setValue", cancel_after_first_page)
+
+        window.files.export_image()
+
+        assert "中止" in window.statusBar().currentMessage()
+        assert "1/3" in window.statusBar().currentMessage()
+
+    def test_中止せず終えれば全部書く(self, window, monkeypatch):
+        """指摘の前後で壊してはいけない、既存の正常系。"""
+        window.add_page()
+        window.add_page()
+        _accept_dialog(monkeypatch, all_pages=True)
+
+        assert window.files.export_image()
+
+        dest = export_dir_of(window.state)
+        assert sorted(p.name for p in dest.iterdir()) == ["p01.png", "p02.png", "p03.png"]
 
     def test_保存前は保存を促す(self, qapp, monkeypatch):
         window = MainWindow(EditorState())

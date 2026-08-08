@@ -72,6 +72,7 @@
 from __future__ import annotations
 
 import pathlib
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
@@ -493,10 +494,15 @@ def export_psd_pages(
     indexes,
     dest: pathlib.Path,
     scale: float = DEFAULT_SCALE,
+    on_page: Callable[[int, int], bool] | None = None,
 ) -> list[pathlib.Path]:
     """指定したページを PSD にする。書いたファイルの一覧を返す。
 
     1ページ1ファイル。途中で失敗したらそこで止める（`export_pages` と同じ）。
+
+    `on_page` の意味も `export_pages` と同じ（→ そちらの docstring）。
+    PSD は1ページ 10〜30MB あり全ページで数百MB になり得るため
+    （→ 要件定義 10.1）、進捗と中止の口は特にこちらで効いてくる。
     """
     total = state.page_count
     written: list[pathlib.Path] = []
@@ -507,4 +513,6 @@ def export_psd_pages(
         path = dest / page_filename(i, total, PSD_FORMAT)
         write_psd(path, layers, flatten(layers, width, height), export_dpi(scale))
         written.append(path)
+        if on_page is not None and not on_page(len(written), len(indexes)):
+            break
     return written

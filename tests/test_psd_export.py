@@ -664,6 +664,37 @@ class Testファイルに書く:
         parsed = parse_psd(path.read_bytes())
         assert (parsed["width"], parsed["height"]) == (150, 200)
 
+
+class Test途中で止める:
+    """`on_page` の口（→ `project_io._run_export` の進捗窓）。
+
+    PSD は1ページ 10〜30MB あり全ページで数百MB になり得る
+    （→ 要件定義 10.1）ので、進捗と中止の意味がPNGよりはっきり出る所。
+    仕組み自体は `export.export_pages` と同じ（→ `tests/test_export.py`）。
+    """
+
+    def test_1枚ごとに呼ばれる(self, state, tmp_path):
+        with state.edit("2ページ目") as project:
+            project.pages.append(type(project.pages[0])(id="p2", size=SMALL_PAGE))
+        dest = tmp_path / "出力"
+        seen = []
+
+        export_psd_pages(
+            state, [0, 1], dest, 1.0, on_page=lambda d, t: seen.append((d, t)) or True
+        )
+
+        assert seen == [(1, 2), (2, 2)]
+
+    def test_偽を返すとそこで打ち切る(self, state, tmp_path):
+        with state.edit("2ページ目") as project:
+            project.pages.append(type(project.pages[0])(id="p2", size=SMALL_PAGE))
+        dest = tmp_path / "出力"
+
+        written = export_psd_pages(state, [0, 1], dest, 1.0, on_page=lambda d, t: False)
+
+        assert [p.name for p in written] == ["p01.psd"]
+        assert [p.name for p in dest.iterdir()] == ["p01.psd"]
+
     def test_既定の倍率で書ける(self, state, tmp_path):
         path = export_psd_pages(state, [0], tmp_path)[0]
         parsed = parse_psd(path.read_bytes())

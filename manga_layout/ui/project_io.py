@@ -11,8 +11,13 @@ import pathlib
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QMessageBox,
+    QProgressDialog,
+)
 
 from ..autosave_log import AutosaveLog
 from ..errors import MangaLayoutError
@@ -468,13 +473,38 @@ class ProjectIO:
         # JPG 品質は `default_parent` と同じく使う直前に読み直す。設定は
         # 手で書き換える前提のファイルなので、起動したままでも効かせたい
         quality = load_settings(self._window.settings_file).jpg_quality
-        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+        # **待機カーソルだけでは、数十ページの PSD 書き出しで「応答なし」に
+        # 見える。** 1ページ 10〜30MB（→ 要件定義 10.1）で、全ページぶん
+        # 描画と圧縮を GUI スレッド上で直列にこなすため、画面が固まって
+        # いる間は落ちたのか進んでいるのか区別が付かなかった（2026-08-08
+        # に発見）。ページごとに進捗を出し、途中で止められるようにする
+        dialog = QProgressDialog(
+            "書き出しています…", "中止", 0, len(indexes), self._window
+        )
+        dialog.setWindowTitle("書き出し")
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        # 1ページだけ・小さいページなど、一瞬で終わる書き出しでは出さない。
+        # 明示的に show() すると即座に出てしまうので呼ばない
+        # （→ PySide6の落とし穴.md 6）
+        dialog.setMinimumDuration(500)
+        # 既定（自動リセット）のままだと、依頼枚数ぴったりまで value を
+        # 進めた瞬間に中止フラグごと初期状態へ戻ってしまう
+        # （→ PySide6の落とし穴.md 6）
+        dialog.setAutoReset(False)
+
+        def on_page(done: int, total: int) -> bool:
+            dialog.setLabelText(f"書き出しています… ({done}/{total})")
+            dialog.setValue(done)
+            QApplication.processEvents()
+            return not dialog.wasCanceled()
+
         try:
             if self.export_format in LAYERED_FORMATS:
                 # PSD は1枚に潰さずレイヤーに分けて書く（→ 要件定義 10.1）。
                 # 品質（JPG 用）も倍率以外の引数も要らない
                 written = export_psd_pages(
-                    self._state, indexes, dest, self.export_scale
+                    self._state, indexes, dest, self.export_scale, on_page=on_page
                 )
             else:
                 written = export_pages(
@@ -484,12 +514,30 @@ class ProjectIO:
                     self.export_scale,
                     self.export_format,
                     quality,
+                    on_page=on_page,
                 )
         except (MangaLayoutError, OSError) as e:
             QMessageBox.critical(self._window, "書き出せません", str(e))
             return False
         finally:
-            QGuiApplication.restoreOverrideCursor()
+            dialog.close()
+
+        if len(written) < len(indexes):
+            # `on_page` が偽を返したとき以外にここへ来る道は無い
+            # （例外は上で別に捕まえている）。`dialog.wasCanceled()` を
+            # 併せて見ないのは、`QProgressDialog` の既定が「依頼枚数
+            # ぴったりまで進めると中止フラグごと初期状態に戻る」ためで
+            # （→ PySide6の落とし穴.md 6）、**枚数の過不足だけで判断すれば
+            # その挙動に振り回されない**
+            #
+            # 中止しても、そこまで書けた分は残す（失敗で止めたときと同じ
+            # 扱い → `export_pages` の docstring）。消すほうが親切に見えて、
+            # 「どこまで進んだか」が一切分からなくなるほうが困る
+            self._state.message.emit(
+                f"書き出しを中止しました（{len(written)}/{len(indexes)} 枚"
+                f"まで {dest} に書き出し済み）"
+            )
+            return False
 
         where = written[0].name if len(written) == 1 else f"{len(written)} 枚"
         px = page_px(self._state.page.size, self.export_scale)

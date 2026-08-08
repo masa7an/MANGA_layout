@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+from collections.abc import Callable
 
 from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import (
@@ -343,11 +344,17 @@ def export_pages(
     scale: float = FULL_SCALE,
     fmt: str = DEFAULT_FORMAT,
     quality: int = -1,
+    on_page: Callable[[int, int], bool] | None = None,
 ) -> list[pathlib.Path]:
     """指定したページを画像にする。書いたファイルの一覧を返す。
 
     途中で失敗したらそこで止める。残りを飛ばして進めると、どこまでが
     今回の書き出しなのか分からないファイルの山になる。
+
+    `on_page` は1ページ書くごとに `(書いた枚数, 依頼された枚数)` で呼ぶ。
+    **偽を返せば、そこで打ち切る。** 進捗窓と中止ボタンをつなぐための口で、
+    ここ自体は Qt に触れない（→ `project_io._run_export`）。渡さなければ
+    全ページ書き通す、今までどおりの動きになる。
     """
     if fmt in LAYERED_FORMATS:
         # ここへ来るのは呼ぶ側の間違い。Qt に投げると「書き出せませんでした」
@@ -361,6 +368,8 @@ def export_pages(
         path = dest / page_filename(i, total, fmt)
         write_image(image, path, fmt, quality)
         written.append(path)
+        if on_page is not None and not on_page(len(written), len(indexes)):
+            break
     return written
 
 
