@@ -852,6 +852,46 @@ def test_別の項目を触ると連打が区切れる(window_with_tone):
     assert len(state.history._undo) == before + 1
 
 
+def test_選び直すと連打が区切れる(window_with_tone):
+    """同じ画像でも、選び直せば別の手として積む（2026-08-08 発見）。
+
+    以前は道具を `TOOL_TONE_AREA` から持ち替えたときにしか区切られず、
+    メニューから触っている限り選び直しただけでは前の連打に吸い込まれて
+    いた（→ `EditorState.select`）。
+    """
+    state = window_with_tone.state
+    img_id = image(window_with_tone).id
+    state.step_tone_density(1)
+    state.select(None)
+    state.select(img_id)
+    before = len(state.history._undo)
+
+    state.step_tone_density(1)
+
+    assert len(state.history._undo) == before + 1
+
+
+def test_ページ移動だけでも連打の鍵が消える(window_with_tone):
+    """ページを移った時点で、選び直す前でも鍵を打ち切る
+    （2026-08-08 発見 → `EditorState._go_to_page`）。
+
+    ページを足す `add_page()` はページの追加そのものを1手として積むため、
+    その `commit` 自体が鍵を消してしまい、`_go_to_page` 単体の効きを
+    見分けられない。ここでは先に2ページ作ってから、**編集を挟まない**
+    `set_page_index` だけで確かめる。
+    """
+    state = window_with_tone.state
+    state.add_page()
+    state.set_page_index(0)
+    state.select(image(window_with_tone).id)
+    state.step_tone_density(1)
+    assert state.history._merge_key is not None
+
+    state.set_page_index(1)
+
+    assert state.history._merge_key is None
+
+
 def test_端まで来たらキーも効かない(window_with_tone):
     from PySide6.QtCore import Qt
 

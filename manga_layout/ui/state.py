@@ -464,6 +464,12 @@ class EditorState(QObject):
         if panel_id == self._selected_id:
             return
         self._selected_id = panel_id
+        # 連打でまとめている1手をここで区切る（→ `_step_tone`）。道具を
+        # `TOOL_TONE_AREA` から持ち替えていない場合でも、選び直した時点で
+        # 次の連打は別の手として積む（2026-08-08 発見。以前は道具を
+        # 持ち替えたときにしか区切られず、選び直しただけの連打が
+        # 前の画像の調整へ吸い込まれていた）
+        self.history.break_merge()
         # トーンの範囲を直す道具は、その画像を選んでいる間だけのもの。
         # 別のものへ移った時点で外す（→ `_leave_tone_tool_if_gone`）
         self._leave_tone_tool_if_gone()
@@ -484,6 +490,10 @@ class EditorState(QObject):
         """
         self._page_index = max(0, min(index, self.page_count - 1))
         self._selected_id = None
+        # ページを跨いだら連打のまとめ扱いを打ち切る（→ `select` と同じ理由。
+        # 2026-08-08 発見）。跨がないと、別ページへ移って戻ってきた同じ
+        # 画像への調整が、移る前の連打と1手にまとまってしまう
+        self.history.break_merge()
         self._leave_rough_tool_if_gone()
         self.page_changed.emit()
         self.selection_changed.emit()
@@ -2020,6 +2030,10 @@ class EditorState(QObject):
         self._selected_id = None
         self._page_index = max(0, min(self._page_index, self.page_count - 1))
         self._leave_rough_tool_if_gone()
+        # `_after_history_move` と同じ理由（→ そちら）。選択を必ず外すので
+        # トーンの範囲を直す道具も持ったままにしない（2026-08-08 発見。
+        # 以前はここだけ呼び忘れていた）
+        self._leave_tone_tool_if_gone()
         self.changed.emit()
         self.selection_changed.emit()
         self.page_changed.emit()

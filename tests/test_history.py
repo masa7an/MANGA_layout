@@ -323,6 +323,22 @@ class TestDiscardLast:
 
         assert history.undo() == "1手目"
 
+    def test_手前にredoが積まれていても消える(self, sample_project):
+        """`commit` と同じ不変条件（2026-08-08 発見）。
+
+        1手目→2手目→Undo（2手目がRedoへ積まれる）→1手目をdiscard_last、
+        という順だと、Redoに残った2手目には「捨てたはずの1手目」が
+        乗ったまま残っていた。Redo すると、捨てたコマまで生き返っていた。
+        """
+        history = History(sample_project)
+        self._add(history, "1手目")
+        self._add(history, "2手目")
+        history.undo()
+
+        history.discard_last("1手目")
+
+        assert not history.can_redo
+
     def test_保存の印も戻る(self, sample_project):
         """取り消した結果が保存時と同じなら、未保存の印は消えていること。"""
         history = History(sample_project)
@@ -333,6 +349,38 @@ class TestDiscardLast:
         history.discard_last("コマの追加")
 
         assert not history.is_dirty
+
+
+class TestForgetUndoHistory:
+    """今の中身は残したまま、Undo/Redo の記録だけを空にする
+    （→ `forget_undo_history`）。「未使用ファイルを整理」の後始末で使う。
+    """
+
+    def _add(self, history: History, label: str) -> None:
+        with history.edit(label) as project:
+            project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+
+    def test_記録が空になる(self, sample_project):
+        history = History(sample_project)
+        self._add(history, "1手目")
+        self._add(history, "2手目")
+        history.undo()
+        assert history.can_undo
+        assert history.can_redo
+
+        history.forget_undo_history()
+
+        assert not history.can_undo
+        assert not history.can_redo
+
+    def test_中身は変わらない(self, sample_project):
+        history = History(sample_project)
+        self._add(history, "1手目")
+        before = len(history.project.pages[0].panels)
+
+        history.forget_undo_history()
+
+        assert len(history.project.pages[0].panels) == before
 
 
 class TestLimit:

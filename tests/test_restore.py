@@ -33,6 +33,7 @@ from manga_layout.storage import (
     write_autosave,
 )
 from manga_layout.ui import EditorState
+from manga_layout.ui.state import TOOL_SELECT, TOOL_TONE_AREA
 
 
 def コマ数(project) -> int:
@@ -212,6 +213,23 @@ class Test画面からの復元:
 
         state.restore_backup(state.backups()[0].path)
         assert state.selected_id is None
+
+    def test_トーン範囲の道具は解除される(self, 保存済みの作品):
+        """選択は必ず外すので、道具も持ったままにしない
+        （→ `_after_history_move` と同じ理由）。ここだけ呼び忘れていた
+        （2026-08-08 発見 → `EditorState._after_restore`）。
+        """
+        state = self._状態(保存済みの作品)
+        image = state.page.panels[0].children[0]
+        state.select(image.id)
+        state.add_tone()
+        state.set_tool(TOOL_TONE_AREA)
+        with state.edit("コマの追加") as project:
+            project.add_panel(project.pages[0], Rect(0.0, 0.0, 10.0, 10.0))
+
+        state.restore_backup(state.backups()[0].path)
+
+        assert state.tool == TOOL_SELECT
 
     def test_ページ番号は範囲に収まる(self, 保存済みの作品):
         state = self._状態(保存済みの作品)

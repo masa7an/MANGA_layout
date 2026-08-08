@@ -1276,6 +1276,13 @@ class MainWindow(QMainWindow):
 
         保存時に自動で行わない理由は要件定義 5章。Undo で戻した画像の
         実体が消えてしまうため、利用者が選んだときだけ動かす。
+
+        **移した後は Undo の記録も空にする**（2026-08-08 発見）。整理は
+        「今のプロジェクトから参照が無い」画像だけを移すが、Undo の記録は
+        保存をまたいで積み上がっているので、整理より古い手まで戻ると、
+        そちらで参照していた画像が既に移動済みで参照が壊れる——保存時に
+        自動実行しない理由（Undo で戻した画像の実体が消える）と同じ壊れ方が、
+        手動整理の後にも起こり得た。
         """
         if self.state.project_dir is None:
             self.state.message.emit("先に作品を保存してください")
@@ -1301,11 +1308,16 @@ class MainWindow(QMainWindow):
         if not moved:
             self.state.message.emit("使われていない画像はありませんでした")
             return
+        # 整理より古い Undo の記録が、移した画像を参照したままだと
+        # 実体と食い違う（2026-08-08 発見）。整理の直後に記録を空にして、
+        # その組み合わせ自体を起こらなくする
+        self.state.history.forget_undo_history()
         QMessageBox.information(
             self,
             "整理しました",
             f"{len(moved)} 件を assets/_unused/ へ移しました。\n"
-            "削除はしていないので、戻したいときはフォルダから取り出せます。",
+            "削除はしていないので、戻したいときはフォルダから取り出せます。\n"
+            "この操作より前へは「元に戻す」で戻れなくなりました。",
         )
         self.state.message.emit(f"{len(moved)} 件を _unused/ へ移しました")
 

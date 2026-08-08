@@ -687,6 +687,32 @@ class Test未使用ファイルを整理:
 
         assert shown and "模擬した移動失敗" in shown[0]
 
+    def test_整理するとUndoの記録が空になる(
+        self, window_with_image, png_bytes, tmp_path, monkeypatch
+    ):
+        """整理より古い手が参照していた画像は、実体を `_unused/` へ
+        移した後は Undo で戻すと参照が壊れる。整理の直後に Undo の記録
+        自体を空にして、この組み合わせを起こらなくする（2026-08-08 発見）。
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        panel_id = window_with_image.state.page.panels[0].id
+        window_with_image.state.place_image(panel_id, png_bytes)
+        window_with_image.state.save(tmp_path)
+        window_with_image.state.undo()  # 2枚目を置く前まで戻し、未使用を作る
+        window_with_image.state.save(tmp_path)  # 戻した状態を保存し直し、未保存を消す
+        assert window_with_image.state.history.can_undo
+
+        monkeypatch.setattr(
+            QMessageBox,
+            "information",
+            lambda self, title, text: QMessageBox.StandardButton.Ok,
+        )
+
+        window_with_image.prune_assets()
+
+        assert not window_with_image.state.history.can_undo
+
 
 class TestImageSelection:
     def test_ダブルクリックで画像を選ぶ(self, window_with_image):

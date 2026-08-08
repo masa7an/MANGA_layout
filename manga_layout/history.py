@@ -229,6 +229,10 @@ class History:
         self._baseline = step.state
         self._project = _decode(step.state)
         self._merge_key = None
+        # `commit` と同じ不変条件を保つ（2026-08-08 発見）。捨てた1手を
+        # 手前に持つ Redo をそのまま残すと、その Redo で捨てたはずの
+        # 変更まで生き返る
+        self._redo.clear()
         return True
 
     def replace(self, project: Project, label: str) -> bool:
@@ -276,8 +280,21 @@ class History:
         self._merge_key = None
         return step.label
 
-    def clear(self) -> None:
-        """履歴を捨てる。別のプロジェクトを開いたときに呼ぶ。"""
+    def forget_undo_history(self) -> None:
+        """今の中身は残したまま、元に戻す／やり直すの記録だけを空にする。
+
+        **`reset()` とは別物。** あちらは別の作品へ入れ替えるためのもので、
+        `History` ごと作り直す。こちらは同じ作品のまま、**過去の状態には
+        もう戻れない**ことを表明する側で使う。
+
+        使い道は「未使用ファイルを整理」（→ `EditorState.prune_assets`）。
+        あの操作は今のプロジェクトに参照が残っていない画像の実体を
+        `assets/_unused/` へ移すが、Undo の記録はスナップショット方式で
+        保存をまたいで積み上がったままなので、整理より古い手まで
+        Undo で遡ると、そちらでは参照していた画像の実体が既に
+        移動済みで参照が壊れる（要件定義 5章）。整理の直後に記録を
+        捨てることで、その組み合わせ自体を起こらなくする。
+        """
         self._undo.clear()
         self._redo.clear()
         self._merge_key = None
