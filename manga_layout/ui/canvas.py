@@ -101,7 +101,6 @@ from ..model import (
 from ..slant import (
     clamp_slant_ratio,
     clamp_slant_rect,
-    set_slant_pair_rect,
     slant_boundary_x,
     slant_handle_point,
     slant_ratio_at,
@@ -2918,8 +2917,10 @@ class PageView(QGraphicsView):
         pair = self.state.page.slant_pair_of(panel_id)
         if pair is None or pair.ratio == ratio:
             return
-        self.state.slide_slant(panel_id, ratio)
-        self.state.message.emit(f"斜めの境界: 左から {ratio * 100:.0f}%")
+        # ずらせなかったときは断りが既に出ている（→ `EditorState._edit_slant`）。
+        # 上書きすると、効かなかった操作が成功したように見える
+        if self.state.slide_slant(panel_id, ratio):
+            self.state.message.emit(f"斜めの境界: 左から {ratio * 100:.0f}%")
 
     @staticmethod
     def _root_label(root_y: float) -> str:
@@ -3017,21 +3018,10 @@ class PageView(QGraphicsView):
         if pair is not None:
             if self.state.page.slant_bounds(pair) == rect:
                 return
-            # **断りは状態表示に出す**（分割と同じ扱い → `_apply_split`）。
-            # `clamp_slant_rect` が下見のうちに押し戻すので普段は通らないが、
-            # 元から割れない大きさの組（手で書き換えた project.json）では
-            # ここが最後の受け皿になる。捕まえないと例外が
-            # `mouseReleaseEvent` を突き抜け、**何も起きなかったようにしか
-            # 見えないまま**大きさ変更が失敗する（2026-08-09 に発見）
-            try:
-                with self.state.edit_page("斜めのコマの大きさ変更") as page:
-                    set_slant_pair_rect(
-                        page, page.slant_pair_of(panel_id), rect, self.state.settings
-                    )
-            except ValueError as e:
-                self.state.message.emit(str(e))
-                return
-            self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
+            # 割れない大きさなら断りが状態表示に出て False が返る
+            # （反転・境界の移動と共通 → `EditorState._edit_slant`）
+            if self.state.set_slant_rect(panel_id, rect):
+                self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
             return
 
         if panel.shape.bounds() == rect:

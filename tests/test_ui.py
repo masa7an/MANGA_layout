@@ -1947,3 +1947,74 @@ class Test壊れた作品を開く:
 
         assert load_project(tmp_path).load_warnings == []
         assert len(load_project(tmp_path).pages) == 1
+
+
+class Test割れない斜めの組:
+    """**元から割れない大きさの組**でも、断りを出すだけで例外は漏らさない。
+
+    アプリの操作では作れない（分割のときに `check_slant` を通り、以降の
+    ドラッグは下見のうちに押し戻される）ので、ここへ来るのは手で書き換えた
+    project.json だけ。それでも受けが要るのは、**漏れた例外を PySide6 が
+    印字して続けてしまう**ため——画面には何も出ないまま、押した操作だけが
+    効かない状態になる（2026-08-09 に発見。反転と境界の移動に受けが無かった）。
+    """
+
+    def _broken_pair(self, window):
+        """組を作ってから、2枚を直に縮めて割れない大きさにする。"""
+        from manga_layout import Polygon
+
+        with window.state.edit("コマの追加") as project:
+            panel = project.add_panel(
+                project.pages[0], Rect(100.0, 400.0, 200.0, 300.0)
+            )
+        window.view._apply_split(200.0, 550.0, tool=TOOL_SPLIT_SLANT)
+        window.state.select(panel.id)
+
+        page = window.state.page
+        pair = page.slant_pairs[0]
+        # 幅 40px。高さ 300px に必要な幅（約 160px）に遠く届かない
+        for panel_id in pair.members():
+            page.panel(panel_id).shape = Polygon.from_rect(
+                Rect(100.0, 400.0, 40.0, 300.0)
+            )
+        window.state.history.commit("組を壊す")
+        return page, pair
+
+    def _said(self, window):
+        seen = []
+        window.state.message.connect(seen.append)
+        return seen
+
+    def test_反転しても例外が漏れない(self, window):
+        page, _ = self._broken_pair(window)
+        said = self._said(window)
+
+        assert window.state.flip_slant() is False
+        assert any("斜めに割ると" in text for text in said), said
+        # 断ったので形も向きも変わらない
+        assert window.state.page.slant_pairs[0].direction == page.slant_pairs[0].direction
+
+    def test_境界を動かしても例外が漏れない(self, window):
+        page, pair = self._broken_pair(window)
+        said = self._said(window)
+
+        assert window.state.slide_slant(pair.left_id, 0.4) is False
+        assert any("斜めに割ると" in text for text in said), said
+        assert window.state.page.slant_pairs[0].ratio == pytest.approx(pair.ratio)
+
+    def test_大きさを変えても例外が漏れない(self, window):
+        _, pair = self._broken_pair(window)
+        said = self._said(window)
+
+        assert window.state.set_slant_rect(pair.left_id, Rect(0.0, 0.0, 40.0, 300.0)) is False
+        assert any("斜めに割ると" in text for text in said), said
+
+    def test_断った手は履歴に積まれない(self, window):
+        _, pair = self._broken_pair(window)
+        depth = window.state.history.depth
+
+        window.state.flip_slant()
+        window.state.slide_slant(pair.left_id, 0.4)
+        window.state.set_slant_rect(pair.left_id, Rect(0.0, 0.0, 40.0, 300.0))
+
+        assert window.state.history.depth == depth

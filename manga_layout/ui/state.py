@@ -78,7 +78,7 @@ from ..model import (
     new_project,
 )
 from ..settings import ROUGH_OPACITY_DEFAULT
-from ..slant import flip_slant_pair, slide_slant_pair
+from ..slant import flip_slant_pair, set_slant_pair_rect, slide_slant_pair
 from ..stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION, read_sticker
 from ..storage import (
     BackupEntry,
@@ -926,6 +926,34 @@ class EditorState(QObject):
                 page.rough = dataclasses.replace(page.rough, rect=rect)
 
     # -- 斜めのコマ --------------------------------------------------------
+    #
+    # 組を作り直す操作は3つ（向きの反転・境界の移動・大きさ変更）あり、
+    # **どれも最後は `slant.rebuild_slant_pair` → `check_slant` を通る**。
+    # 割れない大きさなら `ValueError` で断られるので、受け方も1か所に
+    # まとめてある（→ `_edit_slant`）。
+
+    def _edit_slant(self, label: str, apply) -> bool:
+        """斜めの組を作り直す1手。作り直せたら True。
+
+        `apply(page)` の中で `check_slant` が断ったら、**理由を状態表示に
+        出して False を返す**（コマの分割と同じ扱い → `PageView._apply_split`）。
+
+        **3つの操作で受け方を書き分けない。** 書き分けていた頃は大きさ変更
+        にしか受けが無く、反転と境界の移動では `ValueError` が Qt の
+        スロットを突き抜けていた。突き抜けても PySide6 は印字して続けるので、
+        **画面には何も出ないまま操作だけが効かない**（2026-08-09 に発見）。
+
+        普段はここへ来ない。**ドラッグの下見が先に押し戻す**ので
+        （→ `slant.clamp_slant_rect` / `clamp_slant_ratio`）、断りが要るのは
+        手で書き換えた project.json のように、元から割れない大きさの組だけ。
+        """
+        try:
+            with self.edit_page(label) as page:
+                apply(page)
+        except ValueError as e:
+            self.message.emit(str(e))
+            return False
+        return True
 
     def flip_slant(self) -> bool:
         """選択中の斜めの組の向きを反転する。反転できたら True。
@@ -939,20 +967,40 @@ class EditorState(QObject):
             return False
 
         panel_id = panel.id
-        with self.edit_page("斜めの向きを反転") as page:
-            flip_slant_pair(page, page.slant_pair_of(panel_id), self.settings)
-        return True
+        return self._edit_slant(
+            "斜めの向きを反転",
+            lambda page: flip_slant_pair(
+                page, page.slant_pair_of(panel_id), self.settings
+            ),
+        )
 
-    def slide_slant(self, panel_id: str, ratio: float) -> None:
-        """斜めの境界を左右にずらす。
+    def slide_slant(self, panel_id: str, ratio: float) -> bool:
+        """斜めの境界を左右にずらす。ずらせたら True。
 
         1回のドラッグで1手。ドラッグ中は画面側が下見を描くだけで、
         ここへは離した時点で1度だけ来る（しっぽの付け根と同じ流儀）。
         """
-        with self.edit_page("斜めの境界を移動") as page:
+
+        def apply(page: Page) -> None:
             pair = page.slant_pair_of(panel_id)
             if pair is not None:
                 slide_slant_pair(page, pair, ratio, self.settings)
+
+        return self._edit_slant("斜めの境界を移動", apply)
+
+    def set_slant_rect(self, panel_id: str, rect: Rect) -> bool:
+        """斜めの組の外側の矩形を差し替える（大きさ変更）。変えられたら True。
+
+        1枚ずつ変形せず組ごと作り直す。片方ずつ動かすと、傾きと隙間が
+        左右で食い違う（→ `slant.set_slant_pair_rect`）。
+        """
+
+        def apply(page: Page) -> None:
+            pair = page.slant_pair_of(panel_id)
+            if pair is not None:
+                set_slant_pair_rect(page, pair, rect, self.settings)
+
+        return self._edit_slant("斜めのコマの大きさ変更", apply)
 
     # -- コマのロック --------------------------------------------------------
     #
