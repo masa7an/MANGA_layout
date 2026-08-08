@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from PySide6.QtCore import QBuffer, QIODevice, Qt
 from PySide6.QtGui import QColor, QImage, QPainter
 
-from .errors import BrokenImageError
+from .errors import AssetError, BrokenImageError
 from .model import Tone
 from .tone import apply_tone
 
@@ -206,7 +206,15 @@ class ImageCache:
             data = read_bytes()
             if data:
                 preview = self._make(data)
-        except (BrokenImageError, OSError):
+        except (AssetError, OSError):
+            # `AssetError` は `BrokenImageError`（展開の失敗）を含む親。
+            # `read_bytes` の実体は `AssetStore.read` で、ファイルは
+            # あるのに読めない場合（他アプリのロック・権限など）は OSError を
+            # `AssetError` に包み直して投げる。以前はここで `BrokenImageError`
+            # だけを見ていたため、その形の失敗だけ素通りしていた——**失敗が
+            # 覚えられないまま描き直しのたびに例外を吐き続ける**、という
+            # このキャッシュが本来防ぐはずの壊れ方そのものだった
+            # （2026-08-08 に発見）
             preview = None
 
         self._items[ref] = preview

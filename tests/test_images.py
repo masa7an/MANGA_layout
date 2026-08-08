@@ -10,7 +10,7 @@ from dataclasses import replace
 
 import pytest
 
-from manga_layout.errors import BrokenImageError
+from manga_layout.errors import AssetError, BrokenImageError
 from manga_layout.images import (
     PREVIEW_MAX_PX,
     ImageCache,
@@ -119,6 +119,39 @@ class TestCache:
 
         cache.get("assets/broken.png", read)
         cache.get("assets/broken.png", read)
+
+        assert len(calls) == 1
+
+    def test_実体があるのに読めなくても落ちない(self, qapp):
+        """他アプリのロック・権限など、「ファイルはあるが読めない」場合。
+
+        `AssetStore.read` は OSError を `AssetError` に包み直して投げる。
+        以前はここで子の `BrokenImageError` だけを見ていたため、この形の
+        失敗だけ素通りしていた（2026-08-08 に発見）。
+        """
+        cache = ImageCache()
+
+        def read():
+            raise AssetError("画像を読めませんでした: assets/locked.png")
+
+        assert cache.get("assets/locked.png", read) is None
+
+    def test_読めない画像を何度も読み直さない(self, qapp):
+        """**このキャッシュが本来防ぐはずの壊れ方そのもの。**
+
+        失敗を覚えられないと、描き直しのたびに例外が漏れ続ける。画面は
+        コマを毎回描き直す作りなので、1枚読めないだけでページの残りが
+        描かれなくなる（→ `test_壊れた画像を何度も展開しない` と対）。
+        """
+        cache = ImageCache()
+        calls = []
+
+        def read():
+            calls.append(1)
+            raise AssetError("画像を読めませんでした: assets/locked.png")
+
+        cache.get("assets/locked.png", read)
+        cache.get("assets/locked.png", read)
 
         assert len(calls) == 1
 
