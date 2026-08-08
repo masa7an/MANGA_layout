@@ -72,6 +72,22 @@ class TestSaveLoad:
 
         assert load_project(tmp_path).pages[0].floating[1].content == "行1 [1,\n2] 行2"
 
+    def test_半角スペースの並びを含むセリフを壊さない(self, tmp_path, sample_project):
+        """1行に畳む正規表現は「空白」ではなく「生の改行を含む空白」にだけ効く。
+
+        座標の区切りをただの `\\s+` にしていた版では、セリフの中に
+        `[ 12, 34 ]` のような半角スペース区切りの並びがあると、その中身
+        まで `[12, 34]` に黙って書き換わっていた（2026-08-08 に実機で発見）。
+        JSON 文字列の中に生の改行は出てこない（`\\n` の2文字にエスケープ
+        される）ので、区切りに生の改行を必須にすれば構造的に誤爆しない。
+        """
+        text_obj = next(f for f in sample_project.pages[0].floating if hasattr(f, "content"))
+        text_obj.content = "ここは [ 12, 34 ] 参照"
+
+        save_project(sample_project, tmp_path)
+
+        assert load_project(tmp_path).pages[0].floating[1].content == "ここは [ 12, 34 ] 参照"
+
     def test_無いフォルダを開こうとすると分かる例外(self, tmp_path):
         with pytest.raises(ProjectNotFoundError):
             load_project(tmp_path / "ない")
