@@ -1184,8 +1184,8 @@ class Test入力中に項目が押されたとき:
     塞ぐ前は、入力中の `F7` や `PgDown` がそのまま発火していた
     （2026-08-08 に発見）。
 
-    ここは**項目を押す道**（`trigger()`）だけを見る。キーの解決そのものは
-    Qt の領分で、offscreen では窓が活性にならず再現できない。
+    ここは**項目を押す道**（`trigger()`）だけを見る。キーを押す道の前提は
+    `Test入力中のキーがどちらへ行くか` にある。
     """
 
     def 置く(self, window) -> None:
@@ -1291,6 +1291,139 @@ class Test入力中に項目が押されたとき:
         view.finish_text_edit(commit=True)
 
         assert "残せませんでした" in window_with_text.statusBar().currentMessage()
+
+
+def menu_actions(window):
+    """メニューバーに並んでいる項目を、入れ子も含めて全部たどる。"""
+
+    def walk(menu):
+        for action in menu.actions():
+            if action.isSeparator():
+                continue
+            sub = action.menu()
+            if sub is not None:
+                yield from walk(sub)
+            else:
+                yield action
+
+    for top in window.menuBar().actions():
+        if top.menu() is not None:
+            yield from walk(top.menu())
+
+
+class Test入力中のキーがどちらへ行くか:
+    """`run_action` が要る理由そのもの（→ `PySide6の落とし穴.md`「入力中の…」）。
+
+    上の `Test入力中に項目が押されたとき` は「項目が押されたあと」を見ている。
+    ここで押さえるのは、その手前にある**前提**——入力中に押したキーが
+    入力欄に譲られるのか、ショートカットへ抜けるのか。
+
+    Qt はキーを押されると、まず焦点のある部品へ `ShortcutOverride`
+    （「このキーをショートカットとして処理してよいか」の問い合わせ）を
+    投げ、受理されなければショートカットとして処理する。**この問い合わせは
+    自分で作って送れる**ので、窓が活性にならない offscreen でも答えが取れる。
+
+    前提が動けば防ぎ方の要否も動く。**ここが落ちたら、テストを直す前に
+    落とし穴の文書を読み直すこと。**
+    """
+
+    def 譲られるか(self, window, key, mods, text: str) -> bool:
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+        from PySide6.QtWidgets import QApplication
+
+        assert window.view.is_editing_text, "入力欄が開いていない"
+        event = QKeyEvent(QEvent.Type.ShortcutOverride, key, mods, text)
+        event.setAccepted(False)
+        QApplication.instance().sendEvent(window.view, event)
+        return event.isAccepted()
+
+    @pytest.fixture
+    def 入力中(self, window_with_text):
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        return window_with_text
+
+    def test_文字として打てるキーは入力欄へ譲られる(self, 入力中):
+        """道具の1文字キー（`V`『選択』・`P`『コマ追加』）が無事なのは偶然。"""
+        from PySide6.QtCore import Qt
+
+        なし = Qt.KeyboardModifier.NoModifier
+        assert self.譲られるか(入力中, Qt.Key.Key_V, なし, "v")
+        assert self.譲られるか(入力中, Qt.Key.Key_P, なし, "p")
+
+    def test_標準の編集キーも入力欄へ譲られる(self, 入力中):
+        from PySide6.QtCore import Qt
+
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        assert self.譲られるか(入力中, Qt.Key.Key_Z, ctrl, "\x1a")
+        assert self.譲られるか(入力中, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier, "")
+
+    def test_ファンクションキーはショートカットへ抜ける(self, 入力中):
+        from PySide6.QtCore import Qt
+
+        assert not self.譲られるか(入力中, Qt.Key.Key_F7, Qt.KeyboardModifier.NoModifier, "")
+
+    def test_移動キーはショートカットへ抜ける(self, 入力中):
+        """これがいちばん重い。抜けると入力欄を開いたままページが変わる。"""
+        from PySide6.QtCore import Qt
+
+        なし = Qt.KeyboardModifier.NoModifier
+        assert not self.譲られるか(入力中, Qt.Key.Key_PageDown, なし, "")
+
+    def test_修飾キー付きも抜けるものがある(self, 入力中):
+        """`Ctrl+Z` は譲られるのに `Ctrl+B`・`Ctrl+S` は抜ける。
+
+        **修飾キーが付いているかどうかでは決まらない。** 入力欄が受理するのは
+        文字として打てるキーと標準の編集キーだけで、それ以外は抜ける。
+        """
+        from PySide6.QtCore import Qt
+
+        ctrl = Qt.KeyboardModifier.ControlModifier
+        assert not self.譲られるか(入力中, Qt.Key.Key_B, ctrl, "\x02")
+        assert not self.譲られるか(入力中, Qt.Key.Key_S, ctrl, "\x13")
+
+
+class Testキーを持つ項目の作られ方:
+    """**塞ぐ場所が1つで足りるのは、項目の作り方が決まっているから。**
+
+    `run_action` を繋いでいるのは2箇所だけ——`MainWindow._act` と、道具の
+    `_build_tool_actions`（同じ項目を2つのメニューに出すため手で組んでいる）。
+    項目を1つでも `QAction(...)` から作って `triggered` に直に繋ぐと、
+    **その項目だけ入力中に素通りする**。上の `Test入力中に項目が押されたとき`
+    は実在の項目を名指しで見ているので、あとから足された項目は素通りしても
+    誰も気づかない。
+
+    ここは**数え上げの側**から見張る。項目を押す道を通さないので、
+    保存や終了の項目まで実行してしまう心配が無い（＝この検証で窓が開いて
+    止まることはない）。
+
+    3つ目の作り方が現れたらここが落ちる。**そのときは除外を足す前に、
+    その項目が `run_action` を通っているかを確かめること。**
+    """
+
+    def test_キーを持つ項目は決まった作り方だけで作られる(self, qapp, monkeypatch):
+        素の_act = MainWindow._act
+        作られた = []
+
+        def 記録しながら作る(self, *args, **kwargs):
+            action = 素の_act(self, *args, **kwargs)
+            作られた.append(action)
+            return action
+
+        monkeypatch.setattr(MainWindow, "_act", 記録しながら作る)
+        win = MainWindow(EditorState())
+        try:
+            通った = {id(action) for action in 作られた}
+            通った |= {id(action) for action in win._tool_actions.values()}
+            素通り = [
+                action.text()
+                for action in menu_actions(win)
+                if not action.shortcut().isEmpty() and id(action) not in 通った
+            ]
+            assert 素通り == [], "この項目は入力中に素通りする（→ `run_action`）"
+        finally:
+            win.state.history.mark_saved()
+            win.close()
 
 
 class TestTextMenu:
