@@ -153,6 +153,42 @@ def press(view, x: float, y: float) -> None:
     )
 
 
+def release(view, x: float, y: float) -> None:
+    """左ボタンの離しを送る（→ `press` と対）。"""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    position = QPointF(view.mapFromScene(QPointF(x, y)))
+    view.mouseReleaseEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseButtonRelease,
+            position,
+            view.viewport().mapToGlobal(position),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.NoButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
+def move_to(view, x: float, y: float) -> None:
+    """左ボタンを押したままの移動を送る（→ `press` と対）。"""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+
+    position = QPointF(view.mapFromScene(QPointF(x, y)))
+    view.mouseMoveEvent(
+        QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            position,
+            view.viewport().mapToGlobal(position),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+    )
+
+
 class TestAddPanelMode:
     """コマ追加は1回きり。追加したらすぐ編集に移る（要件定義 6.9）。
 
@@ -321,6 +357,19 @@ class TestImageReplace:
         assert after.id != before.id
         assert after.asset != before.asset
         assert state.selected_id == after.id
+
+    def test_前の絵のキャッシュを手放す(self, window_with_image, gray):
+        """`ImageCache.forget` はあったが、呼ぶ場所が無かった
+        （2026-08-08 に発見。→ `TestImageDeletion` の同種テストと対）。
+        """
+        state = window_with_image.state
+        before = state.selected_image
+        old_ref = before.asset
+        assert state.preview(old_ref) is not None
+
+        state.replace_image(before.id, gray)
+
+        assert old_ref not in state.image_cache._items
 
     def test_重なり順を引き継ぐ(self, window, png, gray):
         """背景を差し替えても、手前のキャラの前に出てこないこと。
@@ -810,6 +859,44 @@ class TestImageMoveGuard:
         assert window_with_image.state.selected_image.rect == final
 
 
+class Testドラッグ中のUndo:
+    """マウスを掴んだまま Ctrl+Z（Undo）を押した場合。
+
+    以前は掴んでいた画像がその Undo で消えても `self._drag` が残ったまま
+    になり、離した瞬間に `page.panel()` などが KeyError を投げていた
+    （2026-08-08 に発見）。`state.changed` はドラッグ中には確定操作以外で
+    発火しないので、Undo/Redo のような外からの変化を合図にドラッグ自体を
+    打ち切る。
+    """
+
+    def test_対象が消えても離しても落ちない(self, window_with_image):
+        image = window_with_image.state.selected_image
+        cx, cy = image.rect.center
+
+        press(window_with_image.view, cx, cy)
+        # 実際に動かして preview_rect を origin から動かす。動いていないと
+        # `_apply_move` が「変化なし」の早期リターンで抜け、再現にならない
+        move_to(window_with_image.view, cx + 20.0, cy + 20.0)
+        assert window_with_image.view._drag is not None
+
+        window_with_image.state.undo()  # 画像の配置を取り消す
+        assert window_with_image.state.selected_image is None
+        assert window_with_image.view._drag is None, "モデルの変化でドラッグを打ち切っていない"
+
+        release(window_with_image.view, cx + 20.0, cy + 20.0)  # 例外を投げずに終わること
+
+    def test_通常のドラッグ中はchangedが飛ばない(self, window_with_image):
+        """打ち切りの前提（→ 上のクラスの docstring）が崩れていないこと。"""
+        image = window_with_image.state.selected_image
+        cx, cy = image.rect.center
+        seen = []
+        window_with_image.state.changed.connect(lambda: seen.append(1))
+
+        press(window_with_image.view, cx, cy)
+        assert window_with_image.view._drag is not None
+        assert seen == []
+
+
 def press_at(view, x: float, y: float, shift: bool = False) -> None:
     """Shift の有無を指定して左ボタンの押下を送る。"""
     from PySide6.QtCore import QPointF, Qt
@@ -923,6 +1010,39 @@ class TestAspectHint:
 
         assert messages.index(ASPECT_HINT) < messages.index(ASPECT_HINT_HELD)
 
+    def test_Shiftは今の形ではなく元画像の比に戻す(self, window_with_image):
+        """文言どおり「維持」ではなく「元に戻す」であること。
+
+        自由リサイズで既に歪ませたあとに Shift で掴むと、**今の（歪んだ）
+        形を保つのではなく、元画像（`src_px`）の比へ戻る**。以前は文言が
+        「維持」だったため、今の形を保つと誤読させていた
+        （要件定義 5章の記載どおりの挙動で、2026-08-08 に文言だけ直した）。
+        """
+        from PySide6.QtCore import QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+
+        from manga_layout.layout import aspect_of
+
+        image = window_with_image.state.selected_image
+        # 自由リサイズで正方形に歪める（元画像は 64×48、比は 4:3）
+        window_with_image.view._apply_resize(Rect(image.rect.x, image.rect.y, 100.0, 100.0))
+        distorted = window_with_image.state.selected_image.rect
+        assert distorted.w / distorted.h == pytest.approx(1.0)
+
+        shift_event = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(0.0, 0.0),
+            QPointF(0.0, 0.0),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.ShiftModifier,
+        )
+
+        locked = window_with_image.view._locked_aspect(shift_event)
+
+        assert locked == pytest.approx(aspect_of(image.src_px))
+        assert locked != pytest.approx(distorted.w / distorted.h)
+
 
 def drag_to(view, x: float, y: float, shift: bool = False) -> None:
     from PySide6.QtCore import QPointF, Qt
@@ -1023,6 +1143,40 @@ class TestImageDeletion:
         assert AssetStore(tmp_path).exists(ref)
         window_with_image.state.undo()
         assert len(window_with_image.state.page.panels[0].children) == 1
+
+    def test_他で使われていなければキャッシュも手放す(self, window_with_image):
+        """`ImageCache.forget` はあったが、呼ぶ場所が無く使われていな
+        かった（2026-08-08 に発見）。削除した画像のプレビューが縮小版の
+        キャッシュに残り続けていた（実害はメモリだけで、実体は消えない
+        ので描画結果が壊れることはない）。
+        """
+        image = window_with_image.state.page.panels[0].children[0]
+        ref = image.asset
+        # 先に一度描かせて、キャッシュに載せておく
+        assert window_with_image.state.preview(ref) is not None
+        assert ref in window_with_image.state.image_cache._items
+
+        window_with_image.state.select(image.id)
+        window_with_image.delete_selected()
+
+        assert ref not in window_with_image.state.image_cache._items
+
+    def test_他でも使われていればキャッシュは手放さない(self, window_with_image, png):
+        """同じ絵を2箇所で使っている場合、片方を消しただけで
+        もう片方まで展開し直しになってはいけない。
+        """
+        panel_id = window_with_image.state.page.panels[0].id
+        first = window_with_image.state.page.panels[0].children[0]
+        ref = first.asset
+        second = window_with_image.state.place_image(panel_id, png)  # 同じ png、同じ ref
+        assert second.asset == ref
+        assert window_with_image.state.preview(ref) is not None
+
+        window_with_image.state.select(first.id)
+        window_with_image.delete_selected()
+
+        assert ref in window_with_image.state.image_cache._items
+        assert window_with_image.state.page.panels[0].children == [second]
 
 
 def red_png(w: int = 40, h: int = 40) -> bytes:

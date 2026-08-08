@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QBuffer, QIODevice, Qt
-from PySide6.QtGui import QColor, QImage, QPainter
+from PySide6.QtGui import QColor, QImage, QImageReader, QPainter
 
 from .errors import AssetError, BrokenImageError
 from .model import Tone
@@ -42,7 +42,30 @@ def decode(data: bytes) -> QImage:
     """バイト列を画像として展開する。できなければ例外。
 
     取り込み経路（貼り付け・ドロップ・ファイル読み込み）は必ずここを通す。
+
+    **展開する前に、寸法だけを先に確かめる。** `QImageReader.size()` は
+    ヘッダーを読むだけで済み、画素の展開は行わない。Qt には確保上限
+    （既定 `QImageReader.allocationLimit()` MB）があり、これを超える
+    宣言サイズの画像は `loadFromData` がそのまま失敗する。以前はここを
+    区別していなかったため、壊れてはいない大きすぎるだけの画像まで
+    「ファイルが壊れている可能性があります」という誤った理由になって
+    いた（2026-08-08 に発見）。壊れたファイルは寸法自体が読めない
+    （`size().isValid()` が偽）ので、この判定に巻き込まれない。
     """
+    buffer = QBuffer()
+    buffer.setData(data)
+    buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+    size = QImageReader(buffer).size()
+    limit_mb = QImageReader.allocationLimit()
+    if size.isValid() and limit_mb > 0:
+        # ARGB32 相当（1画素4バイト）で確保したときの見込み量
+        estimated_mb = size.width() * size.height() * 4 / (1024 * 1024)
+        if estimated_mb > limit_mb:
+            raise BrokenImageError(
+                f"画像が大きすぎます（{size.width():,} × {size.height():,} 画素）。"
+                "縮小してから取り込んでください"
+            )
+
     image = QImage()
     if not image.loadFromData(data) or image.isNull():
         raise BrokenImageError(

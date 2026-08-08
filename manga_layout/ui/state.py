@@ -770,6 +770,26 @@ class EditorState(QObject):
             image.asset, tone, lambda: self.preview(image.asset)
         )
 
+    def forget_if_unused(self, ref: str) -> None:
+        """その参照が作品のどこからも使われていなければ、覚えを手放す。
+
+        削除・差し替えで使われなくなった絵の縮小版・トーン焼き版が
+        キャッシュに残り続けていた（`ImageCache.forget` /
+        `ToneCache.forget` 自体はあったが、呼ぶ場所が無かった。
+        2026-08-08 に発見）。**まだ使われている参照は手放さない。**
+        同じ絵を複数箇所で使い回している場合に、片方を消しただけで
+        もう片方まで展開し直しになるのを避ける。
+
+        実体（assets/）は消さない削除・差し替え（→ `window.delete_image`）
+        と同じ考え方で、ここも Undo で戻ったときに困らないよう**キャッシュ
+        だけ**を対象にする。手放しても、次に描くときに読み直すだけで
+        正しい絵に戻る。
+        """
+        if ref in self.project.referenced_assets():
+            return
+        self.image_cache.forget(ref)
+        self.tone_cache.forget(ref)
+
     def import_bytes(self, data: bytes) -> tuple[str, tuple[int, int]]:
         """画像を取り込み、参照と原寸のピクセル寸法を返す。
 
@@ -819,7 +839,8 @@ class EditorState(QObject):
         if panel is None:
             return None
         panel_id = panel.id
-        old_z = next(c for c in panel.children if c.id == image_id).z
+        old = next(c for c in panel.children if c.id == image_id)
+        old_z, old_ref = old.z, old.asset
 
         ref, px = self.import_bytes(data)
         rect = contain_rect_in(panel.shape.bounds(), px)
@@ -830,6 +851,7 @@ class EditorState(QObject):
             image.z = old_z
             target.children = [c for c in target.children if c.id != image_id]
         self.select(image.id)
+        self.forget_if_unused(old_ref)
         return image
 
     # -- ラフ（下敷き） ----------------------------------------------------

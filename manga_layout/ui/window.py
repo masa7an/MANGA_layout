@@ -817,6 +817,7 @@ class MainWindow(QMainWindow):
             image_id = image.id
         panel = self.state.page.panel_of_image(image_id)
         panel_id = panel.id if panel is not None else None
+        ref = next((c.asset for c in panel.children if c.id == image_id), None) if panel else None
 
         with self.state.edit_page("画像の削除") as page:
             target = page.panel_of_image(image_id)
@@ -825,6 +826,8 @@ class MainWindow(QMainWindow):
 
         self.state.select(panel_id)
         self.state.message.emit("画像を削除しました")
+        if ref is not None:
+            self.state.forget_if_unused(ref)
 
     # -- 画像 --------------------------------------------------------------
 

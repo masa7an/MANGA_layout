@@ -259,8 +259,13 @@ IMAGE_FILE_FILTER = "画像 (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;すべて�
 
 # 縦と横が同時に変わるつまみ。ここでだけ等比かどうかが問題になる
 CORNER_HANDLES = ("nw", "ne", "se", "sw")
-ASPECT_HINT = "Shift キーを押しながらドラッグで縦横比率を維持"
-ASPECT_HINT_HELD = "縦横比率を維持中（Shift）"
+# **「維持」ではなく「元に戻す」。** 比べる相手は今の形（自由リサイズで
+# 既に歪めていることがある）ではなく、`src_px`（元画像の実寸）。歪めた
+# あとに Shift で掴むと、今の形を保つのではなく元の比へ跳ねて戻る
+# （2026-08-08 に発見。挙動は要件定義 5章の記載どおりで安全側だが、
+# 文言が「今の形を保つ」と誤読させていた）
+ASPECT_HINT = "Shift キーを押しながらドラッグで元の縦横比に戻す"
+ASPECT_HINT_HELD = "元の縦横比に戻しています（Shift）"
 
 # 回転つまみ（丸）を上辺からどれだけ離すか（画面ピクセル）。
 # 上辺の「n」のつまみ（一辺 `HANDLE_PX`）と重ならない距離にする。
@@ -1616,6 +1621,14 @@ class PageView(QGraphicsView):
         return snap_candidates(self.state.page, exclude_id, self.state.settings)
 
     def _on_model_changed(self) -> None:
+        # **ドラッグ中に Undo/Redo などでモデルが変わったら、そのドラッグは
+        # 打ち切る。** マウスを掴んだまま Ctrl+Z を押すと、掴んでいた対象が
+        # 消える（直前の手が「配置」だった場合など）ことがある。掴んだまま
+        # 離すと、選び直された id で `page.panel()` などが KeyError を
+        # 投げていた（2026-08-08 に発見）。通常のドラッグは確定まで
+        # `state.changed` を発火しないので、ここが働くのは Undo/Redo など
+        # 外からモデルが変わった場合だけ
+        self._reset_drag()
         self._scene.update_scene_rect()
         self.viewport().update()
 

@@ -554,6 +554,52 @@ class TestValidation:
         with pytest.raises(ProjectFormatError, match="src_px"):
             Project.from_dict(data)
 
+    def test_画像の傾きは読み込みでも畳む(self):
+        """`ImageObject.rotation` は保存で -180〜180 に畳む方針だが、
+        読み込みでは畳んでいなかった。手編集ファイルの 3600 のような値が
+        そのまま残り、`FocusLines.angle` など他の角度と扱いが揃っていな
+        かった（2026-08-08 に発見）。
+        """
+        data = new_project().to_dict()
+        data["pages"][0]["panels"] = [
+            {
+                "id": "panel_0002",
+                "type": "panel",
+                "shape": {"kind": "polygon", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+                "z": 0,
+                "children": [
+                    {
+                        "id": "img_0003",
+                        "type": "image",
+                        "asset": "assets/a.png",
+                        "rect": {"x": 0, "y": 0, "w": 1, "h": 1},
+                        "src_px": [10, 10],
+                        "rotation": 3600.0,
+                        "z": 0,
+                    }
+                ],
+            }
+        ]
+        project = Project.from_dict(data)
+        assert project.pages[0].panels[0].children[0].rotation == 0.0
+
+    def test_マークの傾きも読み込みで畳む(self):
+        data = new_project().to_dict()
+        data["pages"][0]["floating"] = [
+            {
+                "id": "stk_0002",
+                "type": "sticker",
+                "kind": "exclaim",
+                "asset": "assets/a.png",
+                "rect": {"x": 0, "y": 0, "w": 1, "h": 1},
+                "src_px": [10, 10],
+                "rotation": 370.0,
+                "z": 0,
+            }
+        ]
+        project = Project.from_dict(data)
+        assert project.pages[0].floating[0].rotation == pytest.approx(10.0)
+
 
 class TestRepair:
     def test_小さすぎる採番値を直す(self):

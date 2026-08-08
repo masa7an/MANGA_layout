@@ -645,7 +645,11 @@ class ImageObject(SceneObject):
             asset=v.text(d, "asset", where),
             rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
             src_px=src_px,
-            rotation=v.number(d, "rotation", where, 0.0),
+            # 保存は -180〜180 に畳んでいる（→ 上のフィールドの注記）が、
+            # 読み込みでは畳んでいなかったため、手編集した 3600 のような
+            # 値がそのまま残っていた（2026-08-08 に発見。`FocusLines.angle`
+            # など他の角度は読み込みでも畳んでいる）
+            rotation=normalize_angle(v.number(d, "rotation", where, 0.0)),
             opacity=opacity,
             tone=None if tone is None else Tone.from_dict(tone, f"{where}.tone"),
         )
@@ -873,7 +877,9 @@ class StickerObject(SceneObject):
             asset=v.text(d, "asset", where),
             rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
             src_px=src_px,
-            rotation=v.number(d, "rotation", where, 0.0),
+            # ImageObject と同じく読み込みでも畳む（→ そちらの注記）。
+            # マークは常に 0 のはずだが、手編集ファイルへの備えは揃える
+            rotation=normalize_angle(v.number(d, "rotation", where, 0.0)),
             opacity=opacity,
             attached_panel_id=v.opt_text(d, "attached_panel_id", where),
         )

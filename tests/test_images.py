@@ -48,6 +48,34 @@ class TestDecode:
         with pytest.raises(BrokenImageError):
             decode(b"this is not an image at all")
 
+    def test_大きすぎる画像は理由をはっきり伝える(self, fixture_dir, qapp, monkeypatch):
+        """壊れてはいない、Qt の確保上限を超えるだけの画像。
+
+        以前は寸法を事前に確かめておらず、`loadFromData` がそのまま失敗
+        して「壊れている可能性があります」という誤った理由になっていた
+        （2026-08-08 に発見）。確保上限を人為的に下げて再現する
+        （本物の巨大画像を用意せずに済む）。
+        """
+        from PySide6.QtGui import QImageReader
+
+        # 64×48 は ARGB32 換算で約 0.012MB。上限をそれより下げて再現する
+        monkeypatch.setattr(QImageReader, "allocationLimit", staticmethod(lambda: 0.005))
+        data = (fixture_dir / "rgb_opaque.png").read_bytes()
+
+        with pytest.raises(BrokenImageError, match="大きすぎます"):
+            decode(data)
+
+    def test_壊れたファイルは大きすぎるとは言わない(self, fixture_dir, qapp, monkeypatch):
+        """寸法自体が読めない壊れたファイルは、サイズ判定に巻き込まれない。"""
+        from PySide6.QtGui import QImageReader
+
+        monkeypatch.setattr(QImageReader, "allocationLimit", staticmethod(lambda: 0.005))
+        broken = (fixture_dir / "broken.png").read_bytes()
+
+        with pytest.raises(BrokenImageError, match="壊れている可能性") as exc:
+            decode(broken)
+        assert "大きすぎます" not in str(exc.value)
+
 
 class TestPreview:
     def test_大きい画像は縮む(self, large_bytes, qapp):
