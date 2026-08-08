@@ -337,6 +337,50 @@ def test_斜めに割ったコマは押せるまま断る(window_with_panel):
     assert len(state.page.panels) == 2
 
 
+def test_写しがコマの外へ完全に出るなら断る(window_with_panel):
+    """写しがコマと1pxも重ならないと、二度と選べない「見えない孤児」に
+    なる（→ `layout.image_orphaned_at`。移動側の同じ穴と対、2026-08-08）。
+
+    ずらす量（`GUTTER`）ぶんコマの縁へ寄せてから複製すると再現する。
+    """
+    state = window_with_panel.state
+    panel = state.page.panels[0]
+    bounds = panel.shape.bounds()
+    # コマの右縁からわずか 5px だけ重なる位置。今はまだ選べるが、
+    # 複製のずらし量（GUTTER=35px）ぶん動かすと完全に外へ出る
+    with state.edit("画像を置く") as project:
+        image = project.add_image(
+            project.pages[0].panels[0],
+            "assets/abc.png",
+            Rect(bounds.right - 5.0, bounds.y + 40.0, 10.0, 10.0),
+            (400, 300),
+        )
+    state.select(image.id)
+
+    assert state.duplicate_selected() is None
+    assert len(state.page.panels[0].children) == 1
+    assert "複製できません" in window_with_panel.statusBar().currentMessage()
+
+
+def test_縁から十分離れていれば複製できる(window_with_panel):
+    """指摘の前後で壊してはいけない、既存の正常系。"""
+    state = window_with_panel.state
+    panel = state.page.panels[0]
+    with state.edit("画像を置く") as project:
+        image = project.add_image(
+            project.pages[0].panels[0],
+            "assets/abc.png",
+            Rect(panel.shape.bounds().x + 40.0, panel.shape.bounds().y + 40.0, 60.0, 60.0),
+            (400, 300),
+        )
+    state.select(image.id)
+
+    copy = state.duplicate_selected()
+
+    assert copy is not None
+    assert len(state.page.panels[0].children) == 2
+
+
 # -- メニューの名前 --------------------------------------------------------------
 
 

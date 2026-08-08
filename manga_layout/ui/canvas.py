@@ -68,6 +68,7 @@ from ..layout import (
     default_panel_rect,
     handle_at,
     handle_positions,
+    image_orphaned_at,
     keep_anchor,
     next_in_stack,
     panel_at,
@@ -2923,6 +2924,19 @@ class PageView(QGraphicsView):
         object_id = self.state.selected_id
         if object_id is None:
             return
+
+        image = self.state.selected_image
+        if image is not None and image.id == object_id:
+            panel = self.state.page.panel_of_image(image.id)
+            moved = image.rect.translated(dx, dy)
+            if panel is not None and image_orphaned_at(panel, moved, image.rotation):
+                # 弾くのは重なりが無くなるときだけ（→ `_apply_tone_area` と
+                # 同じ考え方）。コマの縁を大きく越えるはみ出し自体は
+                # 今までどおり通す（→ `layout.image_orphaned_at`）
+                self.state.message.emit(
+                    "コマの外まで出ると選べなくなるので、そこまでは動かせません"
+                )
+                return
 
         for getter, cls, name in _MOVE_TARGETS:
             if getter(self.state) is None:

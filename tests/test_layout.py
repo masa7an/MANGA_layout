@@ -15,6 +15,7 @@ from manga_layout.layout import (
     full_page_rect,
     handle_at,
     handle_positions,
+    image_orphaned_at,
     panel_at,
     resize_rect,
     resize_rect_keep_aspect,
@@ -362,6 +363,43 @@ class TestImageFit:
 
 def aspect_of_rect(rect: Rect) -> float:
     return rect.w / rect.h
+
+
+class TestImageOrphanedAt:
+    """画像がコマの外へ完全に出て、二度と選べなくなるかの判定。
+
+    `image_at` は「コマの中 かつ 画像の中」の点を要求する。矩形がコマと
+    1pxも重ならなくなると、どの点を押してもこの条件を満たせなくなり、
+    Undo 以外に取り戻す手段が無い（2026-08-08 に発見）。
+    """
+
+    PANEL = Rect(0.0, 0.0, 100.0, 100.0)
+
+    @pytest.fixture
+    def panel(self):
+        project = new_project()
+        return project.add_panel(project.pages[0], self.PANEL)
+
+    def test_コマの中に収まっていれば孤児にならない(self, panel):
+        assert not image_orphaned_at(panel, Rect(10.0, 10.0, 50.0, 50.0), 0.0)
+
+    def test_縁からわずかにはみ出すだけなら孤児にならない(self, panel):
+        # コマの右下ぎりぎりに寄せる。少しでも重なっていれば選べる
+        assert not image_orphaned_at(panel, Rect(90.0, 90.0, 50.0, 50.0), 0.0)
+
+    def test_縁で止まらず完全に出ると孤児になる(self, panel):
+        assert image_orphaned_at(panel, Rect(100.0, 0.0, 50.0, 50.0), 0.0)
+        assert image_orphaned_at(panel, Rect(-50.0, 0.0, 50.0, 50.0), 0.0)
+        assert image_orphaned_at(panel, Rect(0.0, 100.0, 50.0, 50.0), 0.0)
+        assert image_orphaned_at(panel, Rect(0.0, -50.0, 50.0, 50.0), 0.0)
+
+    def test_傾いていれば外接矩形の分だけ判定がゆるむ(self, panel):
+        # x: 105〜145 で、傾いていなければコマ（0〜100）と1pxも重ならない
+        rect = Rect(105.0, 80.0, 40.0, 40.0)
+        assert image_orphaned_at(panel, rect, 0.0)
+        # 45度傾けると、40×40 の外接矩形が約 56.6×56.6 に広がり
+        # (中心 125,100 のまま) x が 96.7〜153.3 になってコマまで届く
+        assert not image_orphaned_at(panel, rect, 45.0)
 
 
 class TestResizeKeepAspect:

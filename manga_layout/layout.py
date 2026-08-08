@@ -20,6 +20,7 @@ from .geometry import (
     Polygon,
     Rect,
     rotate_point,
+    rotated_bounds,
     rotated_rect_contains,
     unrotate_point,
 )
@@ -232,6 +233,28 @@ def image_at(panel: Panel, x: float, y: float) -> ImageObject | None:
         if rotated_rect_contains(image.rect, x, y, image.rotation):
             return image
     return None
+
+
+def image_orphaned_at(panel: Panel, moved_rect: Rect, rotation: float) -> bool:
+    """画像を `moved_rect`（傾き `rotation`）へ動かすと、自分のコマの外へ
+    完全に出て、二度と選べなくなるか。
+
+    `image_at` は「コマの中 かつ 画像の中」の点を要求する。矩形がコマと
+    1pxも重ならなくなると、どの点を押してもこの条件を満たせなくなり、
+    Undo 以外に取り戻す手段が無い「見えない孤児」になる
+    （2026-08-08 に発見。移動と複製の両方から起こり得る）。
+
+    重なりは外接矩形どうしで見る。**傾いた形での正確な重なりではない。**
+    ふつうの矩形のコマではこれがそのままコマの形と一致するので判定は
+    正確になる。斜めに割ったコマ（→ 6.10）だけは外接矩形が実際の多角形
+    よりわずかに広いが、それでも「制約なし」だった今までより安全で、
+    万一のときは Undo で戻せる。
+    """
+    moved = rotated_bounds(moved_rect, rotation)
+    bounds = panel.shape.bounds()
+    overlap_w = min(moved.right, bounds.right) - max(moved.x, bounds.x)
+    overlap_h = min(moved.bottom, bounds.bottom) - max(moved.y, bounds.y)
+    return overlap_w < 1.0 or overlap_h < 1.0
 
 
 def pick_stack(page: Page, x: float, y: float) -> list[str]:

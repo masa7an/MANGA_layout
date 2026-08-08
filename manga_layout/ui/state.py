@@ -47,6 +47,7 @@ from ..layout import (
     contain_rect_in,
     default_sticker_rect,
     default_tail_tip,
+    image_orphaned_at,
     outside_page,
     tail_tip_turned_to,
     text_frame,
@@ -583,6 +584,11 @@ class EditorState(QObject):
         写せなかったときは理由を状態表示に出して None を返す。**斜めに割った
         コマは押せる状態のまま断る**（→ 6.15）。グレーにすると理由を伝える
         先が無くなり、なぜ写せないのか分からないままになる。
+
+        **画像は、写しがコマの外へ完全に出るときも同じく断る。** コマの縁に
+        寄せた画像をずらす量ぶん複製すると、写しがコマと1pxも重ならず、
+        二度と選べない「見えない孤児」になることがある（→ `layout.
+        image_orphaned_at`。2026-08-08 に発見。移動側の同じ穴と対）。
         """
         obj = self.selected_object
         if obj is None:
@@ -595,6 +601,15 @@ class EditorState(QObject):
         object_id = obj.id
         label = object_label(obj)
         offset = self.settings.gutter
+
+        if isinstance(obj, ImageObject):
+            panel = self.page.panel_of_image(obj.id)
+            moved = obj.rect.translated(offset, offset)
+            if panel is not None and image_orphaned_at(panel, moved, obj.rotation):
+                self.message.emit(
+                    "コマの外まで出て選べなくなるので、この画像は複製できません"
+                )
+                return None
         with self.edit(f"{label}の複製") as project:
             copy = project.duplicate(
                 project.pages[self._page_index], object_id, offset, offset

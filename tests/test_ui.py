@@ -657,6 +657,65 @@ class TestImageOverflowSelection:
         assert two_panels.view.viewport().cursor().shape() != Qt.CursorShape.SizeAllCursor
 
 
+class TestImageMoveGuard:
+    """画像がコマの外へ完全に出て、二度と選べなくなる移動を弾く。
+
+    `TestImageOverflowSelection` と同根の問題。選び直しの入り口を直しても、
+    移動そのものに制約が無ければ、画像は先に「見えない孤児」になれてしまう
+    （2026-08-08 に発見）。
+    """
+
+    def test_コマの外へ完全に出す移動は弾かれる(self, window_with_image):
+        image = window_with_image.state.selected_image
+        panel = window_with_image.state.page.panels[0]
+        origin = image.rect
+        # 右端をコマの右縁より外へ出す。画像の大きさによらず、
+        # これで重なりは確実に無くなる
+        final = origin.translated(panel.shape.bounds().right - origin.x + 10.0, 0.0)
+
+        window_with_image.view._apply_move(origin, final)
+
+        assert window_with_image.state.selected_image.rect == origin
+
+    def test_理由を状態表示に出す(self, window_with_image):
+        image = window_with_image.state.selected_image
+        panel = window_with_image.state.page.panels[0]
+        origin = image.rect
+        final = origin.translated(panel.shape.bounds().right - origin.x + 10.0, 0.0)
+
+        window_with_image.view._apply_move(origin, final)
+
+        assert "動かせません" in window_with_image.statusBar().currentMessage()
+
+    def test_履歴には積まれない(self, window_with_image):
+        image = window_with_image.state.selected_image
+        panel = window_with_image.state.page.panels[0]
+        origin = image.rect
+        final = origin.translated(panel.shape.bounds().right - origin.x + 10.0, 0.0)
+        depth = window_with_image.state.history.depth
+
+        window_with_image.view._apply_move(origin, final)
+
+        assert window_with_image.state.history.depth == depth
+
+    def test_縁を大きく越えるだけなら今までどおり動かせる(self, window_with_image):
+        """指摘の前後で壊してはいけない、既存の正常系。
+
+        重なりが少しでも残るはみ出しは制約しない
+        （→ `layout.image_orphaned_at`）。
+        """
+        image = window_with_image.state.selected_image
+        panel = window_with_image.state.page.panels[0]
+        origin = image.rect
+        bounds = panel.shape.bounds()
+        # 右へ大きくはみ出すが、左端は残ってコマとまだ 5px 重なる
+        final = Rect(bounds.right - 5.0, origin.y, origin.w, origin.h)
+
+        window_with_image.view._apply_move(origin, final)
+
+        assert window_with_image.state.selected_image.rect == final
+
+
 def press_at(view, x: float, y: float, shift: bool = False) -> None:
     """Shift の有無を指定して左ボタンの押下を送る。"""
     from PySide6.QtCore import QPointF, Qt
