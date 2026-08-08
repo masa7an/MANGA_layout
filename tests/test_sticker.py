@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import Project, Rect, new_project
-from manga_layout.errors import AssetError
+from manga_layout.errors import AssetError, ProjectFormatError
 from manga_layout.layout import (
     STICKER_DEFAULT_LONG_PX,
     default_sticker_rect,
@@ -102,6 +102,23 @@ class Test保存形式:
         """Undo のスナップショットは保存形式を往復する（→ 6.8）。"""
         put(project, Rect(1.0, 2.0, 30.0, 40.0), attached="panel_0002")
         assert project.copy().pages[0].floating == project.pages[0].floating
+
+    def test_srcpxが数値でなければ場所を示して弾く(self):
+        """以前はここだけ生の `int()` に渡していて、`ValueError` が
+        `where` の付かないまま漏れていた（2026-08-08 に発見。→ `ImageObject`
+        の同種テストと対）。
+        """
+        data = {
+            "id": "stk_0009",
+            "type": "sticker",
+            "kind": "exclaim",
+            "asset": "assets/x.png",
+            "rect": {"x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0},
+            "src_px": [10, None],
+        }
+        with pytest.raises(ProjectFormatError) as exc:
+            StickerObject.from_dict(data, "test")
+        assert "test.src_px" in str(exc.value)
 
 
 class Test重なりの段:

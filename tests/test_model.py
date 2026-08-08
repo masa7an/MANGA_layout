@@ -477,6 +477,59 @@ class TestValidation:
             Project.from_dict(data)
         assert "pages[0].panels[0].children[0].rect.w" in str(exc.value)
 
+    def test_srcpxが数値でなければ場所を示して弾く(self):
+        """以前はここだけ生の `int()` に渡していて、`ValueError` が
+        `where` の付かないまま漏れていた（2026-08-08 に発見）。
+
+        開く側は `ProjectFormatError`（と `OSError`）しか捕まえないため、
+        素の `ValueError` はダイアログに出ずアプリごと落ちていた。
+        """
+        data = new_project().to_dict()
+        data["pages"][0]["panels"] = [
+            {
+                "id": "panel_0002",
+                "type": "panel",
+                "shape": {"kind": "polygon", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+                "z": 0,
+                "children": [
+                    {
+                        "id": "img_0003",
+                        "type": "image",
+                        "asset": "assets/a.png",
+                        "rect": {"x": 0, "y": 0, "w": 1, "h": 1},
+                        "src_px": ["abc", 10],
+                        "z": 0,
+                    }
+                ],
+            }
+        ]
+        with pytest.raises(ProjectFormatError) as exc:
+            Project.from_dict(data)
+        assert "pages[0].panels[0].children[0].src_px" in str(exc.value)
+
+    def test_srcpxが負なら場所を示して弾く(self):
+        data = new_project().to_dict()
+        data["pages"][0]["panels"] = [
+            {
+                "id": "panel_0002",
+                "type": "panel",
+                "shape": {"kind": "polygon", "points": [[0, 0], [1, 0], [1, 1], [0, 1]]},
+                "z": 0,
+                "children": [
+                    {
+                        "id": "img_0003",
+                        "type": "image",
+                        "asset": "assets/a.png",
+                        "rect": {"x": 0, "y": 0, "w": 1, "h": 1},
+                        "src_px": [-5, 10],
+                        "z": 0,
+                    }
+                ],
+            }
+        ]
+        with pytest.raises(ProjectFormatError, match="src_px"):
+            Project.from_dict(data)
+
 
 class TestRepair:
     def test_小さすぎる採番値を直す(self):

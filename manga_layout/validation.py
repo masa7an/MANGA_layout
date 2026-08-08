@@ -153,3 +153,23 @@ def point(value: Any, where: str) -> tuple[float, float]:
             _fail(f"{where}[{i}]", f"数値ではありません（{v!r}）")
         out.append(float(v))
     return (out[0], out[1])
+
+
+def pixel_size(value: Any, where: str) -> tuple[int, int]:
+    """[幅, 高さ] の 2 要素を、0 以上の整数として取り出す（`src_px` 用）。
+
+    以前はここだけ検証を通さず生の `int()` に渡していたため、壊れた値
+    （文字列・null・辞書など）では `where` の付かない生の例外が漏れ、
+    開く側が拾わずアプリごと落ちていた（2026-08-08 に発見）。
+    """
+    seq = req_list(value, where)
+    if len(seq) != 2:
+        _fail(where, f"[幅, 高さ] の 2 要素が必要です（{len(seq)} 要素）")
+    out = []
+    for i, v in enumerate(seq):
+        if isinstance(v, bool) or not isinstance(v, int):
+            _fail(f"{where}[{i}]", f"整数ではありません（{v!r}）")
+        if v < 0:
+            _fail(f"{where}[{i}]", f"0 以上の整数が必要です（{v}）")
+        out.append(v)
+    return (out[0], out[1])

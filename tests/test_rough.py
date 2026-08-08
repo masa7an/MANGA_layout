@@ -153,6 +153,23 @@ class Test保存形式:
         with pytest.raises(ProjectFormatError, match="src_px"):
             Page.from_dict(data, "pages[0]")
 
+    def test_src_px_が数値でなければ場所を示して弾く(self):
+        """以前はここだけ生の `int()` に渡していて、`ValueError` が
+        `where` の付かないまま漏れていた（2026-08-08 に発見。→ `ImageObject`
+        の同種テストと対）。
+        """
+        data = {
+            "id": "page_0001",
+            "rough": {
+                "asset": "assets/abc.png",
+                "rect": ROUGH_RECT.to_dict(),
+                "src_px": [800, "abc"],
+            },
+        }
+        with pytest.raises(ProjectFormatError) as exc:
+            Page.from_dict(data, "pages[0]")
+        assert "pages[0].rough.src_px" in str(exc.value)
+
     def test_複製に残る(self):
         """Undo はプロジェクトの写しで動く（→ 6.8）。ここが抜けると戻せない。"""
         project = new_project()

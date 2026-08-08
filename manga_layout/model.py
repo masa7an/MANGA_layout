@@ -634,9 +634,7 @@ class ImageObject(SceneObject):
     @classmethod
     def from_dict(cls, data: Any, where: str) -> ImageObject:
         d = v.req_mapping(data, where)
-        px = v.req_list(d.get("src_px", [0, 0]), f"{where}.src_px")
-        if len(px) != 2:
-            raise ProjectFormatError(f"{where}.src_px: [幅, 高さ] の 2 要素が必要です")
+        src_px = v.pixel_size(d.get("src_px", [0, 0]), f"{where}.src_px")
         opacity = v.number(d, "opacity", where, 1.0)
         if not 0.0 <= opacity <= 1.0:
             raise ProjectFormatError(f"{where}.opacity: 0.0〜1.0 の範囲外です（{opacity}）")
@@ -646,7 +644,7 @@ class ImageObject(SceneObject):
             z=v.integer(d, "z", where, 0),
             asset=v.text(d, "asset", where),
             rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
-            src_px=(int(px[0]), int(px[1])),
+            src_px=src_px,
             rotation=v.number(d, "rotation", where, 0.0),
             opacity=opacity,
             tone=None if tone is None else Tone.from_dict(tone, f"{where}.tone"),
@@ -861,9 +859,7 @@ class StickerObject(SceneObject):
     @classmethod
     def from_dict(cls, data: Any, where: str) -> StickerObject:
         d = v.req_mapping(data, where)
-        px = v.req_list(d.get("src_px", [0, 0]), f"{where}.src_px")
-        if len(px) != 2:
-            raise ProjectFormatError(f"{where}.src_px: [幅, 高さ] の 2 要素が必要です")
+        src_px = v.pixel_size(d.get("src_px", [0, 0]), f"{where}.src_px")
         opacity = v.number(d, "opacity", where, 1.0)
         if not 0.0 <= opacity <= 1.0:
             raise ProjectFormatError(f"{where}.opacity: 0.0〜1.0 の範囲外です（{opacity}）")
@@ -876,7 +872,7 @@ class StickerObject(SceneObject):
             kind=v.text(d, "kind", where, ""),
             asset=v.text(d, "asset", where),
             rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
-            src_px=(int(px[0]), int(px[1])),
+            src_px=src_px,
             rotation=v.number(d, "rotation", where, 0.0),
             opacity=opacity,
             attached_panel_id=v.opt_text(d, "attached_panel_id", where),
@@ -1120,13 +1116,11 @@ class PageRough:
     @classmethod
     def from_dict(cls, data: Any, where: str) -> PageRough:
         d = v.req_mapping(data, where)
-        px = v.req_list(d.get("src_px", [0, 0]), f"{where}.src_px")
-        if len(px) != 2:
-            raise ProjectFormatError(f"{where}.src_px: [幅, 高さ] の 2 要素が必要です")
+        src_px = v.pixel_size(d.get("src_px", [0, 0]), f"{where}.src_px")
         return cls(
             asset=v.text(d, "asset", where),
             rect=Rect.from_dict(d.get("rect"), f"{where}.rect"),
-            src_px=(int(px[0]), int(px[1])),
+            src_px=src_px,
             faded=v.flag(d, "faded", where, True),
         )
 
