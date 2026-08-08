@@ -584,6 +584,79 @@ class TestImageSelection:
         assert window_with_image.view._drag.origin_rect == image.rect
 
 
+class TestImageOverflowSelection:
+    """選択中の画像が、切り抜かれて見えない部分でも掴めていた問題。
+
+    「コマにフィット」した画像はコマの縁を越えて広がるのが普通で、隙間を
+    挟んだ隣のコマまで重なることもある。以前は「画像の矩形内 かつ
+    どこかのコマの上」としか見ておらず、**その画像自身のコマかどうかを
+    見ていなかった**ため、隣のコマを選ぼうとしたクリックが見えない画像を
+    掴んだまま動かしてしまっていた（2026-08-08 に発見）。
+    """
+
+    @pytest.fixture
+    def two_panels(self, window, png):
+        """隙間を挟んで隣り合う2つのコマ。左（A）に画像を置き、右（B）と
+        その間の隙間（x: 90〜110、どちらのコマでもない）まではみ出させる。
+        """
+        with window.state.edit("コマの追加") as project:
+            panel_a = project.add_panel(project.pages[0], Rect(0.0, 0.0, 90.0, 100.0))
+            panel_b = project.add_panel(project.pages[0], Rect(110.0, 0.0, 90.0, 100.0))
+        window.state.select(panel_a.id)
+        window.state.place_image(panel_a.id, png)
+        # コマ A の縁（x=90）を越えて、隙間とコマ B の領域まで広げる
+        window.view._apply_resize(Rect(50.0, 20.0, 100.0, 60.0))
+        return window
+
+    def test_はみ出した部分は隣のコマとして選ばれる(self, two_panels):
+        panel_b = two_panels.state.page.panels[1]
+        image = two_panels.state.selected_image
+        # コマ B の内側で、はみ出した画像の矩形とも重なる点
+        assert image.rect.x < 110.0 < image.rect.right
+        px, py = 130.0, 50.0
+
+        press(two_panels.view, px, py)
+
+        assert two_panels.state.selected_id == panel_b.id
+
+    def test_自分のコマの中では従来どおり画像のまま(self, two_panels):
+        """指摘の前後で壊してはいけない、既存の正常系。"""
+        from manga_layout.ui.canvas import MoveDrag
+
+        image = two_panels.state.selected_image
+        # コマ A の内側（はみ出していない側）
+        px, py = 70.0, 50.0
+        assert px < 90.0
+
+        press(two_panels.view, px, py)
+
+        assert two_panels.state.selected_id == image.id
+        assert isinstance(two_panels.view._drag, MoveDrag)
+
+    def test_どちらのコマでもない隙間では選ばれない(self, two_panels):
+        """どちらのコマの中でもない場所は、画像のはみ出しがあっても掴めない。"""
+        image = two_panels.state.selected_image
+        px, py = 100.0, 50.0  # 隙間（90〜110）の中
+        assert image.rect.x < px < image.rect.right
+
+        press(two_panels.view, px, py)
+
+        assert two_panels.state.selected_id is None
+
+    def test_カーソルも同じ判定を通す(self, two_panels):
+        """掴めない場所で「動かせる」形を出さない（→ `_update_cursor`）。
+
+        以前のカーソル側の判定はコマの所属をまったく見ておらず、画像の
+        矩形に入っているかだけで「動かせる」形を出していた。隙間（どちらの
+        コマでもない）でも動かせると偽っていた。
+        """
+        from PySide6.QtCore import Qt
+
+        two_panels.view._update_cursor(100.0, 50.0)  # 隙間の中
+
+        assert two_panels.view.viewport().cursor().shape() != Qt.CursorShape.SizeAllCursor
+
+
 def press_at(view, x: float, y: float, shift: bool = False) -> None:
     """Shift の有無を指定して左ボタンの押下を送る。"""
     from PySide6.QtCore import QPointF, Qt

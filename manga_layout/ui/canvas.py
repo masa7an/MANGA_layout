@@ -2097,6 +2097,26 @@ class PageView(QGraphicsView):
         self.state.set_tone_area(image_id, self.tone_area_ratio(image_rect, final))
         self.state.message.emit(f"トーンの範囲: {final.w:.0f} × {final.h:.0f} px")
 
+    def _selected_image_hit(self, x: float, y: float) -> ImageObject | None:
+        """選択中の画像を、切り抜かれた見た目の範囲内でだけ拾う。
+
+        `layout.image_at` と同じ規則（コマの外にはみ出した部分は当たらない。
+        切り抜かれて見えていないため）を、選択中の画像にも当てはめる。
+
+        「コマにフィット」した画像はコマの縁を越えて広がるのが普通で、
+        隙間を挟んだ隣のコマまで重なることもある。**その画像自身のコマの
+        中かどうかを見ずに「どこかのコマの上」とだけ判定していた**ため、
+        隣のコマを選ぼうとしたクリックが、見えない画像を掴んだまま
+        動かしてしまっていた（2026-08-08 に発見）。
+        """
+        image = self.state.selected_image
+        if image is None or not rotated_rect_contains(image.rect, x, y, image.rotation):
+            return None
+        panel = self.state.page.panel_of_image(image.id)
+        if panel is None or not panel.shape.contains(x, y):
+            return None
+        return image
+
     def _pick_at(self, x: float, y: float) -> str | None:
         """その位置で選ぶものの id。何も無ければ None。
 
@@ -2125,12 +2145,8 @@ class PageView(QGraphicsView):
 
         # 選択中の画像の上なら、コマに持ち替えずにその画像のまま。
         # ここで奪われると、選んだ絵をドラッグした瞬間にコマが動く
-        image = self.state.selected_image
-        if (
-            image is not None
-            and rotated_rect_contains(image.rect, x, y, image.rotation)
-            and panel is not None
-        ):
+        image = self._selected_image_hit(x, y)
+        if image is not None:
             return image.id
 
         return None if panel is None else panel.id
@@ -2649,7 +2665,6 @@ class PageView(QGraphicsView):
             return
 
         handle = self._handle_at_point(x, y)
-        image = self.state.selected_image
         if (
             self.state.tool in BALLOON_TOOLS
             or self.state.tool in STICKER_TOOLS
@@ -2685,9 +2700,11 @@ class PageView(QGraphicsView):
             # 回転つまみと同じ形にする。回る向きを表すカーソルは Qt の
             # 標準に無いので、掴めることだけを示す（→ `_rotate_handle_at`）
             self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-        elif image is not None and rotated_rect_contains(
-            image.rect, x, y, image.rotation
-        ):
+        elif self._selected_image_hit(x, y) is not None:
+            # 掴む側（`_pick_at`）と同じ判定を通す。**動かせる印が出た場所は
+            # 必ず動かせる**（→ 下の吹き出しの分岐と同じ考え方）。以前は
+            # コマの所属を見ていなかったため、見えない部分でも「動かせる」
+            # 形が出ていた（→ `_selected_image_hit`）
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
         elif sticker_at(self.state.page, x, y) is not None:
             self.viewport().setCursor(Qt.CursorShape.SizeAllCursor)
