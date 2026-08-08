@@ -713,6 +713,35 @@ class Test未使用ファイルを整理:
 
         assert not window_with_image.state.history.can_undo
 
+    def test_整理のあと元に戻すの項目もグレーになる(
+        self, window_with_image, png_bytes, tmp_path, monkeypatch
+    ):
+        """**記録を捨てたら画面も揃える**（2026-08-09 に発見）。
+
+        `History` は通知を出さないので、整理だけでは `refresh` が走らない。
+        項目が「元に戻す: ○○」と出たまま押せてしまい、押すと
+        「これ以上戻せません」——直後のダイアログで伝えた内容と食い違う。
+        """
+        from PySide6.QtWidgets import QMessageBox
+
+        panel_id = window_with_image.state.page.panels[0].id
+        window_with_image.state.place_image(panel_id, png_bytes)
+        window_with_image.state.save(tmp_path)
+        window_with_image.state.undo()
+        window_with_image.state.save(tmp_path)
+        assert window_with_image.edit_menu.undo_action.isEnabled()
+
+        monkeypatch.setattr(
+            QMessageBox,
+            "information",
+            lambda self, title, text: QMessageBox.StandardButton.Ok,
+        )
+
+        window_with_image.prune_assets()
+
+        assert not window_with_image.edit_menu.undo_action.isEnabled()
+        assert window_with_image.edit_menu.undo_action.text() == "元に戻す"
+
 
 class TestImageSelection:
     def test_ダブルクリックで画像を選ぶ(self, window_with_image):

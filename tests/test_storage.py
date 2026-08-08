@@ -193,6 +193,32 @@ class TestBackup:
         dest = tmp_path / BACKUP_DIRNAME / "project.1.json"
         assert not dest.exists()
 
+    def test_退避が失敗してもtmpを残さない(self, tmp_path, monkeypatch):
+        """**誰も片付けないまま居座る。**
+
+        `backup/` の `.tmp` は名前が `.json` で終わらないので復元一覧に
+        出ず、`_shift_generations` の繰り下げにも乗らない。保存側
+        （`atomic_write_text`）と書き出し側（`export_io`）は後始末を
+        持っていたが、ここだけ抜けていた（2026-08-09 に発見）。
+        """
+        import manga_layout.storage as storage_module
+
+        project = new_project(title="1回目")
+        save_project(project, tmp_path)
+
+        real_copy2 = storage_module.shutil.copy2
+
+        def 失敗するcopy2(src, dst):
+            real_copy2(src, dst)  # 書き切ってから失敗する。残骸が残る形
+            raise OSError("模擬した複製失敗")
+
+        monkeypatch.setattr(storage_module.shutil, "copy2", 失敗するcopy2)
+        project.title = "2回目"
+        with pytest.raises(OSError):
+            save_project(project, tmp_path)
+
+        assert list((tmp_path / BACKUP_DIRNAME).glob("*.tmp")) == []
+
     def test_退避を止められる(self, tmp_path, sample_project):
         save_project(sample_project, tmp_path)
         save_project(sample_project, tmp_path, backup=False)

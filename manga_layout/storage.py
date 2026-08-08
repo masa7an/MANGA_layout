@@ -137,6 +137,12 @@ def _rotate_backups(project_dir: pathlib.Path) -> None:
     世代として残る（本体は無事で、繰り下げ済みの旧1番も `project.2.json`
     に残っているため実害は無いが、復元一覧でその世代だけ「読めません」に
     なる。2026-08-08 に発見）。
+
+    **失敗したときは `.tmp` を残さない**（`atomic_write_text` と
+    `export_io.replace_or_raise` と同じ）。`backup/` の `.tmp` は名前が
+    `.json` で終わらないので復元一覧には出ず、`_shift_generations` の
+    繰り下げにも乗らない——つまり**誰も片付けないまま居座る**
+    （2026-08-09 に発見）。
     """
     current = project_dir / PROJECT_FILENAME
     if not current.is_file():
@@ -147,8 +153,12 @@ def _rotate_backups(project_dir: pathlib.Path) -> None:
     _shift_generations(backup_dir, "project", BACKUP_GENERATIONS)
     dest = backup_dir / "project.1.json"
     tmp = dest.with_name(dest.name + ".tmp")
-    shutil.copy2(current, tmp)
-    os.replace(tmp, dest)
+    try:
+        shutil.copy2(current, tmp)
+        os.replace(tmp, dest)
+    except OSError:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _project_text(project: Project) -> str:

@@ -1312,6 +1312,12 @@ class MainWindow(QMainWindow):
         # 実体と食い違う（2026-08-08 発見）。整理の直後に記録を空にして、
         # その組み合わせ自体を起こらなくする
         self.state.history.forget_undo_history()
+        # **記録を捨てたら画面も揃える。** `History` は通知を出さないので、
+        # `state.changed` などを引き金にしている `refresh` は走らない。
+        # 呼ばないと編集メニューが「元に戻す: コマの移動」と出たまま押せて、
+        # 押すと「これ以上戻せません」と返る——直後にダイアログで伝えた
+        # 内容と食い違う（2026-08-09 に発見）
+        self._refresh()
         QMessageBox.information(
             self,
             "整理しました",
