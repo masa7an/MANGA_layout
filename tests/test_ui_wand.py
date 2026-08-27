@@ -224,6 +224,9 @@ def test_持っている間ずっと案内が出る(window_with_image):
     assert "押すとその区画が消える" in hint
     assert "Shift" in hint
     assert str(window.state.wand_tolerance) in hint, "今の許容差も出る"
+    assert "もう一度、メニュー「切り抜き」を押すと解除" in hint, (
+        "出口は道具の名前で言う。どの項目のことか書いていないと辿れない"
+    )
 
 
 def test_道具を持ち替えれば案内も消える(window_with_image):
