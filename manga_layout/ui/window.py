@@ -75,6 +75,7 @@ from .state import (
     TOOL_STICKER_EXCLAIM_QUESTION,
     TOOL_TEXT,
     TOOL_TONE_AREA,
+    TOOL_WAND,
     EditorState,
     object_label,
 )
@@ -362,6 +363,10 @@ class MainWindow(QMainWindow):
             # トーンの範囲（→ 10.1）も同じ。しきい値と細さで足りなかった
             # ときの手当てなので、頻繁に出入りするものではない
             (TOOL_TONE_AREA, None),
+            # 切り抜き（→ 10.3）にもキーは割り当てない。**キーの本数は
+            # 増やさない**（→ 上の雲の注記）。使うのは絵を貼った直後だけで、
+            # メニューと右クリックで足りる
+            (TOOL_WAND, None),
         ):
             label = TOOL_LABELS[tool]
             action = QAction(f"{label} ({shortcut})" if shortcut else label, self)
@@ -525,6 +530,17 @@ class MainWindow(QMainWindow):
                 else f"{area.w * image.rect.w:.0f} × {area.h * image.rect.h:.0f} px"
             )
             return f"トーン範囲を調整中: {where} / {ADJUST_TOOL_EXIT}"
+
+        # **切り抜きでは、押すと何が起きるかをここに出す**（→ 10.3）。
+        # 項目名は「切り抜き」の4文字しかなく、押した所が消えることも、
+        # Shift で裏返ることも、名前からは分からない。**道具の名前を短く
+        # 保てるのは、持っている間ずっとここに出ているから**
+        if self.state.tool == TOOL_WAND:
+            return (
+                f"切り抜き中: 絵を押すとその区画が消える"
+                f" / Shift+押すとそこだけ残す / 許容差 {self.state.wand_tolerance}"
+                f" / {ADJUST_TOOL_EXIT}"
+            )
 
         # **セリフを置く道具では、置く前に書式を名乗る。** 書式は最後に
         # 指定したものを引き継ぐので（→ `EditorState.next_text_font`）、
@@ -988,6 +1004,18 @@ class MainWindow(QMainWindow):
             return
         self.state.set_balloon_style(balloon.id, style)
         self.state.message.emit(f"{BALLOON_STYLE_LABELS.get(style, style)}にしました")
+
+    def clear_image_mask(self) -> None:
+        """選択中の画像から切り抜きを外す（→ 要件定義 10.3）。
+
+        **実体（assets/）は消さない。** Undo で戻せる操作なので、消すと
+        戻したときに切り抜きだけが失われる（→ `EditorState.clear_image_mask`）。
+        """
+        image = self.state.selected_image
+        if image is None or not image.mask_asset:
+            return
+        if self.state.clear_image_mask(image.id):
+            self.state.message.emit("切り抜きを外しました")
 
     def toggle_tail(self) -> None:
         balloon = self.state.selected_balloon

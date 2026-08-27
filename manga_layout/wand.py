@@ -232,3 +232,11 @@ def removed(a: QImage, b: QImage) -> QImage:
     n = len(a_raw)
     kept = int.from_bytes(a_raw, "big") & int.from_bytes(b_raw.translate(_INVERT), "big")
     return _image_like(kept.to_bytes(n, "big"), like)
+
+
+def intersected(a: QImage, b: QImage) -> QImage:
+    """どちらにも入っている所だけ残す（そこだけ残す）。"""
+    a_raw, b_raw, like = _pair(a, b)
+    n = len(a_raw)
+    kept = int.from_bytes(a_raw, "big") & int.from_bytes(b_raw, "big")
+    return _image_like(kept.to_bytes(n, "big"), like)

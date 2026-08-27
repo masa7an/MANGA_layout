@@ -48,6 +48,9 @@ from .state import (
     TOOL_SPLIT_V,
     TOOL_TEXT,
     TOOL_TONE_AREA,
+    TOOL_WAND,
+    WAND_TOLERANCE_MAX,
+    WAND_TOLERANCE_MIN,
     object_label,
 )
 
@@ -902,6 +905,8 @@ class ImageMenu:
         )
         menu.addAction(self.reset_rotation_action)
         menu.addSeparator()
+        self.wand = WandMenu(window, menu)
+        menu.addSeparator()
         self.tone = ToneMenu(window, menu)
         menu.addSeparator()
         menu.addAction(window._act("未使用ファイルを整理...", window.prune_assets))
@@ -912,7 +917,54 @@ class ImageMenu:
         self.reset_rotation_action.setEnabled(
             image is not None and image.rotation != 0.0
         )
+        self.wand.refresh()
         self.tone.refresh()
+
+
+class WandMenu:
+    """切り抜き（自動領域選択 → 要件定義 10.3）。
+
+    **道具と、許容差の増減と、外す。** 選ぶ・確かめる・確定するの段取りが無い
+    ので、メニューに出すのはこれだけで足りる（→ `EditorState.erase_region_at`）。
+
+    **絵を選んでいなくても道具は選べる。** 押した所の絵が対象なので、
+    先に選んでおく必要が無い（トーンと違う所）。
+    """
+
+    def __init__(self, window: MainWindow, menu: QMenu) -> None:
+        self._state = window.state
+        self.tool_action = window._tool_actions[TOOL_WAND]
+        menu.addAction(self.tool_action)
+
+        self.wider_action = window._act(
+            "許容差を広く",
+            lambda: window.state.step_wand_tolerance(1),
+            None,
+            "似ていると見なす濃さの幅を広げる。広げるほど、隣の区画までつながる",
+        )
+        self.narrower_action = window._act(
+            "許容差を狭く",
+            lambda: window.state.step_wand_tolerance(-1),
+            None,
+            "似ていると見なす濃さの幅を狭める。狭めるほど、細かく割れる",
+        )
+        menu.addAction(self.wider_action)
+        menu.addAction(self.narrower_action)
+
+        self.clear_action = window._act(
+            "切り抜きを外す",
+            window.clear_image_mask,
+            None,
+            "選択中の画像を、切り抜く前の絵に戻す",
+        )
+        menu.addAction(self.clear_action)
+
+    def refresh(self) -> None:
+        tolerance = self._state.wand_tolerance
+        self.wider_action.setEnabled(tolerance < WAND_TOLERANCE_MAX)
+        self.narrower_action.setEnabled(tolerance > WAND_TOLERANCE_MIN)
+        image = self._state.selected_image
+        self.clear_action.setEnabled(image is not None and bool(image.mask_asset))
 
 
 class PageMenu:

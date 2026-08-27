@@ -68,7 +68,9 @@ from ..layout import (
     default_panel_rect,
     handle_at,
     handle_positions,
+    image_at,
     image_orphaned_at,
+    image_pixel_at,
     keep_anchor,
     next_in_stack,
     panel_at,
@@ -129,6 +131,7 @@ from .state import (
     TOOL_SPLIT_V,
     TOOL_TEXT,
     TOOL_TONE_AREA,
+    TOOL_WAND,
     EditorState,
 )
 
@@ -1847,6 +1850,13 @@ class PageView(QGraphicsView):
             event.accept()
             return
 
+        # 切り抜き（→ 10.3）。**押した所を消すだけで、選択も掴みも起こさない。**
+        # 下の判定を通すと、絵を選ぶ・動かすが先に効いてしまう
+        if tool == TOOL_WAND:
+            self._wand_click(x, y, event.modifiers())
+            event.accept()
+            return
+
         # 吹き出し・マーク・セリフはコマの上に置くものなので、下に何があっても
         # 作れる。コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で
         # 作れない
@@ -2067,6 +2077,28 @@ class PageView(QGraphicsView):
         return handle_at(
             self.tone_area_rect(image), lx, ly, HANDLE_PX / self.view_scale, 0.0
         )
+
+    def _wand_click(self, x: float, y: float, modifiers) -> None:
+        """切り抜きの道具で押された（→ 要件定義 10.3）。
+
+        **押した1点を、その絵の元画像の画素へ翻訳して渡すだけ。** 何を消すかを
+        決めるのは `manga_layout.wand` で、ここは座標の橋渡しに徹する。
+
+        Shift を押しながらなら「そこだけ残す」。クリスタの選択と同じ指の形で、
+        意味は裏返し（あちらは足す）だが、**この道具には足す相手が無い**——
+        1回ごとに作品へ書き込むので、積んでおく選択そのものが存在しない。
+        """
+        panel = panel_at(self.state.page, x, y)
+        image = image_at(panel, x, y) if panel is not None else None
+        if image is None:
+            self.state.message.emit("コマの中の絵を押してください")
+            return
+
+        seed = image_pixel_at(image, x, y)
+        if seed is None:
+            return
+        keep_only = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
+        self.state.erase_region_at(image.id, seed, keep_only=keep_only)
 
     def _begin_tone_drag(self, x: float, y: float) -> None:
         """トーン範囲の道具で押された。つまみなら隅を動かし、それ以外は囲い直す。
