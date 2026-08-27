@@ -15,7 +15,7 @@ from collections.abc import Iterator
 from PySide6.QtCore import QObject, Signal
 
 from ..assets import AssetStore, PendingAssets
-from ..errors import AssetError
+from ..errors import AssetError, MaskSizeError
 from ..flow import (
     DEFAULT_FLOW_SETTINGS,
     default_flow,
@@ -32,13 +32,17 @@ from ..focus import (
 )
 from ..geometry import Rect, Size, normalize_angle
 from ..history import History
+from ..image_masks import decode_mask, safe_masked_preview
 from ..images import (
+    BakedCache,
     ImageCache,
     Preview,
-    ToneCache,
+    bake_key,
     preview_from_bytes,
     readable_file,
     rough_preview_from_bytes,
+    size_px,
+    toned,
 )
 from ..layout import (
     BalloonSettings,
@@ -306,9 +310,10 @@ class EditorState(QObject):
         # 「同じ入れ物に別の作り方のものを入れてはいけない」決まりで動いて
         # おり、青く染めた1枚を混ぜると、引く側がどちらか判断できなくなる
         self.rough_cache = ImageCache(make=rough_preview_from_bytes)
-        # トーンを焼いた1枚の入れ物（→ 10.1）。こちらも画像と混ぜない。
-        # 鍵に設定が入るぶん増え続けるので、あちらと違って上限を持つ
-        self.tone_cache = ToneCache()
+        # トーン（→ 10.1）と切り抜き（→ 10.3）を焼いた1枚の入れ物。
+        # こちらも画像と混ぜない。鍵に設定が入るぶん増え続けるので、
+        # あちらと違って上限を持つ
+        self.baked_cache = BakedCache()
         # ラフの濃さ（→ `settings.rough_opacity`）。作品ではなく好みなので
         # `project.json` ではなく `settings.json` から来る。窓が起動時と
         # ラフを読み込む直前に入れ直す（→ `MainWindow.load_rough`）
@@ -798,18 +803,46 @@ class EditorState(QObject):
         return self.image_cache.get(ref, lambda: self.read_asset(ref))
 
     def image_preview(self, image) -> Preview | None:
-        """画面に描くための1枚。**トーンが入っていれば焼いたほうを返す。**
+        """画面に描くための1枚。**トーンと切り抜きが入っていれば焼いたほうを返す。**
 
         受け取るのが参照文字列ではなく画像そのものなのは、同じ `asset` でも
-        トーンの設定次第で別の絵になるため（→ 要件定義 10.1）。マーク
-        （`StickerObject`）もここを通るが、あちらはトーンを持たない。
+        トーンの設定や切り抜き次第で別の絵になるため（→ 要件定義 10.1・10.3）。
+        マーク（`StickerObject`）もここを通るが、あちらはどちらも持たない。
+
+        **切り抜きのある画像だけ、原寸から作り直す。** マスクは元画像の
+        ピクセル座標に結び付いているので、`image_cache` が持っている縮小版へは
+        掛けられない（→ `image_masks.masked_preview`）。無い画像は今までどおり
+        縮小版から焼くので、この機能を使っていない作品では何も変わらない。
         """
         tone = getattr(image, "tone", None)
-        if tone is None:
+        mask_ref = getattr(image, "mask_asset", "")
+        if tone is None and not mask_ref:
             return self.preview(image.asset)
-        return self.tone_cache.get(
-            image.asset, tone, lambda: self.preview(image.asset)
+        key = bake_key(image)
+        if not mask_ref:
+            return self.baked_cache.get(
+                key, lambda: toned(self.preview(image.asset), tone)
+            )
+        return self.baked_cache.get(key, lambda: self._masked_preview(image, tone))
+
+    def _masked_preview(self, image, tone) -> Preview | None:
+        """切り抜きを焼いた画面用の1枚。実体が欠けていれば None。
+
+        **マスクだけが欠けているときは、切り抜き無しの絵を返す**（→ 計画 段階1〜3）。
+        開けなくする・何も描かない、はしない——欠けた絵1枚で作品が読めなく
+        なるのは割に合わない、という `ImageCache` の考え方と揃えてある。
+        マスクの欠けは点検（`check.KIND_MISSING_MASK`）が拾う。
+        """
+        baked = safe_masked_preview(
+            self.read_asset(image.asset),
+            self.read_asset(image.mask_asset),
+            tone,
+            reduced=True,
         )
+        if baked is not None:
+            return baked
+        plain = self.preview(image.asset)
+        return plain if tone is None else toned(plain, tone)
 
     def forget_if_unused(self, ref: str) -> None:
         """その参照が作品のどこからも使われていなければ、覚えを手放す。
@@ -829,7 +862,7 @@ class EditorState(QObject):
         if ref in self.project.referenced_assets():
             return
         self.image_cache.forget(ref)
-        self.tone_cache.forget(ref)
+        self.baked_cache.forget(ref)
 
     def import_bytes(self, data: bytes) -> tuple[str, tuple[int, int]]:
         """画像を取り込み、参照と原寸のピクセル寸法を返す。
@@ -894,6 +927,75 @@ class EditorState(QObject):
         self.select(image.id)
         self.forget_if_unused(old_ref)
         return image
+
+    # -- 切り抜き（AI で作ったマスク → 要件定義 10.3） ---------------------
+    #
+    # **作品が変わるのは適用の1回だけ。** 候補を見比べている間は何も変えない
+    # ので、推論の失敗や見比べが未保存の変更や Undo の履歴を汚さない
+    # （→ `SAM3実装計画.md` 段階5）。
+
+    def import_mask_bytes(self, data: bytes) -> str:
+        """マスクを取り込んで参照を返す。展開できなければ例外。
+
+        **画像用の入れ物（`image_cache`）には入れない。** マスクは描く相手
+        ではなく、絵に掛ける材料。混ぜると、引く側が「これは絵か、マスクか」を
+        判断できなくなる（→ `ImageCache` の注記）。
+        """
+        decode_mask(data)  # 壊れていればここで例外
+        if self.project_dir is None:
+            return self.pending_assets.add(data)
+        return AssetStore(self.project_dir).add_bytes(data)
+
+    def apply_image_mask(self, image_id: str, data: bytes) -> bool:
+        """表示中のページの画像に切り抜きを掛ける。掛けたら True。
+
+        **寸法が合わなければ断る**（`MaskSizeError`）。縮めて合わせることは
+        しない——合わせると、ずれた組み合わせが「輪郭がわずかにずれた絵」に
+        なるだけで人が気づけない（→ `image_masks.apply_mask`）。
+
+        既に切り抜いてある画像へ掛け直すのも同じ1手。前のマスクの実体は
+        消さず、使われなくなった実体は「未使用ファイルを整理」が拾う
+        （→ 要件定義 5章。差し替え・削除と同じ扱い）。
+        """
+        image = self.page.find(image_id)
+        if not isinstance(image, ImageObject):
+            return False
+
+        mask_px = size_px(decode_mask(data))
+        if mask_px != image.src_px:
+            raise MaskSizeError(
+                f"切り抜きの大きさが画像と違います"
+                f"（画像 {image.src_px[0]:,} × {image.src_px[1]:,} 画素、"
+                f"切り抜き {mask_px[0]:,} × {mask_px[1]:,} 画素）"
+            )
+
+        old_ref = image.mask_asset
+        ref = self.import_mask_bytes(data)
+        with self.edit_page("切り抜きの適用") as page:
+            target = page.find(image_id)
+            if isinstance(target, ImageObject):
+                target.mask_asset = ref
+        if old_ref:
+            self.forget_if_unused(old_ref)
+        return True
+
+    def clear_image_mask(self, image_id: str) -> bool:
+        """切り抜きを外して元の絵に戻す。外したら True。
+
+        **実体（assets/）は消さない。** Undo で戻せる操作なので、ここで
+        消すと戻したときに切り抜きだけが失われる（ラフを外すのと同じ扱い）。
+        """
+        image = self.page.find(image_id)
+        if not isinstance(image, ImageObject) or not image.mask_asset:
+            return False
+
+        old_ref = image.mask_asset
+        with self.edit_page("切り抜きを外す") as page:
+            target = page.find(image_id)
+            if isinstance(target, ImageObject):
+                target.mask_asset = ""
+        self.forget_if_unused(old_ref)
+        return True
 
     # -- ラフ（下敷き） ----------------------------------------------------
 
@@ -1941,7 +2043,7 @@ class EditorState(QObject):
         self.pending_assets = PendingAssets()
         self.image_cache.clear()
         self.rough_cache.clear()
-        self.tone_cache.clear()
+        self.baked_cache.clear()
         # 点検の印は前の作品のもの。ページの id ごと別系列になるので、
         # 残しても付きようがないが、消さないと数だけ残る（→ 要件定義 10.1）
         self.clear_check_marks()

@@ -366,8 +366,11 @@ def _pattern(size: QSize, tone: Tone) -> QImage:
     return out
 
 
-def _as_alpha(mask: QImage) -> QImage:
+def as_alpha(mask: QImage) -> QImage:
     """マスクの明るさを透明度として読み替えた1枚。
+
+    **切り抜き（→ 要件定義 10.3）もここを通る。** 明るさを透明度として
+    読む所を2つ持つと、片方だけが下の落とし穴に落ちる。
 
     **`convertToFormat` でこれをやってはいけない。** `Format_Alpha8` へ
     変換すると全画素 255 になり、マスクが「画像全部」を指す。生バイト列を
@@ -381,7 +384,7 @@ def _cut_out(layer: QImage, mask: QImage) -> QImage:
     """`layer` をマスクの形に抜く（外を透明にする）。渡した1枚を書き換える。"""
     painter = QPainter(layer)
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-    painter.drawImage(0, 0, _as_alpha(mask))
+    painter.drawImage(0, 0, as_alpha(mask))
     painter.end()
     return layer
 

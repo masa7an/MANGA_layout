@@ -30,6 +30,7 @@ from .vertical import COLUMN_PITCH
 
 # 拾うものの種類（→ 要件定義 6.29）
 KIND_MISSING_ASSET = "missing_asset"
+KIND_MISSING_MASK = "missing_mask"
 KIND_BLANK_PAGE = "blank_page"
 KIND_TEXT_OVERFLOW = "text_overflow"
 KIND_EMPTY_TEXT = "empty_text"
@@ -41,6 +42,11 @@ KIND_LABELS = {
     # 場合も同じ扱いだから（→ `EditorState.has_asset`。2026-08-09）。
     # 書き出した結果はどちらも「そこが白く抜ける」で同じ
     KIND_MISSING_ASSET: "使えない画像",
+    # 切り抜き（→ 要件定義 10.3）のマスクだけが欠けている状態。**絵は出る。**
+    # 出るのは切り抜く前の絵なので、白く抜ける `KIND_MISSING_ASSET` とは
+    # 見え方が違う。書き出し前の警告（`ui.export.missing_assets_in`）が
+    # 数えないのもこのため——あちらの問いは「白く抜けるか」だけ
+    KIND_MISSING_MASK: "切り抜きの外れた画像",
     KIND_BLANK_PAGE: "何も置いていないページ",
     KIND_TEXT_OVERFLOW: "フキダシからはみ出したセリフ",
     KIND_EMPTY_TEXT: "空のままのセリフ",
@@ -51,6 +57,7 @@ KIND_LABELS = {
 # 重い順。**この順で窓に出す**（→ 要件定義 6.29「重さの違い」）
 KIND_ORDER = (
     KIND_MISSING_ASSET,
+    KIND_MISSING_MASK,
     KIND_BLANK_PAGE,
     KIND_TEXT_OVERFLOW,
     KIND_EMPTY_TEXT,
@@ -132,6 +139,13 @@ def inspect_page(
         for obj in page_assets(page):
             if not obj.asset or not has_asset(obj.asset):
                 found.append(hit(KIND_MISSING_ASSET, obj.id))
+                # 絵そのものが無いなら、切り抜きの話は出さない。1つの絵に
+                # 2件並ぶと、直す順番が分からなくなる
+                continue
+            # 切り抜きのマスク（→ 10.3）。マークは持たないので空になる
+            mask = getattr(obj, "mask_asset", "")
+            if mask and not has_asset(mask):
+                found.append(hit(KIND_MISSING_MASK, obj.id))
 
     balloons = {f.id: f for f in page.floating if isinstance(f, BalloonObject)}
     for obj in page.floating:
