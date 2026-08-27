@@ -195,8 +195,11 @@ def level_label(field: str, value: float) -> str:
 # -- 中の4段 --------------------------------------------------------------
 
 
-def _flatten_on_white(image: QImage) -> QImage:
+def flatten_on_white(image: QImage) -> QImage:
     """白い紙の上に載せた1枚。**透明を「白」に倒すためだけにやる。**
+
+    **自動領域選択（→ `wand.py`）もここを通る。** 透明の扱いを2か所に書くと、
+    片方だけが下の落とし穴を踏む。
 
     `Format_Grayscale8` への変換はアルファを捨てるので、透明な部分の色が
     そのまま出る。背景が「透明かつ白」なら白として読まれて実害が無いが、
@@ -294,7 +297,7 @@ def build_mask(image: QImage, tone: Tone) -> QImage:
     分けてあるのは、テストが「どこが選ばれたか」だけを見られるようにする
     ため。斜線の見た目は目で決めるもので、数では確かめられない。
     """
-    gray = _flatten_on_white(image).convertToFormat(QImage.Format.Format_Grayscale8)
+    gray = flatten_on_white(image).convertToFormat(QImage.Format.Format_Grayscale8)
     raw, w, h, bpl = _raw_of(gray)
     mask = _gray_image(_cut(raw, keep_at_or_below=tone.threshold), w, h, bpl)
 
