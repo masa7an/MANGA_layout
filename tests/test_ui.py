@@ -475,8 +475,7 @@ class TestImageAssets:
         保存のたびに通る。既にあるものを読み直して書き直すようになると、
         絵が増えるほど普段の保存が重くなる。
         """
-        from manga_layout import AssetStore
-        from manga_layout import assets as assets_module
+        from manga_layout import AssetStore, assets as assets_module
 
         window_with_image.state.save(tmp_path)
 
@@ -799,7 +798,8 @@ class TestImageOverflowSelection:
         """
         with window.state.edit("コマの追加") as project:
             panel_a = project.add_panel(project.pages[0], Rect(0.0, 0.0, 90.0, 100.0))
-            panel_b = project.add_panel(project.pages[0], Rect(110.0, 0.0, 90.0, 100.0))
+            # コマ B は置くだけ。掴むのは A なので、名前で持たない
+            project.add_panel(project.pages[0], Rect(110.0, 0.0, 90.0, 100.0))
         window.state.select(panel_a.id)
         window.state.place_image(panel_a.id, png)
         # コマ A の縁（x=90）を越えて、隙間とコマ B の領域まで広げる
@@ -1941,6 +1941,12 @@ class TestSlantSlideUI:
         assert 0.02 < ratio < 0.5
 
 
+# `_split` の既定の矩形。引数の既定値に `Rect(...)` と書くと、呼ぶたびではなく
+# 定義したときに1回だけ作られる（ruff B008）。`Rect` は frozen なので共有しても
+# 書き換わらないが、**読む人がそれを確かめずに済むよう**、外へ出しておく
+SLANT_DEFAULT_RECT = Rect(100.0, 400.0, 200.0, 300.0)
+
+
 class Test斜めのコマの大きさ変更:
     """**掴んだ辺だけが止まる**ことを、画面側の経路で固定する（2026-08-09）。
 
@@ -1954,7 +1960,7 @@ class Test斜めのコマの大きさ変更:
     （→ そちらの `Testリサイズの押し戻し`）。
     """
 
-    def _split(self, window, rect=Rect(100.0, 400.0, 200.0, 300.0)):
+    def _split(self, window, rect=SLANT_DEFAULT_RECT):
         """既定の設定で、指定の矩形を中央で斜めに割って選んでおく。
 
         ページ全面（幅 1062px）では、上辺を用紙の外まで引いても押し戻しの
