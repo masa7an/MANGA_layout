@@ -1,8 +1,8 @@
 """専用環境の中で動く入口の、モデル以外の部分（→ `SAM3実装計画.md` 段階4）。
 
-**モデルを呼ぶ所（`_predict`）は差し替えて確かめる。** 埋まっていない今でも、
-PNG の書き出し・出力JSON・候補の上限は先に固められる。段階4で残るのは
-「公式 SAM 3 の呼び方」だけになる。
+**モデルを呼ぶ所（`_predict`）は差し替えて確かめる。** アプリの `venv` には
+PyTorch も SAM 3 も入れないので、ここで動かせるのは PNG の書き出し・出力JSON・
+候補の上限まで。**実モデルを通した確認は別（段階4で実機に対して行う）。**
 """
 
 from __future__ import annotations
@@ -58,7 +58,9 @@ class TestPNGの書き出し:
 class Test結果の書き出し:
     def test_候補ごとにPNGとJSONが出る(self, request_for, monkeypatch, qapp):
         monkeypatch.setattr(
-            cli, "_predict", lambda r: ((8, 4), [prediction(keep=2), prediction(keep=6)])
+            cli,
+            "_predict",
+            lambda r: cli.Outcome((8, 4), [prediction(keep=2), prediction(keep=6)], 1.5),
         )
         assert cli.main(["cli.py", str(_written(request_for))]) == 0
 
@@ -75,7 +77,7 @@ class Test結果の書き出し:
 
     def test_候補が0件でも結果を書く(self, request_for, monkeypatch, qapp):
         """書かないと、頼んだ側から「落ちた」のと区別が付かない（→ `runner`）。"""
-        monkeypatch.setattr(cli, "_predict", lambda r: ((120, 80), []))
+        monkeypatch.setattr(cli, "_predict", lambda r: cli.Outcome((120, 80), []))
         assert cli.main(["cli.py", str(_written(request_for))]) == 0
 
         result = SegmentationResult.from_dict(
@@ -93,7 +95,7 @@ class Test結果の書き出し:
             out_dir=tmp_path / "out",
             max_candidates=2,
         )
-        monkeypatch.setattr(cli, "_predict", lambda r: ((8, 4), [prediction()] * 5))
+        monkeypatch.setattr(cli, "_predict", lambda r: cli.Outcome((8, 4), [prediction()] * 5))
         assert cli.main(["cli.py", str(_written(request))]) == 0
 
         pngs = sorted(p.name for p in request.out_dir.glob("*.png"))
@@ -103,11 +105,25 @@ class Test結果の書き出し:
         assert cli.main(["cli.py"]) == 2
 
 
-class Testまだ埋めていない所:
-    def test_モデルの呼び出しは段階4(self, request_for):
-        """**当てずっぽうで書かない。** 空けてあることをここで明示しておく。"""
-        with pytest.raises(NotImplementedError, match="段階4"):
-            cli._predict(request_for)
+class Test専用環境を持ち込まない:
+    """**アプリの `venv` から読めること。** ここが崩れると、この試験自体が動かない。"""
+
+    def test_読み込むだけではtorchを引き込まない(self):
+        """`torch` も `sam3` も、`_predict` の中でだけ import する。
+
+        module の先頭で import すると、アプリ側のテストが専用環境無しでは
+        collect すらできなくなる（このファイルが現に動いていることが証拠だが、
+        書き換えで崩れやすいので明示しておく）。
+        """
+        import sys
+
+        assert "manga_layout.ai.sam3.cli" in sys.modules
+        assert "torch" not in sys.modules
+        assert "sam3" not in sys.modules
+
+    def test_モデルを読む前はリビジョンが空(self):
+        """実験ログに「どの版で出た結果か」を残すためのもの（→ 4.5）。"""
+        assert cli.model_revision() == ""
 
     def test_GPUを測れない環境ではNoneを返す(self):
         """0 と答えると「使っていない」のか「測っていない」のか分からなくなる。"""
@@ -130,7 +146,9 @@ def test_元画像と寸法の違う候補は書かない(request_for, monkeypat
     （→ `EditorState.apply_image_mask`）。
     """
     monkeypatch.setattr(
-        cli, "_predict", lambda r: ((8, 4), [cli.Prediction(bytes(4), 2, 2, 0.5, (0, 0, 2, 2))])
+        cli,
+        "_predict",
+        lambda r: cli.Outcome((8, 4), [cli.Prediction(bytes(4), 2, 2, 0.5, (0, 0, 2, 2))]),
     )
     with pytest.raises(ValueError, match="寸法"):
         cli.main(["cli.py", str(_written(request_for))])

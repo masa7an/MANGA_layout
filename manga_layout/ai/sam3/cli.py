@@ -57,6 +57,20 @@ class Prediction:
     box: tuple[int, int, int, int]
 
 
+@dataclass(frozen=True)
+class Outcome:
+    """1回の推論で分かったこと。
+
+    **寸法を候補と別に持つ。** 候補が0件でも元画像の寸法は分かるので、
+    「見つかりませんでした」を寸法つきで返せる（0×0 だと受け取る側が読めない）。
+    """
+
+    image_px: tuple[int, int]
+    predictions: list[Prediction]
+    # モデルを読むのに掛かった秒。2回目以降（控えが効いたとき）は 0
+    load_seconds: float = 0.0
+
+
 def write_gray_png(path: pathlib.Path, width: int, height: int, mask: bytes) -> None:
     """8bitグレースケールPNGを1枚書く。**標準ライブラリだけで書く。**
 
@@ -104,45 +118,130 @@ def gpu_peak_mb() -> float | None:
     return torch.cuda.max_memory_allocated() / (1024 * 1024)
 
 
+# 公式の配布元（→ 段階0 で確かめた `sam3.model_builder.download_ckpt_from_hf`）。
+# **自分で取りに行く。** `build_sam3_image_model(load_from_HF=True)` に任せると、
+# どのリビジョンを読んだかが手元に残らない（実験ログに書けない → 4.5）
+HF_REPO = "facebook/sam3"
+HF_CKPT = "sam3.pt"
+
+# これ未満の確からしさの候補は返らない（`Sam3Processor` の既定と同じ）。
+# **下げると候補は増えるが、選ぶ側が見比べきれなくなる。** 段階6で動かす
+CONFIDENCE_THRESHOLD = 0.5
+
+# 同じプロセスで2回目以降、モデルを読み直さないための控え。
+# **今は推論ごとにプロセスを起こすので出番が無い**（→ 計画 段階4）。
+# 常駐ワーカーへ替えたときに、ここがそのまま効く
+_PROCESSOR = None
+_REVISION = ""
+
+
 def model_revision() -> str:
-    """実際に動いたモデルのリビジョン。**分からなければ空。**
+    """実際に動いたモデルのリビジョン。**読む前は空。**
 
-    段階4で、公式の読み込み方が決まってから埋める（→ `_predict`）。
+    Hugging Face のキャッシュは `snapshots/<リビジョン>/<ファイル>` の形に
+    なっているので、取ってきたパスから拾える。
     """
-    return ""
+    return _REVISION
 
 
-def _predict(
-    request: SegmentationRequest,
-) -> tuple[tuple[int, int], list[Prediction]]:
-    """公式 SAM 3 に切り抜きを頼む。**ここだけが段階4の仕事。**
+def _load(device: str):
+    """モデルを読む。2回目からは控えを返す。戻り値は (処理役, 掛かった秒)。"""
+    global _PROCESSOR, _REVISION
+    if _PROCESSOR is not None:
+        return _PROCESSOR, 0.0
 
-    返すのは**元画像の寸法と、候補の一覧**。寸法を候補から取らないのは、
-    **候補が0件のときに寸法が分からなくなる**ため（結果が「0×0の絵」に
-    なって、受け取る側が読めない。試験で見つけた）。絵を読むのはここなので、
-    ここが答えるのが素直。
+    # **時計は import より先に読む。** `import sam3` だけで 4.5 秒掛かり
+    # （2026-08-27 実測）、あとで測ると**その4.5秒が「推論」に混ざる**。
+    # 実際そう書いていて、初通しで推論 5.4 秒という値を出した
+    started = time.perf_counter()
 
-    埋めるときに確かめること。
+    import torch  # noqa: F401
+    from huggingface_hub import hf_hub_download
+    from sam3 import build_sam3_image_model
+    from sam3.model.sam3_image_processor import Sam3Processor
 
-    1. 公式の読み込み方（`from sam3...` の形と、チェックポイントの指定）
-    2. 文（`request.prompt`）の渡し方と、返る候補の形
-    3. 候補ごとのマスクを 0/255 の1画素1バイトへ落とす手順（numpy はここで使う）
-    4. 信頼度と範囲（元画像のピクセル座標）の取り出し方
-
-    **当てずっぽうで書かない。** 動かないコードが「実装済み」に見えるのが、
-    この計画でいちばん避けたい状態（→ 段階0「動くと書くのは通ってから」）。
-    """
-    raise NotImplementedError(
-        "SAM 3 の呼び出しはまだ書いていません（段階4）。"
-        "専用環境を作り、公式の呼び方を確かめてからここを埋めてください"
+    checkpoint = pathlib.Path(hf_hub_download(repo_id=HF_REPO, filename=HF_CKPT))
+    # .../snapshots/<リビジョン>/sam3.pt
+    _REVISION = checkpoint.parent.name if checkpoint.parent.parent.name == "snapshots" else ""
+    model = build_sam3_image_model(
+        device=device, load_from_HF=False, checkpoint_path=str(checkpoint)
     )
+    _PROCESSOR = Sam3Processor(
+        model, device=device, confidence_threshold=CONFIDENCE_THRESHOLD
+    )
+    return _PROCESSOR, time.perf_counter() - started
+
+
+def _predict(request: SegmentationRequest) -> Outcome:
+    """公式 SAM 3 に切り抜きを頼む。**ここだけが PyTorch と SAM 3 に触る。**
+
+    呼び方は 2026-08-27 に実機で確かめたもの（根拠: 単体推論を実行し、
+    2048×2048 の生成画像に "person" で候補1件・信頼度 0.863 を得た）。
+
+    **`torch.autocast` で包むのは呼ぶ側の仕事。** 動画側の経路
+    （`sam3_base_predictor.py`）は自分で包んでいるが、画像側の
+    `Sam3Processor` は包んでいない。包まないと vitdet の中で
+    「BFloat16 と Float がぶつかる」で落ちる（同日実測）。
+
+    返すのは**元画像の寸法と候補**。寸法を候補から取らないのは、候補が0件の
+    ときに寸法が分からなくなるため。
+    """
+    import torch
+    from PIL import Image
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    processor, load_seconds = _load(device)
+
+    image = Image.open(request.image_path).convert("RGB")
+    width, height = image.size
+
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        state = processor.set_image(image)
+        state = processor.set_text_prompt(request.prompt, state)
+
+    masks, boxes, scores = state["masks"], state["boxes"], state["scores"]
+    # **確からしさの高い順に並べ替える。** モデルが返す順は決まっていない
+    order = sorted(range(len(scores)), key=lambda i: -float(scores[i]))
+
+    predictions = []
+    for i in order:
+        # マスクは [候補, 1, 高さ, 幅] の真偽値で、**元画像と同じ寸法**
+        # （`Sam3Processor._forward_grounding` が元寸へ戻している）
+        mask = masks[i][0].to(torch.uint8) * 255
+        predictions.append(
+            Prediction(
+                mask=mask.contiguous().cpu().numpy().tobytes(),
+                width=width,
+                height=height,
+                score=float(scores[i]),
+                box=_box_of(boxes[i], width, height),
+            )
+        )
+    return Outcome(
+        image_px=(width, height), predictions=predictions, load_seconds=load_seconds
+    )
+
+
+def _box_of(box, width: int, height: int) -> tuple[int, int, int, int]:
+    """モデルの [x0, y0, x1, y1] を、契約の (x, y, 幅, 高さ) に直す。
+
+    **画像の外へはみ出した値は切り詰める。** はみ出したまま渡すと、範囲を
+    見て「どのくらい選ばれたか」を測る側が、画像より大きい面積を出す。
+    """
+    x0, y0, x1, y1 = (float(v) for v in box)
+    x0 = max(0, min(width, round(x0)))
+    y0 = max(0, min(height, round(y0)))
+    x1 = max(0, min(width, round(x1)))
+    y1 = max(0, min(height, round(y1)))
+    return (x0, y0, max(0, x1 - x0), max(0, y1 - y0))
 
 
 def run(request: SegmentationRequest) -> SegmentationResult:
     """依頼を1件こなす。**候補が0件でも、結果として返す。**"""
-    load_started = time.perf_counter()
-    image_px, predictions = _predict(request)
+    started = time.perf_counter()
+    outcome = _predict(request)
     infer_done = time.perf_counter()
+    image_px, predictions = outcome.image_px, outcome.predictions
 
     request.out_dir.mkdir(parents=True, exist_ok=True)
     candidates = []
@@ -171,10 +270,9 @@ def run(request: SegmentationRequest) -> SegmentationResult:
         prompt=request.prompt,
         model=model_revision(),
         timings=Timings(
-            # **`load` と `infer` は段階4で分ける。** 今はモデルを呼ぶ所が
-            # 1つの関数なので、まとめて `infer` に入れておく
-            load=0.0,
-            infer=infer_done - load_started,
+            load=outcome.load_seconds,
+            # モデルを読む時間を引いた、絵に対する推論そのもの
+            infer=max(0.0, (infer_done - started) - outcome.load_seconds),
             total=time.perf_counter() - _START,
         ),
         gpu_peak_mb=gpu_peak_mb(),
