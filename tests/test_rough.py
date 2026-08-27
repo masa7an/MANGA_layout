@@ -524,3 +524,13 @@ class Testメニュー:
             assert window.file_menu.rough_faded_action not in menu.actions()
         finally:
             menu.deleteLater()
+
+
+def test_ラフ調整中の案内が出口を名乗る(window_with_rough):
+    """**どの項目を押せば戻れるか**まで書く（2026-08-27 に文言を差し替え）。"""
+    window_with_rough.state.set_tool(TOOL_ROUGH)
+    window_with_rough._refresh_hint()
+    assert (
+        "もう一度、メニュー「ラフを調整」を押すと解除"
+        in window_with_rough.hint_label.text()
+    )
