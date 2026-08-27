@@ -521,7 +521,14 @@ class MainWindow(QMainWindow):
         if self.state.tool == TOOL_ROUGH:
             rough = self.state.page.rough
             if rough is None:
-                return "ラフ調整中: このページにはラフがありません"
+                # **対象が無いときこそ出口を出す**（2026-08-27 に追加）。
+                # 掴めるものが1つも無いこの状態は、「持ち替えた覚えがないのに
+                # 何も選べない」と見分けが付かない——出口がいちばん要る場面
+                # だったのに、ここだけ出していなかった
+                return (
+                    "ラフ調整中: このページにはラフがありません"
+                    f" / {adjust_tool_exit(TOOL_ROUGH)}"
+                )
             tint = "青く淡く" if rough.faded else "元の色"
             return (
                 f"ラフ調整中: {rough.rect.w:.0f} × {rough.rect.h:.0f} px / {tint}"
@@ -532,7 +539,11 @@ class MainWindow(QMainWindow):
             tone = self.state.selected_tone
             image = self.state.tone_image
             if tone is None or image is None:
-                return "トーン範囲を調整中: 対象の絵がありません"
+                # 対象が無いときも出口を出す（→ 上のラフと同じ理由）
+                return (
+                    "トーン範囲を調整中: 対象の絵がありません"
+                    f" / {adjust_tool_exit(TOOL_TONE_AREA)}"
+                )
             area = tone.area
             where = (
                 "今は画像全体"

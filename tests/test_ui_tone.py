@@ -1137,3 +1137,12 @@ def test_トーン範囲を調整中の案内が出口を名乗る(window_with_t
         "もう一度、メニュー「トーン範囲を調整」を押すと解除"
         in window_with_tone.hint_label.text()
     )
+
+
+def test_対象の絵が無くても出口を名乗る(window):
+    """掴めるものが1つも無いときこそ、出口がいちばん要る（→ ラフと同じ）。"""
+    window.state.set_tool(TOOL_TONE_AREA)
+    window._refresh_hint()
+    hint = window.hint_label.text()
+    assert "対象の絵がありません" in hint
+    assert "もう一度、メニュー「トーン範囲を調整」を押すと解除" in hint

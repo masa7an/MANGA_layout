@@ -534,3 +534,15 @@ def test_ラフ調整中の案内が出口を名乗る(window_with_rough):
         "もう一度、メニュー「ラフを調整」を押すと解除"
         in window_with_rough.hint_label.text()
     )
+
+
+def test_ラフが無くても出口を名乗る(window):
+    """**掴めるものが1つも無いときこそ、出口がいちばん要る**（2026-08-27）。
+
+    この状態は「持ち替えた覚えがないのに何も選べない」と見分けが付かない。
+    """
+    window.state.set_tool(TOOL_ROUGH)
+    window._refresh_hint()
+    hint = window.hint_label.text()
+    assert "ラフがありません" in hint
+    assert "もう一度、メニュー「ラフを調整」を押すと解除" in hint
