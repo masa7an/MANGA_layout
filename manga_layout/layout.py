@@ -1440,6 +1440,33 @@ def default_sticker_rect(
     return Rect(left, top, w, h)
 
 
+def image_pixel_at(
+    image: ImageObject, x: float, y: float
+) -> tuple[int, int] | None:
+    """ページ座標の1点が、その絵の**元画像の何画素目**に当たるか。外なら None。
+
+    切り抜き（→ 要件定義 10.3）で、押した所を元画像の座標へ翻訳するために使う。
+    マスクは元画像の画素に結び付いているので、**画面の見え方（拡大縮小・回転・
+    コマでの切り抜き）をすべて剥がしてから**でないと指せない。
+
+    **傾きは `unrotate_point` で戻す**（回転を持ち込む境目は3か所だけ → 6.3）。
+    戻したあとは、矩形の中の割合を出して元画像の画素数に掛けるだけ。
+
+    縁は内側へ丸める。割合がちょうど 1.0 になる右端・下端をそのまま掛けると
+    画素数と同じ値になり、1つ外を指す。
+    """
+    px, py = image.src_px
+    if px <= 0 or py <= 0 or image.rect.w <= 0 or image.rect.h <= 0:
+        return None
+
+    lx, ly = unrotate_point(x, y, image.rect, image.rotation)
+    u = (lx - image.rect.x) / image.rect.w
+    v = (ly - image.rect.y) / image.rect.h
+    if not (0.0 <= u <= 1.0 and 0.0 <= v <= 1.0):
+        return None
+    return (min(px - 1, int(u * px)), min(py - 1, int(v * py)))
+
+
 def sticker_at(page: Page, x: float, y: float) -> StickerObject | None:
     """その位置にあるマーク。重なっていれば手前のものを返す。
 

@@ -75,6 +75,7 @@ from .state import (
     TOOL_STICKER_EXCLAIM_QUESTION,
     TOOL_TEXT,
     TOOL_TONE_AREA,
+    TOOL_WAND,
     EditorState,
     object_label,
 )
@@ -85,10 +86,20 @@ APP_TITLE = "漫画レイアウタ"
 # 一覧の見出し（「ページ 1/9」）とは別に持つ（理由は `_refresh`）
 PAGES_MENU_LABEL = "ページ一覧"
 
-# 調整の道具（→ `ADJUST_TOOLS`）を持っている間、状態表示の末尾に出す出口。
-# **出口は必ず名乗る。** この2つは持ち替えた覚えのないまま入ってしまうことが
-# あり、そのとき「クリックしても何も選べない」としか見えない（→ 6.27）
-ADJUST_TOOL_EXIT = "同じ項目をもう一度押すと戻る"
+def adjust_tool_exit(tool: str) -> str:
+    """調整の道具（→ `ADJUST_TOOLS`）を持っている間、状態表示の末尾に出す出口。
+
+    **出口は必ず名乗る。** これらは持ち替えた覚えのないまま入ってしまうことが
+    あり、そのとき「クリックしても何も選べない」としか見えない（→ 6.27）。
+
+    **どの項目を押せばよいかまで書く**（本人の指示 2026-08-27）。以前は
+    「同じ項目をもう一度押すと戻る」だったが、**どの項目のことかを書いて
+    いなかった**——入り口を覚えていない人は、その「同じ項目」を探せない。
+
+    名前は `TOOL_LABELS` から引く。ここへ書き写すと、道具を改名したときに
+    案内だけ古い名前で残る（→ `BALLOON_STYLE_LABELS` の注記）。
+    """
+    return f"もう一度、メニュー「{TOOL_LABELS[tool]}」を押すと解除"
 
 TEXT_ALIGN_LABELS = {"left": "左寄せ", "center": "中央寄せ", "right": "右寄せ"}
 
@@ -362,6 +373,10 @@ class MainWindow(QMainWindow):
             # トーンの範囲（→ 10.1）も同じ。しきい値と細さで足りなかった
             # ときの手当てなので、頻繁に出入りするものではない
             (TOOL_TONE_AREA, None),
+            # 切り抜き（→ 10.3）にもキーは割り当てない。**キーの本数は
+            # 増やさない**（→ 上の雲の注記）。使うのは絵を貼った直後だけで、
+            # メニューと右クリックで足りる
+            (TOOL_WAND, None),
         ):
             label = TOOL_LABELS[tool]
             action = QAction(f"{label} ({shortcut})" if shortcut else label, self)
@@ -506,25 +521,47 @@ class MainWindow(QMainWindow):
         if self.state.tool == TOOL_ROUGH:
             rough = self.state.page.rough
             if rough is None:
-                return "ラフ調整中: このページにはラフがありません"
+                # **対象が無いときこそ出口を出す**（2026-08-27 に追加）。
+                # 掴めるものが1つも無いこの状態は、「持ち替えた覚えがないのに
+                # 何も選べない」と見分けが付かない——出口がいちばん要る場面
+                # だったのに、ここだけ出していなかった
+                return (
+                    "ラフ調整中: このページにはラフがありません"
+                    f" / {adjust_tool_exit(TOOL_ROUGH)}"
+                )
             tint = "青く淡く" if rough.faded else "元の色"
             return (
                 f"ラフ調整中: {rough.rect.w:.0f} × {rough.rect.h:.0f} px / {tint}"
-                f" / {ADJUST_TOOL_EXIT}"
+                f" / {adjust_tool_exit(TOOL_ROUGH)}"
             )
 
         if self.state.tool == TOOL_TONE_AREA:
             tone = self.state.selected_tone
             image = self.state.tone_image
             if tone is None or image is None:
-                return "トーン範囲を調整中: 対象の絵がありません"
+                # 対象が無いときも出口を出す（→ 上のラフと同じ理由）
+                return (
+                    "トーン範囲を調整中: 対象の絵がありません"
+                    f" / {adjust_tool_exit(TOOL_TONE_AREA)}"
+                )
             area = tone.area
             where = (
                 "今は画像全体"
                 if area is None
                 else f"{area.w * image.rect.w:.0f} × {area.h * image.rect.h:.0f} px"
             )
-            return f"トーン範囲を調整中: {where} / {ADJUST_TOOL_EXIT}"
+            return f"トーン範囲を調整中: {where} / {adjust_tool_exit(TOOL_TONE_AREA)}"
+
+        # **切り抜きでは、押すと何が起きるかをここに出す**（→ 10.3）。
+        # 項目名は「切り抜き」の4文字しかなく、押した所が消えることも、
+        # Shift で裏返ることも、名前からは分からない。**道具の名前を短く
+        # 保てるのは、持っている間ずっとここに出ているから**
+        if self.state.tool == TOOL_WAND:
+            return (
+                f"切り抜き中: 絵を押すとその区画が消える"
+                f" / Shift+押すとそこだけ残す / 許容差 {self.state.wand_tolerance}"
+                f" / {adjust_tool_exit(TOOL_WAND)}"
+            )
 
         # **セリフを置く道具では、置く前に書式を名乗る。** 書式は最後に
         # 指定したものを引き継ぐので（→ `EditorState.next_text_font`）、
@@ -988,6 +1025,18 @@ class MainWindow(QMainWindow):
             return
         self.state.set_balloon_style(balloon.id, style)
         self.state.message.emit(f"{BALLOON_STYLE_LABELS.get(style, style)}にしました")
+
+    def clear_image_mask(self) -> None:
+        """選択中の画像から切り抜きを外す（→ 要件定義 10.3）。
+
+        **実体（assets/）は消さない。** Undo で戻せる操作なので、消すと
+        戻したときに切り抜きだけが失われる（→ `EditorState.clear_image_mask`）。
+        """
+        image = self.state.selected_image
+        if image is None or not image.mask_asset:
+            return
+        if self.state.clear_image_mask(image.id):
+            self.state.message.emit("切り抜きを外しました")
 
     def toggle_tail(self) -> None:
         balloon = self.state.selected_balloon

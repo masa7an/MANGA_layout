@@ -42,6 +42,14 @@ class ImageFetchError(MangaLayoutError):
     """
 
 
+class MaskSizeError(MangaLayoutError):
+    """マスクの大きさが、掛ける相手の画像と合っていない（→ 要件定義 10.3）。
+
+    合わないまま縮めて合わせることはしない。ずれた組み合わせが「輪郭が
+    わずかにずれた絵」として通ってしまい、人が見て気づけないため。
+    """
+
+
 class AssetError(MangaLayoutError):
     """assets/ の操作に失敗した。"""
 

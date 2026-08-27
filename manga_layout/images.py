@@ -278,54 +278,91 @@ class ImageCache:
         self._items.clear()
 
 
-# トーンを焼いた1枚を、いくつまで覚えておくか。
+def toned(source: Preview | None, tone: Tone) -> Preview | None:
+    """トーンを焼いた1枚を作る。**マスクの無い経路はこれだけで足りる。**
+
+    渡された絵の大きさのまま焼く。画面用（縮小版）に焼くか、書き出し用
+    （原寸）に焼くかは、渡す側が決める（→ `ImageCache` の注記）。
+
+    マスクの掛かった画像はここを通らない。マスクは元画像の原寸座標に
+    結び付いているので、**縮小版へは掛けられない**（→ `image_masks.masked_preview`）。
+    """
+    if source is None:
+        return None
+    return Preview(image=apply_tone(source.image, tone), source_px=source.source_px)
+
+
+# 焼き込み済みの1枚を、いくつまで覚えておくか。
 #
 # **上限が要るのは `ImageCache` と違って鍵が増え続けるから。** あちらの鍵は
 # 画像の参照だけなので作品の画像数で頭打ちになるが、こちらは設定も鍵に
 # 入る。メニューで「濃く」を10回押せば10通りの鍵ができる。1枚 10MB 前後
 # あるので、放っておくとメモリを食い潰す
-TONE_CACHE_LIMIT = 24
+BAKED_CACHE_LIMIT = 24
 
 
-class ToneCache:
-    """トーンを焼いた1枚を覚える。鍵は **画像の参照と、トーンの設定の組**。
+def bake_key(image) -> tuple[str, str, tuple]:
+    """焼き込み済みキャッシュの鍵（→ `SAM3実装計画.md` 4.3）。
 
-    **`ImageCache` と分けてある。** 混ぜて鍵だけ増やす手もあるが、それだと
+    **画像の矩形・回転角・不透明度・コマのIDは入れない。** 焼いた1枚は
+    「元画像に何を掛けたか」だけで決まり、どこにどう置くかは描くときの
+    変換で決まる。入れてしまうと、動かすたびに焼き直すことになる。
+
+    画面用と書き出し用で同じ鍵を作る（大きさは入れ物ごとに分かれている
+    ので、鍵に混ぜない → `ImageCache` の注記）。
+    """
+    tone = getattr(image, "tone", None)
+    return (
+        image.asset,
+        getattr(image, "mask_asset", ""),
+        () if tone is None else tone.key(),
+    )
+
+
+class BakedCache:
+    """焼き込み済みの1枚を覚える。鍵は **元画像・マスク・トーンの組**（`bake_key`）。
+
+    焼くのはトーン（→ 要件定義 10.1）と切り抜きのマスク（→ 10.3）。
+    **入れ物を種類ごとに増やさない。** 増やすと、同じ絵に対して縮小版と原寸、
+    トーンあり・マスクありの組み合わせぶんだけ入れ物が並び、どれを手放し
+    忘れたかを人が追えなくなる。
+
+    **`ImageCache` とは分けてある。** 混ぜて鍵だけ増やす手もあるが、それだと
     同じ画像をトーン違いで2枚使ったときに **PNG の展開が2回**走る。
     分けておけば展開は画像ごとに1回で、こちらは焼く手間だけを持つ
     （要件定義 10.1 で並べた2案のうち、後者）。
 
-    焼くのは1枚 40ms 程度（2048×2048 の実測）。画面はコマを毎回描き直す
-    作りなので、**覚えずにいると1フレームごとに払うことになる**。
+    焼くのは1枚 40ms 程度（トーン、2048×2048 の実測）。マスクの合成は
+    4K で 27ms 前後（2026-08-27 実測）。画面はコマを毎回描き直す作りなので、
+    **覚えずにいると1フレームごとに払うことになる**。
     """
 
-    def __init__(self, limit: int = TONE_CACHE_LIMIT) -> None:
-        self._items: dict[tuple[str, tuple], Preview] = {}
+    def __init__(self, limit: int = BAKED_CACHE_LIMIT) -> None:
+        self._items: dict[tuple[str, str, tuple], Preview] = {}
         self._limit = limit
 
     def __len__(self) -> int:
         return len(self._items)
 
-    def get(self, ref: str, tone: Tone, base: Callable[[], Preview | None]) -> Preview | None:
-        """`ref` にトーンを焼いた1枚。まだ無ければ `base()` の絵から焼く。
+    def get(
+        self, key: tuple[str, str, tuple], make: Callable[[], Preview | None]
+    ) -> Preview | None:
+        """その鍵の1枚。まだ無ければ `make()` に焼いてもらう。
 
-        `base` は**トーンを焼く前の1枚**を返す。画面用と書き出し用で
-        大きさが違うので、どちらを渡すかは呼ぶ側が決める。
+        **焼き方はここが決めない。** 画面用は縮小版、書き出し用は原寸と
+        大きさが違ううえ、マスクの有無で元にする絵も変わる（マスクは元画像の
+        原寸座標に結び付いているので、掛けるのは必ず原寸 → 計画 4.3）。
         """
-        key = (ref, tone.key())
         found = self._items.get(key)
         if found is not None:
             return found
 
-        source = base()
-        if source is None:
+        baked = make()
+        if baked is None:
             # 実体が無い・壊れている。**覚えない**——`ImageCache` の側が
             # 既に覚えているので、ここで二重に持つ意味が無い
             return None
 
-        baked = Preview(
-            image=apply_tone(source.image, tone), source_px=source.source_px
-        )
         if len(self._items) >= self._limit:
             # いちばん古い1枚を捨てる（辞書は入れた順を保つ）
             self._items.pop(next(iter(self._items)))
@@ -333,8 +370,12 @@ class ToneCache:
         return baked
 
     def forget(self, ref: str) -> None:
-        """その画像の焼いた1枚を全部捨てる。設定違いをまとめて落とす。"""
-        for key in [k for k in self._items if k[0] == ref]:
+        """その参照が関わる1枚を全部捨てる。設定違いをまとめて落とす。
+
+        **元画像とマスクの両方を見る。** マスクを外した直後に手放すのは
+        マスク側の参照なので、元画像だけを見ていると焼いた1枚が残り続ける。
+        """
+        for key in [k for k in self._items if ref in (k[0], k[1])]:
             self._items.pop(key)
 
     def clear(self) -> None:

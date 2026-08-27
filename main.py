@@ -14,12 +14,14 @@ from PySide6.QtWidgets import QApplication
 
 from manga_layout.errors import MangaLayoutError
 from manga_layout.storage import is_project_dir, load_project
-from manga_layout.ui import EditorState, MainWindow
+from manga_layout.ui import EditorState, MainWindow, install_japanese
 
 
 def main(argv: list[str]) -> int:
     app = QApplication(argv)
     app.setApplicationName("MANGA_layout")
+    # Qt が出すボタン（保存・中止など）を日本語にする（→ `ui.i18n`）
+    install_japanese(app)
 
     state = EditorState()
 

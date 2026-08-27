@@ -195,8 +195,11 @@ def level_label(field: str, value: float) -> str:
 # -- 中の4段 --------------------------------------------------------------
 
 
-def _flatten_on_white(image: QImage) -> QImage:
+def flatten_on_white(image: QImage) -> QImage:
     """白い紙の上に載せた1枚。**透明を「白」に倒すためだけにやる。**
+
+    **自動領域選択（→ `wand.py`）もここを通る。** 透明の扱いを2か所に書くと、
+    片方だけが下の落とし穴を踏む。
 
     `Format_Grayscale8` への変換はアルファを捨てるので、透明な部分の色が
     そのまま出る。背景が「透明かつ白」なら白として読まれて実害が無いが、
@@ -294,7 +297,7 @@ def build_mask(image: QImage, tone: Tone) -> QImage:
     分けてあるのは、テストが「どこが選ばれたか」だけを見られるようにする
     ため。斜線の見た目は目で決めるもので、数では確かめられない。
     """
-    gray = _flatten_on_white(image).convertToFormat(QImage.Format.Format_Grayscale8)
+    gray = flatten_on_white(image).convertToFormat(QImage.Format.Format_Grayscale8)
     raw, w, h, bpl = _raw_of(gray)
     mask = _gray_image(_cut(raw, keep_at_or_below=tone.threshold), w, h, bpl)
 
@@ -366,8 +369,11 @@ def _pattern(size: QSize, tone: Tone) -> QImage:
     return out
 
 
-def _as_alpha(mask: QImage) -> QImage:
+def as_alpha(mask: QImage) -> QImage:
     """マスクの明るさを透明度として読み替えた1枚。
+
+    **切り抜き（→ 要件定義 10.3）もここを通る。** 明るさを透明度として
+    読む所を2つ持つと、片方だけが下の落とし穴に落ちる。
 
     **`convertToFormat` でこれをやってはいけない。** `Format_Alpha8` へ
     変換すると全画素 255 になり、マスクが「画像全部」を指す。生バイト列を
@@ -381,7 +387,7 @@ def _cut_out(layer: QImage, mask: QImage) -> QImage:
     """`layer` をマスクの形に抜く（外を透明にする）。渡した1枚を書き換える。"""
     painter = QPainter(layer)
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-    painter.drawImage(0, 0, _as_alpha(mask))
+    painter.drawImage(0, 0, as_alpha(mask))
     painter.end()
     return layer
 

@@ -13,9 +13,10 @@ import pathlib
 from collections.abc import Iterator
 
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QImage
 
 from ..assets import AssetStore, PendingAssets
-from ..errors import AssetError
+from ..errors import AssetError, MaskSizeError
 from ..flow import (
     DEFAULT_FLOW_SETTINGS,
     default_flow,
@@ -32,13 +33,19 @@ from ..focus import (
 )
 from ..geometry import Rect, Size, normalize_angle
 from ..history import History
+from ..image_masks import decode_mask, safe_masked_preview
 from ..images import (
+    BakedCache,
     ImageCache,
     Preview,
-    ToneCache,
+    bake_key,
+    decode,
     preview_from_bytes,
     readable_file,
     rough_preview_from_bytes,
+    size_px,
+    to_png_bytes,
+    toned,
 )
 from ..layout import (
     BalloonSettings,
@@ -99,6 +106,12 @@ from ..tone import (
     stepped_thin as tone_stepped_thin,
     stepped_threshold as tone_stepped_threshold,
 )
+from ..wand import (
+    DEFAULT_TOLERANCE as WAND_TOLERANCE_DEFAULT,
+    intersected,
+    removed,
+    select_at,
+)
 
 # 道具（ツール）
 TOOL_SELECT = "select"
@@ -128,12 +141,18 @@ TOOL_ROUGH = "rough"
 # 1種類足すと画像を選んだだけでつまみが9個並ぶ。持ち替えている間だけ出す形に
 # すれば、その間は他のつまみを全部消せる（ラフと同じ切り分け）
 TOOL_TONE_AREA = "tone_area"
+# 絵の一部を消す道具（自動領域選択 → 要件定義 10.3）。
+#
+# **道具にしたのは、普段のクリックと意味が正面から衝突するため。** 選択の道具で
+# 絵を押せば「その絵を選ぶ」で、ここでは「押した所を消す」。同じ操作に2つの意味を
+# 持たせず、持ち替えている間だけ消える形にする（ラフ・トーン範囲と同じ切り分け）
+TOOL_WAND = "wand"
 
 # **既にあるものを調整するだけの道具。** 何も作らず、持っている間は選び直せない
-# （→ 要件定義 6.23、6.27）。この2つだけ、**もう一度選ぶと選択の道具へ戻る**
+# （→ 要件定義 6.23、6.27）。この3つだけ、**もう一度選ぶと選択の道具へ戻る**
 # （→ `MainWindow._pick_tool`）。作る側の道具（コマ・フキダシ・マーク）は
 # 押すたびに1つ作るので、同じ扱いにすると2回目が「作る」ではなく「やめる」に化ける
-ADJUST_TOOLS = (TOOL_ROUGH, TOOL_TONE_AREA)
+ADJUST_TOOLS = (TOOL_ROUGH, TOOL_TONE_AREA, TOOL_WAND)
 
 # どの道具がどの種類の吹き出しを作るか
 BALLOON_TOOLS = {
@@ -215,6 +234,10 @@ TOOL_LABELS = {
     TOOL_TEXT: "セリフを追加",
     TOOL_ROUGH: "ラフを調整",
     TOOL_TONE_AREA: "トーン範囲を調整",
+    # **短く置く。** 何が起きるかは、持っている間ずっと状態表示の右側に出る
+    # （→ `MainWindow._hint`）。項目名で説明しようとすると、道具の並びで
+    # ここだけ長くなって読む字数が増える
+    TOOL_WAND: "切り抜き",
 }
 
 # クリックだけでセリフを置いたときの大きさ（px）。
@@ -229,6 +252,14 @@ TOOL_LABELS = {
 # 文字だけ大きくすると枠に 6 文字しか入らず、置くたびに広げる操作が
 # 要る状態になった（2026-08-03、20px から 42px へ変えたときに実測）
 DEFAULT_TEXT_SIZE = (230.0, 422.0)
+
+# 切り抜き（自動領域選択）の許容差で動かせる範囲と、1回ぶん。
+#
+# **上限を 64 で止める。** 実測では、陰影のある絵を 64 で押すと画面の半分が
+# 選ばれた（→ `data/` の検討メモ）。そこから先は「区画を選ぶ」ではなくなる
+WAND_TOLERANCE_MIN = 0
+WAND_TOLERANCE_MAX = 64
+WAND_TOLERANCE_STEP = 4
 
 
 def object_label(obj: SceneObject | None) -> str:
@@ -306,9 +337,13 @@ class EditorState(QObject):
         # 「同じ入れ物に別の作り方のものを入れてはいけない」決まりで動いて
         # おり、青く染めた1枚を混ぜると、引く側がどちらか判断できなくなる
         self.rough_cache = ImageCache(make=rough_preview_from_bytes)
-        # トーンを焼いた1枚の入れ物（→ 10.1）。こちらも画像と混ぜない。
-        # 鍵に設定が入るぶん増え続けるので、あちらと違って上限を持つ
-        self.tone_cache = ToneCache()
+        # トーン（→ 10.1）と切り抜き（→ 10.3）を焼いた1枚の入れ物。
+        # こちらも画像と混ぜない。鍵に設定が入るぶん増え続けるので、
+        # あちらと違って上限を持つ
+        self.baked_cache = BakedCache()
+        # 切り抜きの許容差（→ 10.3）。**作品ではなく操作の設定**なので
+        # `project.json` には入れない（道具の選択と同じ扱い）
+        self.wand_tolerance = WAND_TOLERANCE_DEFAULT
         # ラフの濃さ（→ `settings.rough_opacity`）。作品ではなく好みなので
         # `project.json` ではなく `settings.json` から来る。窓が起動時と
         # ラフを読み込む直前に入れ直す（→ `MainWindow.load_rough`）
@@ -798,18 +833,46 @@ class EditorState(QObject):
         return self.image_cache.get(ref, lambda: self.read_asset(ref))
 
     def image_preview(self, image) -> Preview | None:
-        """画面に描くための1枚。**トーンが入っていれば焼いたほうを返す。**
+        """画面に描くための1枚。**トーンと切り抜きが入っていれば焼いたほうを返す。**
 
         受け取るのが参照文字列ではなく画像そのものなのは、同じ `asset` でも
-        トーンの設定次第で別の絵になるため（→ 要件定義 10.1）。マーク
-        （`StickerObject`）もここを通るが、あちらはトーンを持たない。
+        トーンの設定や切り抜き次第で別の絵になるため（→ 要件定義 10.1・10.3）。
+        マーク（`StickerObject`）もここを通るが、あちらはどちらも持たない。
+
+        **切り抜きのある画像だけ、原寸から作り直す。** マスクは元画像の
+        ピクセル座標に結び付いているので、`image_cache` が持っている縮小版へは
+        掛けられない（→ `image_masks.masked_preview`）。無い画像は今までどおり
+        縮小版から焼くので、この機能を使っていない作品では何も変わらない。
         """
         tone = getattr(image, "tone", None)
-        if tone is None:
+        mask_ref = getattr(image, "mask_asset", "")
+        if tone is None and not mask_ref:
             return self.preview(image.asset)
-        return self.tone_cache.get(
-            image.asset, tone, lambda: self.preview(image.asset)
+        key = bake_key(image)
+        if not mask_ref:
+            return self.baked_cache.get(
+                key, lambda: toned(self.preview(image.asset), tone)
+            )
+        return self.baked_cache.get(key, lambda: self._masked_preview(image, tone))
+
+    def _masked_preview(self, image, tone) -> Preview | None:
+        """切り抜きを焼いた画面用の1枚。実体が欠けていれば None。
+
+        **マスクだけが欠けているときは、切り抜き無しの絵を返す**（→ 計画 段階1〜3）。
+        開けなくする・何も描かない、はしない——欠けた絵1枚で作品が読めなく
+        なるのは割に合わない、という `ImageCache` の考え方と揃えてある。
+        マスクの欠けは点検（`check.KIND_MISSING_MASK`）が拾う。
+        """
+        baked = safe_masked_preview(
+            self.read_asset(image.asset),
+            self.read_asset(image.mask_asset),
+            tone,
+            reduced=True,
         )
+        if baked is not None:
+            return baked
+        plain = self.preview(image.asset)
+        return plain if tone is None else toned(plain, tone)
 
     def forget_if_unused(self, ref: str) -> None:
         """その参照が作品のどこからも使われていなければ、覚えを手放す。
@@ -829,7 +892,7 @@ class EditorState(QObject):
         if ref in self.project.referenced_assets():
             return
         self.image_cache.forget(ref)
-        self.tone_cache.forget(ref)
+        self.baked_cache.forget(ref)
 
     def import_bytes(self, data: bytes) -> tuple[str, tuple[int, int]]:
         """画像を取り込み、参照と原寸のピクセル寸法を返す。
@@ -894,6 +957,176 @@ class EditorState(QObject):
         self.select(image.id)
         self.forget_if_unused(old_ref)
         return image
+
+    # -- 切り抜き（AI で作ったマスク → 要件定義 10.3） ---------------------
+    #
+    # **作品が変わるのは適用の1回だけ。** 候補を見比べている間は何も変えない
+    # ので、推論の失敗や見比べが未保存の変更や Undo の履歴を汚さない
+    # （→ `SAM3実装計画.md` 段階5）。
+
+    def import_mask_bytes(self, data: bytes) -> str:
+        """マスクを取り込んで参照を返す。展開できなければ例外。
+
+        **画像用の入れ物（`image_cache`）には入れない。** マスクは描く相手
+        ではなく、絵に掛ける材料。混ぜると、引く側が「これは絵か、マスクか」を
+        判断できなくなる（→ `ImageCache` の注記）。
+        """
+        decode_mask(data)  # 壊れていればここで例外
+        if self.project_dir is None:
+            return self.pending_assets.add(data)
+        return AssetStore(self.project_dir).add_bytes(data)
+
+    def apply_image_mask(
+        self, image_id: str, data: bytes, *, label: str = "切り抜きの適用"
+    ) -> bool:
+        """表示中のページの画像に切り抜きを掛ける。掛けたら True。
+
+        `label` は履歴に積む名前。**押した所を消す操作（→ `erase_region_at`）は
+        別の名前で積む**——Undo の一覧で「切り抜きの適用」が並ぶだけだと、
+        どれがどの操作か分からない。
+
+        **寸法が合わなければ断る**（`MaskSizeError`）。縮めて合わせることは
+        しない——合わせると、ずれた組み合わせが「輪郭がわずかにずれた絵」に
+        なるだけで人が気づけない（→ `image_masks.apply_mask`）。
+
+        既に切り抜いてある画像へ掛け直すのも同じ1手。前のマスクの実体は
+        消さず、使われなくなった実体は「未使用ファイルを整理」が拾う
+        （→ 要件定義 5章。差し替え・削除と同じ扱い）。
+        """
+        image = self.page.find(image_id)
+        if not isinstance(image, ImageObject):
+            return False
+
+        mask_px = size_px(decode_mask(data))
+        if mask_px != image.src_px:
+            raise MaskSizeError(
+                f"切り抜きの大きさが画像と違います"
+                f"（画像 {image.src_px[0]:,} × {image.src_px[1]:,} 画素、"
+                f"切り抜き {mask_px[0]:,} × {mask_px[1]:,} 画素）"
+            )
+
+        old_ref = image.mask_asset
+        ref = self.import_mask_bytes(data)
+        with self.edit_page(label) as page:
+            target = page.find(image_id)
+            if isinstance(target, ImageObject):
+                target.mask_asset = ref
+        if old_ref:
+            self.forget_if_unused(old_ref)
+        return True
+
+    def clear_image_mask(self, image_id: str) -> bool:
+        """切り抜きを外して元の絵に戻す。外したら True。
+
+        **実体（assets/）は消さない。** Undo で戻せる操作なので、ここで
+        消すと戻したときに切り抜きだけが失われる（ラフを外すのと同じ扱い）。
+        """
+        image = self.page.find(image_id)
+        if not isinstance(image, ImageObject) or not image.mask_asset:
+            return False
+
+        old_ref = image.mask_asset
+        with self.edit_page("切り抜きを外す") as page:
+            target = page.find(image_id)
+            if isinstance(target, ImageObject):
+                target.mask_asset = ""
+        self.forget_if_unused(old_ref)
+        return True
+
+    def region_mask_at(self, image: ImageObject, seed: tuple[int, int]):
+        """その画像の、指した1点を含む区画（→ `manga_layout.wand`）。
+
+        **原寸に対して選ぶ。** マスクは元画像と同じ寸法でなければ適用できない
+        ので、画面用の縮小版（`image_cache`）は使えない。
+        """
+        data = self.read_asset(image.asset)
+        if data is None:
+            return None
+        return select_at(decode(data), seed, tolerance=self.wand_tolerance)
+
+    def erase_region_at(
+        self, image_id: str, seed: tuple[int, int], *, keep_only: bool = False
+    ) -> bool:
+        """指した区画を消す。消したら True（→ 要件定義 10.3）。
+
+        **1回押すと1手。** 選んでから確かめて確定する、という段取りを置かない。
+        違えば Undo で戻し、続けて押せば足せる——**戻せる操作なら、確認より
+        やり直しのほうが手数が少ない**（本人の判断 2026-08-27）。
+
+        `keep_only` なら逆に「そこだけ残す」。背景が何区画にも割れている絵で、
+        消す側を何度も押すより速い。
+
+        既に切り抜いてある絵では、**今のマスクから引く**（掛け直しではない）。
+        押すたびに前回の結果が消えると、区画ごとに消していけない。
+        """
+        image = self.page.find(image_id)
+        if not isinstance(image, ImageObject):
+            return False
+
+        chosen = self.region_mask_at(image, seed)
+        if chosen is None:
+            self.message.emit("絵の実体が見つかりません")
+            return False
+        if chosen.empty:
+            return False
+
+        current = self.image_mask_or_full(image)
+        if current is None:
+            return False
+        updated = (
+            intersected(current, chosen.mask)
+            if keep_only
+            else removed(current, chosen.mask)
+        )
+
+        label = "押した所だけ残す" if keep_only else "押した所を消す"
+        if not self.apply_image_mask(image_id, to_png_bytes(updated), label=label):
+            return False
+
+        if chosen.leaked and not keep_only:
+            self.message.emit(
+                f"{label}ました（絵の {chosen.ratio:.0%}）。"
+                "線に隙間があるかもしれません"
+            )
+        else:
+            self.message.emit(f"{label}ました（押した区画は絵の {chosen.ratio:.0%}）")
+        return True
+
+    def image_mask_or_full(self, image: ImageObject):
+        """その画像の今のマスク。掛かっていなければ**全面が残った**マスク。
+
+        **無い状態を「全部残す」に読み替える。** こうすると、1枚目を押すときと
+        2枚目以降を押すときで処理が分かれない。
+        """
+        px = image.src_px
+        if image.mask_asset:
+            data = self.read_asset(image.mask_asset)
+            if data is not None:
+                try:
+                    return decode_mask(data)
+                except AssetError:
+                    pass  # 壊れている。全面から引き直す（描画と同じ考え方）
+        full = QImage(px[0], px[1], QImage.Format.Format_Grayscale8)
+        if full.isNull():
+            return None
+        full.fill(255)
+        return full
+
+    def step_wand_tolerance(self, steps: int) -> bool:
+        """許容差を増減する。**端で止める。** 変わったら True。
+
+        トーンの増減（→ `_step_tone`）と同じ流儀。数字そのものは覚えなくて
+        よいように、状態表示に段を出す。
+        """
+        value = max(
+            WAND_TOLERANCE_MIN,
+            min(WAND_TOLERANCE_MAX, self.wand_tolerance + steps * WAND_TOLERANCE_STEP),
+        )
+        if value == self.wand_tolerance:
+            return False
+        self.wand_tolerance = value
+        self.message.emit(f"切り抜きの許容差: {value}")
+        return True
 
     # -- ラフ（下敷き） ----------------------------------------------------
 
@@ -1941,7 +2174,7 @@ class EditorState(QObject):
         self.pending_assets = PendingAssets()
         self.image_cache.clear()
         self.rough_cache.clear()
-        self.tone_cache.clear()
+        self.baked_cache.clear()
         # 点検の印は前の作品のもの。ページの id ごと別系列になるので、
         # 残しても付きようがないが、消さないと数だけ残る（→ 要件定義 10.1）
         self.clear_check_marks()

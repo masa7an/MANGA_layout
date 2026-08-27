@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from manga_layout import Rect, Size, new_project
-from manga_layout import vertical
+from manga_layout import Rect, Size, new_project, vertical
 from manga_layout.layout import (
     LayoutSettings,
     aspect_of,

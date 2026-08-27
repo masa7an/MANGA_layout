@@ -13,12 +13,13 @@ import pytest
 from manga_layout.errors import AssetError, BrokenImageError
 from manga_layout.images import (
     PREVIEW_MAX_PX,
+    BakedCache,
     ImageCache,
-    ToneCache,
     decode,
     make_preview,
     preview_from_bytes,
     size_px,
+    toned,
 )
 from manga_layout.tone import default_tone
 
@@ -204,52 +205,81 @@ class TestCache:
         assert len(cache) == 0
 
 
-class TestトーンCache:
-    """トーンを焼いた1枚の入れ物（要件定義 10.1）。中身は tests/test_tone.py。"""
+class Test焼き込みCache:
+    """トーン（10.1）と切り抜き（10.3）を焼いた1枚の入れ物。中身は tests/test_tone.py。"""
 
     @staticmethod
-    def base(png_bytes):
+    def make(png_bytes, tone=None):
         source = preview_from_bytes(png_bytes)
-        return lambda: source
+        return lambda: toned(source, tone) if tone is not None else source
+
+    @staticmethod
+    def key(ref, tone=None, mask=""):
+        return (ref, mask, () if tone is None else tone.key())
 
     def test_2回目は焼き直さない(self, png_bytes, qapp):
-        cache = ToneCache()
-        base = self.base(png_bytes)
+        cache = BakedCache()
         tone = default_tone()
-        assert cache.get("assets/a.png", tone, base) is cache.get(
-            "assets/a.png", tone, base
+        make = self.make(png_bytes, tone)
+        assert cache.get(self.key("assets/a.png", tone), make) is cache.get(
+            self.key("assets/a.png", tone), make
         )
 
     def test_設定が違えば別の1枚になる(self, png_bytes, qapp):
         """同じ画像を2枚貼ってトーンだけ変える場面。参照だけを鍵にすると壊れる。"""
-        cache = ToneCache()
-        base = self.base(png_bytes)
-        first = cache.get("assets/a.png", default_tone(), base)
-        second = cache.get(
-            "assets/a.png", replace(default_tone(), angle=90.0), base
-        )
+        cache = BakedCache()
+        other = replace(default_tone(), angle=90.0)
+        first = cache.get(self.key("assets/a.png", default_tone()), self.make(png_bytes, default_tone()))
+        second = cache.get(self.key("assets/a.png", other), self.make(png_bytes, other))
         assert first is not second
         assert len(cache) == 2
 
+    def test_切り抜きが違えば別の1枚になる(self, png_bytes, qapp):
+        """同じ絵に別のマスクを掛けた2枚を、同じページに置ける（→ 10.3）。"""
+        cache = BakedCache()
+        焼いた回数 = 0
+
+        def make():
+            nonlocal 焼いた回数
+            焼いた回数 += 1
+            return preview_from_bytes(png_bytes)
+
+        cache.get(self.key("assets/a.png", mask="assets/m1.png"), make)
+        cache.get(self.key("assets/a.png", mask="assets/m2.png"), make)
+        cache.get(self.key("assets/a.png", mask="assets/m1.png"), make)
+        assert 焼いた回数 == 2, "マスク違いは別の1枚。同じマスクなら焼き直さない"
+        assert len(cache) == 2
+
     def test_実体が無ければ何も返さない(self, qapp):
-        cache = ToneCache()
-        assert cache.get("assets/x.png", default_tone(), lambda: None) is None
+        cache = BakedCache()
+        assert cache.get(self.key("assets/x.png", default_tone()), lambda: None) is None
         assert len(cache) == 0, "覚えない。元の入れ物が既に覚えている"
 
     def test_溜まりすぎたら古いものから捨てる(self, png_bytes, qapp):
         """鍵に設定が入るぶん増え続ける。1枚 10MB 前後なので上限が要る。"""
-        cache = ToneCache(limit=3)
-        base = self.base(png_bytes)
+        cache = BakedCache(limit=3)
         for i in range(6):
-            cache.get("assets/a.png", replace(default_tone(), angle=float(i)), base)
+            tone = replace(default_tone(), angle=float(i))
+            cache.get(self.key("assets/a.png", tone), self.make(png_bytes, tone))
         assert len(cache) == 3
 
     def test_画像ごと忘れさせられる(self, png_bytes, qapp):
-        cache = ToneCache()
-        base = self.base(png_bytes)
-        cache.get("assets/a.png", default_tone(), base)
-        cache.get("assets/a.png", replace(default_tone(), angle=90.0), base)
-        cache.get("assets/b.png", default_tone(), base)
+        cache = BakedCache()
+        make = self.make(png_bytes)
+        cache.get(self.key("assets/a.png", default_tone()), make)
+        cache.get(self.key("assets/a.png", replace(default_tone(), angle=90.0)), make)
+        cache.get(self.key("assets/b.png", default_tone()), make)
 
         cache.forget("assets/a.png")
         assert len(cache) == 1, "設定違いをまとめて落とす"
+
+    def test_マスクの参照でも忘れさせられる(self, png_bytes, qapp):
+        """マスクを外した直後に手放すのはマスク側の参照（→ `EditorState.forget_if_unused`）。"""
+        cache = BakedCache()
+        make = self.make(png_bytes)
+        cache.get(self.key("assets/a.png", mask="assets/m.png"), make)
+        cache.get(self.key("assets/b.png", mask="assets/m.png"), make)
+        cache.get(self.key("assets/c.png"), make)
+
+        cache.forget("assets/m.png")
+        assert len(cache) == 1, "元画像が違っても、そのマスクを使った1枚は全部落とす"

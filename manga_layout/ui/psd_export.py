@@ -79,7 +79,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPainter, QPainterPath, QPainterPathStroker
 
 from ..errors import ExportError
-from ..images import ImageCache, Preview, full_from_bytes, full_rough_from_bytes
+from ..images import (
+    ImageCache,
+    Preview,
+    bake_key,
+    full_from_bytes,
+    full_rough_from_bytes,
+)
 from ..model import BalloonObject, ImageObject, Page, Panel, StickerObject, TextObject
 from ..psd import PsdGroup, PsdLayer, crop_to_content, write_psd
 from ..tone import TonePieces, tone_pieces
@@ -135,13 +141,19 @@ class BareImages:
 
     PSD の「絵」レイヤーはこちらを使う。焼いた1枚を入れると、利用者が
     クリスタでトーンを貼り替えたときに**下から元のトーンが透ける**。
+
+    **切り抜き（→ 要件定義 10.3）は焼いてある。** トーンと違って、外して
+    貼り替える使い方が無いため（外したいならアプリでマスクを解除してから
+    書き出す → `SAM3実装計画.md` 4.4）。ここで焼かないと、**PSD だけ
+    切り抜き前の絵が出る**——画面と食い違ったことに気づくのが、クリスタで
+    開いたあとになる。
     """
 
     def __init__(self, images: FullImages) -> None:
         self._images = images
 
     def __call__(self, image) -> Preview | None:
-        return self._images.base(image.asset)
+        return self._images.base(image)
 
 
 class TonePieceImages:
@@ -165,21 +177,27 @@ class TonePieceImages:
 
     def __init__(self, images: FullImages) -> None:
         self._images = images
-        # **上限を持たない**（`ToneCache` と違う）。1ページ書き出すあいだ
+        # **上限を持たない**（`BakedCache` と違う）。1ページ書き出すあいだ
         # だけの入れ物で、鍵は貼ってある絵の数で頭打ちになる
-        self._pieces: dict[tuple[str, tuple], tuple[TonePieces, tuple[int, int]]] = {}
+        self._pieces: dict[
+            tuple[str, str, tuple], tuple[TonePieces, tuple[int, int]]
+        ] = {}
 
     def _of(self, image) -> tuple[TonePieces, tuple[int, int]] | None:
         tone = getattr(image, "tone", None)
         if tone is None:
             return None
-        ref = image.asset
-        key = (ref, tone.key())
+        # **鍵に切り抜きも入れる**（`images.bake_key` と同じ3つ組）。
+        # 同じ絵に別の切り抜きを掛けた2枚を、同じページに置けるため
+        key = bake_key(image)
         found = self._pieces.get(key)
         if found is not None:
             return found
 
-        source = self._images.base(ref)
+        # **切り抜き済みの絵から3枚を作る。** 切り抜いた外側は透明になり、
+        # トーンは透明な所に乗らない（→ `tone.apply_tone`）ので、
+        # 「トーン範囲」も自動で切り抜きに収まる
+        source = self._images.base(image)
         if source is None:
             return None
         made = (tone_pieces(source.image, tone), source.source_px)

@@ -50,7 +50,8 @@ from PySide6.QtWidgets import (
 from ..errors import ExportError
 from ..export_io import replace_or_raise, tmp_path_for
 from ..geometry import Size
-from ..images import ImageCache, Preview, ToneCache, full_from_bytes
+from ..image_masks import safe_masked_preview
+from ..images import BakedCache, ImageCache, Preview, bake_key, full_from_bytes, toned
 from ..layout import page_assets
 from ..model import DEFAULT_PAGE_SIZE, Page
 from .render import PAGE_BG, PageRenderer
@@ -231,26 +232,55 @@ class FullImages:
     1枚を引き伸ばすと、書き出したものだけ斜線がぼやける。焼き直しても
     見た目が変わらないのは、間隔と太さを画像の短辺に対する割合で持って
     いるため。
+
+    **切り抜き（→ 10.3）も同じ。** マスクは元画像のピクセル座標に結び付いて
+    いるので、原寸に対して掛ける。画面用に縮めた1枚を引き伸ばすと、
+    切り抜いた縁だけが階段状になる。
     """
 
     def __init__(self, state) -> None:
         self.state = state
         self._cache = ImageCache(full_from_bytes)
-        self._toned = ToneCache()
+        self._baked = BakedCache()
 
     def __call__(self, image) -> Preview | None:
-        ref = image.asset
         tone = getattr(image, "tone", None)
         if tone is None:
-            return self.base(ref)
-        return self._toned.get(ref, tone, lambda: self.base(ref))
+            return self.base(image)
+        return self._baked.get(bake_key(image), lambda: toned(self.base(image), tone))
 
-    def base(self, ref: str) -> Preview | None:
-        """トーンを焼く前の1枚。
+    def base(self, image) -> Preview | None:
+        """トーンを焼く前の1枚。**切り抜きは掛かっている。**
 
-        **PSD の「トーン範囲」（→ `psd_export.TonePieceImages`）も同じ入れ物
-        から引く。** 別に持つと、同じ絵を1ページで2回展開することになる。
+        **PSD の「絵」（→ `psd_export.BareImages`）と「トーン範囲」
+        （→ `TonePieceImages`）も同じ入れ物から引く。** 別に持つと、同じ絵を
+        1ページで2回展開することになる。
+
+        切り抜きをここに含めるのは、**PSD だけ切り抜き前の絵が出るのを
+        避けるため**（→ `SAM3実装計画.md` 4.4）。トーンを分けているのとは
+        意味が違う——あちらはクリスタで貼り替えられるように**わざと**
+        焼いていない。
         """
+        mask_ref = getattr(image, "mask_asset", "")
+        if not mask_ref:
+            return self.raw(image.asset)
+        # 鍵はトーン無しの形。トーンを持たない画像では `__call__` と同じ鍵に
+        # なるので、同じ絵を2回焼かずに済む
+        key = (image.asset, mask_ref, ())
+        return self._baked.get(key, lambda: self._masked(image))
+
+    def _masked(self, image) -> Preview | None:
+        """切り抜いた原寸の1枚。マスクが欠けていれば切り抜き無しで返す。"""
+        baked = safe_masked_preview(
+            self.state.read_asset(image.asset),
+            self.state.read_asset(image.mask_asset),
+            None,
+            reduced=False,
+        )
+        return baked if baked is not None else self.raw(image.asset)
+
+    def raw(self, ref: str) -> Preview | None:
+        """何も焼いていない原寸の1枚。**この入れ物だけが PNG を展開する。**"""
         return self._cache.get(ref, lambda: self.state.read_asset(ref))
 
 

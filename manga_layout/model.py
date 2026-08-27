@@ -613,6 +613,11 @@ class ImageObject(SceneObject):
     # **None なら項目ごと書かない**ので、使っていない作品の project.json は
     # この機能を足す前と1文字も変わらない（集中線・流線・付箋と同じ線引き）
     tone: Tone | None = None
+    # 切り抜きのマスク（→ 要件定義 10.3）。`assets/` の中の8bitグレースケールPNGで、
+    # **元画像と同じピクセル寸法**。掛けていなければ空文字。
+    #
+    # 絵そのもの（`asset`）は書き換えない。外せば元の絵に戻る、が切り抜きの前提
+    mask_asset: str = ""
 
     TYPE = "image"
 
@@ -629,6 +634,11 @@ class ImageObject(SceneObject):
         }
         if self.tone is not None:
             data["tone"] = self.tone.to_dict()
+        # **切り抜いていない画像では項目ごと省く**（トーン・集中線と同じ線引き）。
+        # 切り抜きを使っていない作品の project.json が、この機能の前と1文字も
+        # 変わらない
+        if self.mask_asset:
+            data["mask_asset"] = self.mask_asset
         return data
 
     @classmethod
@@ -652,6 +662,8 @@ class ImageObject(SceneObject):
             rotation=normalize_angle(v.number(d, "rotation", where, 0.0)),
             opacity=opacity,
             tone=None if tone is None else Tone.from_dict(tone, f"{where}.tone"),
+            # 古い作品にはこの項目が無い。無ければ切り抜き無しとして読む
+            mask_asset=v.text(d, "mask_asset", where, ""),
         )
 
 
@@ -1708,6 +1720,10 @@ class Project:
         ×印すら出ないので、黙って消えたように見える → 6.23）。
         """
         used = {img.asset for img in self.iter_images() if img.asset}
+        # **切り抜きのマスクも数える**（→ 要件定義 10.3）。数え漏らすと整理が
+        # マスクを `_unused/` へ移し、次に開いたときに切り抜きだけが外れた絵に
+        # なる。×印も出ないので、黙って戻ったように見える
+        used |= {img.mask_asset for img in self.iter_images() if img.mask_asset}
         used |= {s.asset for s in self.iter_stickers() if s.asset}
         used |= {r.asset for r in self.iter_roughs() if r.asset}
         return used
