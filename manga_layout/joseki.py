@@ -476,8 +476,11 @@ def match_left_half_two_even(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEX
 #
 # 実測した3ページで、最下段の右コマが使える幅に占める割合は **33.7% / 55.3% / 67.9%**。
 # **3枚とも違う。** 1枚だけを見て 1/3 に決めていたが、材料が増えたら合わなくなった。
-# **どれが正しいかは幾何では決まらない**ので、3つとも案として並べる。
-RIGHT_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3))
+# **どれが正しいかは幾何では決まらない**ので、並べて選んでもらう。
+#
+# 「いっぱい」は**帯をまるごと1コマにする**案（横帯で締める・場面を切り替える）。
+# 右端に寄せる作りなので、幅いっぱいにすると帯そのものになる
+RIGHT_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3), (1, 1))
 
 
 def _width_label(num: int, den: int) -> str:
@@ -485,9 +488,15 @@ def _width_label(num: int, den: int) -> str:
     return "幅 いっぱい" if num == den else f"幅 {num}/{den}"
 
 
-def _right_panel(f: Frame, share: float) -> tuple[float, float]:
-    """帯を左右に割ったときの、右コマの x と幅。share は使える幅に対する割合。"""
-    width = (f.right - f.left - f.gutter) * share
+def _right_panel(f: Frame, num: int, den: int) -> tuple[float, float]:
+    """帯を左右に割ったときの、右コマの x と幅。
+
+    **幅いっぱいのときは隙間を引かない。** 隙間は左隣のコマと空けるためのもので、
+    帯をまるごと1コマにするなら隣がいない。引くと左に半端な余白が残る。
+    """
+    if num == den:
+        return f.left, f.right - f.left
+    width = (f.right - f.left - f.gutter) * num / den
     return f.right - width, width
 
 
@@ -502,7 +511,7 @@ def _propose_band_right(m: Match, boxes: Sequence[NBox], f: Frame,
         return
     order = len(boxes) + 1
     for num, den in RIGHT_WIDTH_SHARES:
-        x, width = _right_panel(f, num / den)
+        x, width = _right_panel(f, num, den)
         box = NBox(x, top, width, height)
         if width < MIN_ROOM or _overlapping([box], boxes):
             continue
@@ -520,7 +529,7 @@ def _propose_bottom_right(m: Match, boxes: Sequence[NBox], lowest: float,
     f = borrow_frame(boxes, ctx)
     top = lowest + f.gutter
     height = f.bottom - top
-    _propose_band_right(m, boxes, f, top, height, "下の帯の右コマ")
+    _propose_band_right(m, boxes, f, top, height, "下の帯のコマ（右端に寄せる）")
 
     m.checks.append(Check("下の帯に置ける案がある", bool(m.plans),
                           f"高さ {height:.3f} / 案 {len(m.plans)}件 / 余白 {f.gutter:.3f}"))

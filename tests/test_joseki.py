@@ -118,7 +118,7 @@ class TestBandRight:
     def test_1段目だけなら三段の中段右が出る(self):
         m = hit(TOP_BAND, "three_band_middle_right")
         assert m is not None
-        assert [p.label for p in m.plans] == ["幅 1/3", "幅 1/2", "幅 2/3"]
+        assert [p.label for p in m.plans] == ["幅 1/3", "幅 1/2", "幅 2/3", "幅 いっぱい"]
 
     def test_2段目まで描かれていたら三段の予想はしない(self):
         assert hit(BAND_HALF_DRAWN, "three_band_middle_right") is None
@@ -133,6 +133,13 @@ class TestBandRight:
         m = hit(TOP_BAND, "two_tier_bottom_right")
         right_edges = {round(p.candidates[0].box.right, 6) for p in m.plans}
         assert len(right_edges) == 1      # 幅が変わっても右端は動かない
+
+    def test_幅いっぱいの案は左右いっぱいに広がる(self):
+        # **隙間は左隣と空けるためのもの。** 帯をまるごと1コマにするなら隣がいない
+        m = hit(TOP_BAND, "two_tier_bottom_right")
+        boxes = {p.label: p.candidates[0].box for p in m.plans}
+        assert boxes["幅 いっぱい"].x < boxes["幅 2/3"].x
+        assert boxes["幅 いっぱい"].x == pytest.approx(min(b.x for b in TOP_BAND))
 
 
 class TestNarrowTop:

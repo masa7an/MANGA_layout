@@ -271,6 +271,17 @@ class TestGuideFrame:
                 assert rect.right <= PAGE_W - margin + 0.5
                 assert rect.bottom <= PAGE_H - margin + 0.5
 
+    def test_最下段の案に幅いっぱいがある(self):
+        # 3段のうち2段を埋めた状態。**最後の段は帯まるごとにもできる**
+        settings = LayoutSettings()
+        project, page = page_with(*band(0.06, 0.28), *band(0.38, 0.22))
+        found = suggestions(project, page, margin=settings.margin,
+                            gutter=settings.gutter)
+        widest = next(s for s in found if s.label == "幅 いっぱい")
+        rect = widest.rects[0]
+        assert rect.x == pytest.approx(settings.margin)
+        assert rect.right == pytest.approx(PAGE_W - settings.margin)
+
     def test_雛形は最後に出す(self):
         margin = LayoutSettings().margin
         project, page = page_with()
