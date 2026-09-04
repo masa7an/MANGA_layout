@@ -150,6 +150,11 @@ FONT_DIALOG_SIZE = (820, 620)
 
 
 
+# メニューバーの右端に出す案内。**`ファイル(F)` の括弧が何なのかは、初めて見た人には
+# 分からない。** Alt と一緒に押す、という説明を、その括弧が並んでいる場所に置く
+ALT_HINT = "＋ Alt キー"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, state: EditorState | None = None):
         super().__init__()
@@ -455,6 +460,20 @@ class MainWindow(QMainWindow):
                 "ショートカットキーの一覧...", self.show_shortcuts, None, SHORTCUTS_HINT
             )
         )
+        self._add_alt_hint()
+
+    def _add_alt_hint(self) -> None:
+        """メニューバーの右端に「＋ Alt キー」と灰色で出す。
+
+        **`ファイル(F)` の括弧が何なのかは、初めて見た人には分からない。**
+        Alt と一緒に押す、という説明を、その括弧が並んでいる場所そのものに置く。
+
+        **押せない項目として置く**ので灰色になり、押しても何も起きない。
+        メニューを持たないので、「メニューを探す」窓には出ない（→ `menu_search._walk`）。
+        """
+        hint = self.menuBar().addAction(ALT_HINT)
+        hint.setEnabled(False)
+        self._alt_hint_action = hint
 
     def _build_toolbar(self) -> None:
         """道具箱。**一覧は `_tool_actions` から取る。**

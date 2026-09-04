@@ -393,6 +393,11 @@ def _walk(
             continue
         if not label:
             continue
+        # **メニューバーに直接置かれた、メニューを持たない項目は飾り**
+        # （→ `window._add_alt_hint`）。辿って実行する項目ではないので拾わない。
+        # 拾うと、道順の無い行が検索結果に並ぶ
+        if not path:
+            continue
         # **`shortcut()` ではなく `shortcuts()` を読む。** 前者は1本目しか
         # 返さないので、2本通してある項目（→ `MenuEntry.alt_shortcuts`）の
         # 片方が落ちる

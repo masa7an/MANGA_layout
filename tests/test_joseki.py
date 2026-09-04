@@ -205,7 +205,7 @@ class TestBlankPageOpening:
         m = hit([], "blank_page_opening")
         assert [p.label for p in m.plans] == [
             "幅 1/3", "幅 1/2", "幅 2/3", "幅 いっぱい",
-            "上と右を断ち切り（幅 1/2）", "4コマ×2列",
+            "上と右を断ち切り（幅 1/2）", "上半分を断ち切り", "4コマ×2列",
         ]
 
     def test_断ち切りの案は左辺と下辺が他の案と揃う(self):
@@ -217,6 +217,15 @@ class TestBlankPageOpening:
         assert bleed.bottom == pytest.approx(plain.bottom)
         assert bleed.y < 0          # 上はページの外
         assert bleed.right > 1.0    # 右もページの外
+
+    def test_上半分を断ち切る案は左右と上が外へ出る(self):
+        # **収めたら断ち切りではなくなる。** 下辺だけが紙の中
+        m = hit([], "blank_page_opening")
+        box = next(p for p in m.plans if p.label == "上半分を断ち切り").candidates[0].box
+        assert box.x < 0
+        assert box.y < 0
+        assert box.right > 1.0
+        assert box.bottom == pytest.approx(0.5)     # 下辺はページの半分
 
     def test_4コマ2列の雛形も案に入る(self):
         m = hit([], "blank_page_opening")
@@ -250,7 +259,7 @@ class TestBlankPageOpening:
                 continue        # 雛形は右上の1コマではなく、枠いっぱいに敷く
             box = plan.candidates[0].box
             if "断ち切り" in plan.label:
-                assert box.y < 0            # 上と右はページの外まで伸ばす
+                assert box.y < 0            # 断ち切りはページの外まで伸ばす
                 assert box.right > 1.0
                 continue
             assert box.y == pytest.approx(frame.y)         # 枠の上辺

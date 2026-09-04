@@ -118,6 +118,32 @@ class TestShortcut:
             window.close()
 
 
+class TestAltHint:
+    """メニューバーの「＋ Alt キー」（→ `window._add_alt_hint`）。"""
+
+    def test_ヘルプの右に灰色で出す(self, qapp):
+        from manga_layout.ui.window import ALT_HINT
+
+        window = MainWindow()
+        try:
+            texts = [a.text() for a in window.menuBar().actions()]
+            assert texts[-1] == ALT_HINT          # いちばん右（ヘルプの次）
+            assert not window._alt_hint_action.isEnabled()   # 押せない＝灰色
+        finally:
+            window.close()
+
+    def test_メニューを探す窓には出さない(self, qapp):
+        from manga_layout.ui.menu_search import collect_menu_entries
+        from manga_layout.ui.window import ALT_HINT
+
+        window = MainWindow()
+        try:
+            texts = [e.text for e in collect_menu_entries(window)]
+            assert ALT_HINT not in texts
+        finally:
+            window.close()
+
+
 class TestRefusal:
     def test_斜めのコマがあるページでは断る(self, editor):
         editor.page.panels[0].shape = Polygon(

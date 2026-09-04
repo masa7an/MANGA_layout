@@ -733,6 +733,10 @@ OPENING_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3), (1, 1))
 OPENING_BLEED_SHARE = (1, 2)
 OPENING_BLEED_OVERFLOW = 0.008
 
+# 上半分をまるごと断ち切る描き出し。**左右も上も外へ出し、下辺だけがページの中。**
+# 下辺はページの半分（見開きの扉のような、大きく開く始め方）
+OPENING_TOP_HALF_BOTTOM = 0.5
+
 # 4コマ×2列の雛形。**8コマまとめて1つの案。**
 # 読む順は右列を上から下、続いて左列を上から下（→ 縦コマ列の左右反復と同じ）
 OPENING_GRID_ROWS = 4
@@ -772,6 +776,7 @@ def match_blank_page_opening(boxes: Sequence[NBox],
         )
     m.add_plan(_opening_bleed(area, height, ctx, m.joseki),
                label="上と右を断ち切り（幅 1/2）")
+    m.add_plan(_opening_top_half(ctx, m.joseki), label="上半分を断ち切り")
     # **雛形は最後に置く。** 8コマまとめて敷く案なので、1コマずつの案を見てから
     m.add_plan(_opening_grid(area, ctx, m.joseki), label="4コマ×2列")
     return m
@@ -793,6 +798,20 @@ def _opening_bleed(area: NBox, height: float, ctx: PageContext,
         box=NBox(left, top, 1.0 + over_x - left, area.y + height - top),
         order=1, joseki=joseki,
         reason="上と右をページの外まで伸ばした断ち切りコマ（左辺と下辺は他の案と同じ）")]
+
+
+def _opening_top_half(ctx: PageContext, joseki: str) -> list[Candidate]:
+    """ページの上半分をまるごと断ち切るコマ。
+
+    **左右と上を外へ出し、下辺だけがページの中。** 大きく開く始め方で、
+    置いてよい範囲（基本枠）には収めない——**収めたら断ち切りではなくなる。**
+    """
+    over_x = ctx.bleed_x if ctx.bleed_x is not None else OPENING_BLEED_OVERFLOW
+    over_y = ctx.bleed_y if ctx.bleed_y is not None else OPENING_BLEED_OVERFLOW
+    return [Candidate(
+        box=NBox(-over_x, -over_y, 1.0 + over_x * 2, OPENING_TOP_HALF_BOTTOM + over_y),
+        order=1, joseki=joseki,
+        reason="ページの上半分をまるごと断ち切るコマ（下辺だけが紙の中）")]
 
 
 def _opening_grid(area: NBox, ctx: PageContext, joseki: str) -> list[Candidate]:
