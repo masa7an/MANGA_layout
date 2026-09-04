@@ -757,6 +757,16 @@ class MainWindow(QMainWindow):
         if self.state.flip_slant():
             self.state.message.emit("斜めの向きを反転しました")
 
+    def suggest_next_panel(self) -> None:
+        """次に置くコマを提案する（要件定義 10.5）。
+
+        **押すたびに、直前の提案を次の案へ差し替える。** 気に入ったら別の操作へ移れば
+        そのまま残り、要らなければ Undo 1回で消える。
+
+        お知らせは `state` の側で出している。**何番目の案かはここからは分からない。**
+        """
+        self.state.suggest_next_panel()
+
     def toggle_panel_lock(self) -> None:
         """選んだコマのロックを付け外しする（要件定義 6.17）。
 

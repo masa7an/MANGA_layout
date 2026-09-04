@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
 
+from .. import next_panel
 from ..assets import AssetStore, PendingAssets
 from ..errors import AssetError, MaskSizeError
 from ..flow import (
@@ -112,6 +113,11 @@ from ..wand import (
     removed,
     select_at,
 )
+
+# 次のコマの提案（→ 要件定義 10.5）。**履歴のまとめ鍵と同じ文字列を使う。**
+# 「直前の1手が提案か」を `history.undo_label` で見るので、名前がずれると差し替えが
+# 効かなくなる（増えていくだけになる）
+SUGGEST_LABEL = "次のコマを提案"
 
 # 道具（ツール）
 TOOL_SELECT = "select"
@@ -328,6 +334,9 @@ class EditorState(QObject):
         self.focus_settings = DEFAULT_FOCUS_SETTINGS
         self.flow_settings = DEFAULT_FLOW_SETTINGS
         self._page_index = 0
+        # 直前の提案で置いたコマの id と、その案の番号（→ `suggest_next_panel`）
+        self._suggested: tuple[str, ...] = ()
+        self._suggest_index = 0
         self._tool = TOOL_SELECT
         self._selected_id: str | None = None
         # 保存先が決まる前に貼り付けた画像の預かり所。保存時に書き出す
@@ -1300,6 +1309,58 @@ class EditorState(QObject):
         with self.edit_page("このページのコマのロックをすべて解除") as page:
             for panel in page.panels:
                 panel.locked = False
+        return True
+
+    # -- 次のコマの提案 ------------------------------------------------------
+    #
+    # 描きかけのページを見て、次に置くコマを提案する（→ 要件定義 10.5）。
+    # 幾何の計算は `next_panel.py` にあり、ここは**押されたときの振る舞い**だけを持つ。
+    #
+    # **押すたびに、直前の提案を次の案へ差し替える。** 増やしていくのではない。
+    # 案どうしは重なるので、並べて置くと読めない絵になる。
+    #
+    # **履歴は `merge_key` で1手にまとめる。** 5回押しても Undo 1回で消える。
+    # 「気に入らなければ元に戻す」を、押した回数だけ繰り返させない。
+
+    def suggest_next_panel(self) -> bool:
+        """次のコマを提案し、そのとおりに置く。置けたら True。
+
+        **成功のお知らせもここで出す。** 何番目の案かは呼ぶ側からは分からないため
+        （他の操作は窓の側でお知らせを出しているが、ここだけ例外にしてある）。
+        """
+        page = self.page
+        if not next_panel.supported(page):
+            self.message.emit("斜めのコマがあるページでは提案できません")
+            return False
+
+        # 直前の1手が提案で、そのとき置いたコマが今もあるなら「差し替え」。
+        # 途中で別の操作をしたら、その提案は**確定したもの**として扱い、次は新しく足す
+        ids = {p.id for p in page.panels}
+        replacing = (
+            self.history.undo_label == SUGGEST_LABEL
+            and bool(self._suggested)
+            and ids.issuperset(self._suggested)
+        )
+        ignore = self._suggested if replacing else ()
+
+        found = next_panel.suggestions(self.project, page, ignore)
+        if not found:
+            self._suggested = ()
+            self.message.emit("提案できる形が見つかりません")
+            return False
+
+        index = (self._suggest_index + 1) % len(found) if replacing else 0
+        with self.edit(SUGGEST_LABEL, merge_key=SUGGEST_LABEL) as project:
+            edited = project.pages[self._page_index]
+            if replacing:
+                edited.panels[:] = [p for p in edited.panels if p.id not in ignore]
+            added = next_panel.add_suggestion(project, edited, found[index])
+        self._suggested = tuple(p.id for p in added)
+        self._suggest_index = index
+        self.message.emit(
+            f"提案 {index + 1}/{len(found)}: {found[index].text()}"
+            "（もう一度押すと次の案）"
+        )
         return True
 
     # -- コマの重なり順 ------------------------------------------------------

@@ -387,7 +387,7 @@ class EditMenu:
 
 
 class PanelMenu:
-    """コマのメニュー。割る道具・斜めの反転・ロック・集中線／流線（畳み）。"""
+    """コマのメニュー。割る道具・次のコマの提案・斜めの反転・ロック・集中線／流線（畳み）。"""
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
@@ -395,6 +395,16 @@ class PanelMenu:
         # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
         # 何も選んでいない間はメニュー全体がグレーになる（吹き出しでの失敗）
         menu.addAction(window._tool_actions[TOOL_PANEL])
+        # 提案も「作る」の仲間なので隣に置く（→ 要件定義 10.5）。
+        # **グレーにしない。** 出せないときは理由を状態表示に出す。押せなくすると
+        # 「できない」ことは伝わっても理由が伝わらない（複製と同じ判断）
+        self.suggest_action = window._act(
+            "次のコマを提案",
+            window.suggest_next_panel,
+            None,
+            "描きかけのページを見て、次に置くコマを提案する。押すたびに別の案へ差し替える",
+        )
+        menu.addAction(self.suggest_action)
         menu.addSeparator()
         for tool in (TOOL_SPLIT_H, TOOL_SPLIT_V, TOOL_SPLIT_SLANT):
             menu.addAction(window._tool_actions[tool])

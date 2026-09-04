@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Collection
 from dataclasses import dataclass, field
 
 from .geometry import Rect
@@ -113,9 +114,14 @@ def supported(page: Page) -> bool:
     return all(is_rectangular(p) for p in page.panels)
 
 
-def to_boxes(page: Page) -> list[NBox]:
-    """ページのコマを、読み順に並べた正規化座標にする。"""
+def to_boxes(page: Page, ignore: Collection[str] = ()) -> list[NBox]:
+    """ページのコマを、読み順に並べた正規化座標にする。
+
+    `ignore` に id を渡すと、そのコマは**無かったことにして**数える。
+    直前の提案を次の案へ差し替えるとき、**自分が足したコマを材料に混ぜない**ために使う。
+    """
     size = page.size
+    panels = [p for p in page.panels if p.id not in ignore]
     return [
         NBox(
             box.x / size.w,
@@ -123,7 +129,7 @@ def to_boxes(page: Page) -> list[NBox]:
             box.w / size.w,
             box.h / size.h,
         )
-        for box in (p.bounds() for p in reading_order(page.panels))
+        for box in (p.bounds() for p in reading_order(panels))
     ]
 
 
@@ -165,15 +171,19 @@ class Suggestion:
         return f"{self.title} / {self.label}" if self.label else self.title
 
 
-def suggestions(project: Project, page: Page) -> list[Suggestion]:
+def suggestions(
+    project: Project, page: Page, ignore: Collection[str] = ()
+) -> list[Suggestion]:
     """そのページへの提案を、**出す順に全部**返す。
 
     **1つに絞らない。** どれが物語に合うかは幾何では決まらないので、ここでは決めない。
     【提案】を押すたびに、この並びを順繰りに見せる。
+
+    `ignore` は「無かったことにするコマ」の id。**直前の提案を差し替えるときに使う。**
     """
     if not supported(page):
         return []
-    boxes = to_boxes(page)
+    boxes = to_boxes(page, ignore)
     ctx = context_for(project, page)
     return [
         Suggestion(
