@@ -73,6 +73,16 @@ TAIL_TURN_LABELS = {direction: where for where, direction in TAIL_TURN_ITEMS}
 # ので、書き分けないよう1箇所に持つ（→ `BalloonMenu`）
 BALLOON_STYLE_MENU_LABEL = "種類を変える"
 
+# 次のコマの提案（→ 要件定義 10.5）のキー。
+#
+# **名前にも括弧付きで入れる。** 道具の項目が「コマ追加 (P)」の形になっており
+# （→ `_build_tool_actions`）、こちらだけキーを名前に出さないと、
+# 「メニューを探す」窓で **「次のコマを提案　［N］」** と体裁が割れる
+# （あちらは名前にキーが無い項目にだけ ［ ］ を足す → `menu_search.item_text`）。
+#
+# キーは1か所に持つ。名前と割り当てを別々に書くと、片方だけ直したときに食い違う
+SUGGEST_KEY = "N"
+
 # ラフ（下敷き → 6.23）を畳んだメニューの見出しと、その中の項目の文言。
 #
 # **畳むのは、ファイルのメニューが4項目ぶん伸びるのを避けるため。** ラフは
@@ -402,9 +412,9 @@ class PanelMenu:
         # 案は複数あるので、1打で繰り返せないと一周できない（→ 要件定義 7章の
         # 「キーの本数は増やさない」は、繰り返し押す操作までは禁じていない）
         self.suggest_action = window._act(
-            "次のコマを提案",
+            f"次のコマを提案 ({SUGGEST_KEY})",
             window.suggest_next_panel,
-            "N",
+            SUGGEST_KEY,
             "描きかけのページを見て、次に置くコマを提案する。押すたびに別の案へ差し替える",
         )
         menu.addAction(self.suggest_action)

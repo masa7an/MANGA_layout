@@ -104,6 +104,22 @@ class TestRepeatedPress:
 
 
 class TestShortcut:
+    def test_名前にキーを入れて道具と体裁を揃える(self, qapp):
+        # 道具は「コマ追加 (P)」の形。**こちらだけ名前にキーが無いと、
+        # 「メニューを探す」窓で「次のコマを提案　［N］」と体裁が割れる**
+        from manga_layout.ui.menu_search import collect_menu_entries, item_text
+
+        window = MainWindow()
+        try:
+            rows = {
+                e.text: item_text(e).splitlines()[0]
+                for e in collect_menu_entries(window)
+            }
+            assert rows["次のコマを提案 (N)"].endswith("次のコマを提案 (N)")
+            assert "［" not in rows["次のコマを提案 (N)"]
+        finally:
+            window.close()
+
     def test_キーはN(self, qapp):
         # **押すたびに次の案へ切り替える操作**なので、1打で繰り返せるキーにしてある。
         # `Alt+P` は「ページ(&P)」メニューが使っていて割り当てられない
