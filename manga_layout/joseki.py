@@ -707,6 +707,13 @@ OPENING_PANEL_RATIO = 1.0 / 3.0   # 高さは置いてよい範囲の 1/3（三�
 # 「幅いっぱい」は、横帯で始める描き出し
 OPENING_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3), (1, 1))
 
+# 上を断ち切る描き出し。**ページの端を越えて伸ばす。**
+# 端ちょうどで止めると、断裁のずれで白い筋が出る。越えた分は切り落とされる。
+# 幅は 1/2（半分ほどの大きさが、断ち切りの見せ場として収まりがよい）。
+# **越える量は手で置いた値。** この道具は仕上がり寸法しか持たないので、借りる手本が無い
+OPENING_BLEED_SHARE = (1, 2)
+OPENING_BLEED_OVERFLOW = 0.02
+
 # 4コマ×2列の雛形。**8コマまとめて1つの案。**
 # 読む順は右列を上から下、続いて左列を上から下（→ 縦コマ列の左右反復と同じ）
 OPENING_GRID_ROWS = 4
@@ -744,8 +751,25 @@ def match_blank_page_opening(boxes: Sequence[NBox],
                 reason="三段構成の右上コマ（置いてよい範囲の右上に、高さは枠の 1/3）")],
             label=_width_label(num, den),
         )
+    m.add_plan(_opening_bleed(area, height, m.joseki), label="上を断ち切り（幅 1/2）")
+    # **雛形は最後に置く。** 8コマまとめて敷く案なので、1コマずつの案を見てから
     m.add_plan(_opening_grid(area, ctx, m.joseki), label="4コマ×2列")
     return m
+
+
+def _opening_bleed(area: NBox, height: float, joseki: str) -> list[Candidate]:
+    """上をページの外まで伸ばした、断ち切りの描き出し。
+
+    **下辺は他の案と同じ位置。** 上だけが伸びるので、他の案と見比べやすい。
+    """
+    num, den = OPENING_BLEED_SHARE
+    width = area.w * num / den
+    bottom = area.y + height
+    top = -OPENING_BLEED_OVERFLOW
+    return [Candidate(
+        box=NBox(area.right - width, top, width, bottom - top),
+        order=1, joseki=joseki,
+        reason="上をページの外まで伸ばした断ち切りコマ（下辺は他の案と同じ）")]
 
 
 def _opening_grid(area: NBox, ctx: PageContext, joseki: str) -> list[Candidate]:

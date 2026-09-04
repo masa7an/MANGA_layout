@@ -177,6 +177,8 @@ class TestSuggestions:
         assert suggestions(project, page) == []
 
     def test_提案はページの中に収まる(self):
+        # 描きかけのページへの提案は、どれもページの中。
+        # **外へ出るのは空白ページの断ち切りの案だけ**（別に確かめている）
         project, page = page_with(*band(0.06, 0.28))
         for suggestion in suggestions(project, page):
             for rect in suggestion.rects:
@@ -219,13 +221,35 @@ class TestGuideFrame:
     def test_幅ちがいのどの案も枠に収まる(self):
         margin = LayoutSettings().margin
         project, page = page_with()
-        found = suggestions(project, page, margin=margin)
+        found = [
+            s for s in suggestions(project, page, margin=margin)
+            if "断ち切り" not in s.label            # 断ち切りは枠の外へ出るのが仕事
+        ]
         assert len(found) > 1
         for suggestion in found:
-            rect = suggestion.rects[0]
-            assert rect.x >= margin - 0.5
-            assert rect.right <= PAGE_W - margin + 0.5
-            assert rect.bottom <= PAGE_H - margin + 0.5
+            for rect in suggestion.rects:
+                assert rect.x >= margin - 0.5
+                assert rect.right <= PAGE_W - margin + 0.5
+                assert rect.bottom <= PAGE_H - margin + 0.5
+
+    def test_断ち切りの案は上だけページの外へ出る(self):
+        # **端ちょうどで止めない。** 断裁のずれで白い筋が出る
+        margin = LayoutSettings().margin
+        project, page = page_with()
+        rect = next(
+            s for s in suggestions(project, page, margin=margin)
+            if "断ち切り" in s.label
+        ).rects[0]
+        assert rect.y < 0                                  # 上はページの外
+        assert rect.x > 0                                  # 左右と下は中
+        assert rect.right <= PAGE_W - margin + 0.5
+        assert rect.bottom <= PAGE_H - margin + 0.5
+
+    def test_雛形は最後に出す(self):
+        margin = LayoutSettings().margin
+        project, page = page_with()
+        labels = [s.label for s in suggestions(project, page, margin=margin)]
+        assert labels[-1] == "4コマ×2列"
 
     def test_4コマの雛形を置くと列優先で読まれる(self):
         # **提案した順と、置いたあとに読み直した順が一致する。**
