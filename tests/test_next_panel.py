@@ -216,6 +216,17 @@ class TestGuideFrame:
         assert rect.right == pytest.approx(PAGE_W - margin)         # 枠の右辺
         assert rect.bottom <= PAGE_H - margin + 0.5                 # 枠の下辺より内側
 
+    def test_幅ちがいのどの案も枠に収まる(self):
+        margin = LayoutSettings().margin
+        project, page = page_with()
+        found = suggestions(project, page, margin=margin)
+        assert len(found) > 1
+        for suggestion in found:
+            rect = suggestion.rects[0]
+            assert rect.x >= margin - 0.5
+            assert rect.right <= PAGE_W - margin + 0.5
+            assert rect.bottom <= PAGE_H - margin + 0.5
+
     def test_余白を渡さなければ枠に合わせない(self):
         # 既定の余白で置く。**枠を知らないのだから、合わせようがない**
         project, page = page_with()

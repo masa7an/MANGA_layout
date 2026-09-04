@@ -462,6 +462,11 @@ def match_left_half_two_even(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEX
 RIGHT_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3))
 
 
+def _width_label(num: int, den: int) -> str:
+    """幅の案の名前。**3か所で同じ形にするため、ここでだけ作る。**"""
+    return "幅 いっぱい" if num == den else f"幅 {num}/{den}"
+
+
 def _right_panel(f: Frame, share: float) -> tuple[float, float]:
     """帯を左右に割ったときの、右コマの x と幅。share は使える幅に対する割合。"""
     width = (f.right - f.left - f.gutter) * share
@@ -484,7 +489,7 @@ def _propose_band_right(m: Match, boxes: Sequence[NBox], f: Frame,
         if width < MIN_ROOM or _overlapping([box], boxes):
             continue
         m.add_plan([Candidate(box=box, order=order, joseki=m.joseki, reason=reason)],
-                   label=f"幅 {num}/{den}")
+                   label=_width_label(num, den))
 
 
 def _propose_bottom_right(m: Match, boxes: Sequence[NBox], lowest: float) -> None:
@@ -691,7 +696,12 @@ def match_spread_opening_bleed(boxes: Sequence[NBox],
 #
 # 空白ページには**余白の手本が無い**ので、既定の余白を使うしかない。
 
-OPENING_PANEL_RATIO = 1.0 / 3.0   # 幅・高さともページの 1/3
+OPENING_PANEL_RATIO = 1.0 / 3.0   # 高さは置いてよい範囲の 1/3（三段構成の1段ぶん）
+
+# 最初のコマの幅。**1つに決めない**（帯の右コマと同じ考え方）。
+# 空白ページには手本が何も無く、**どれが良いかを決める材料がそもそも無い。**
+# 「幅いっぱい」は、横帯で始める描き出し
+OPENING_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3), (1, 1))
 # 空白ページの余白。**手本が無いので、材料の真ん中に置くしかない。**
 # 断ち切りの無いページの余白は実測で二分している（0.006〜0.031 と 0.088〜0.120）。
 # **中間の値。材料が二分しているので、決め手が無い。**
@@ -713,14 +723,18 @@ def match_blank_page_opening(boxes: Sequence[NBox],
     area = ctx.frame or NBox(
         DEFAULT_MARGIN, DEFAULT_MARGIN, 1.0 - DEFAULT_MARGIN * 2, 1.0 - DEFAULT_MARGIN * 2
     )
-    width = area.w * OPENING_PANEL_RATIO
     height = area.h * OPENING_PANEL_RATIO
     m.matched = True
     m.score = 1.0
-    m.add_plan([Candidate(
-        box=NBox(area.right - width, area.y, width, height),
-        order=1, joseki=m.joseki,
-        reason="三段構成の右上コマ（基本枠の右上に、幅・高さとも枠の 1/3）")])
+    for num, den in OPENING_WIDTH_SHARES:
+        width = area.w * num / den
+        m.add_plan(
+            [Candidate(
+                box=NBox(area.right - width, area.y, width, height),
+                order=1, joseki=m.joseki,
+                reason="三段構成の右上コマ（置いてよい範囲の右上に、高さは枠の 1/3）")],
+            label=_width_label(num, den),
+        )
     return m
 
 
@@ -812,7 +826,7 @@ def match_fill_band_left(boxes: Sequence[NBox],
             continue
         m.add_plan([Candidate(box=box, order=order, joseki=m.joseki,
                               reason="同じ段の左隣（高さは段に合わせる）")],
-                   label="幅 いっぱい" if num == den else f"幅 {num}/{den}")
+                   label=_width_label(num, den))
 
     m.checks.append(Check("置ける案がある", bool(m.plans), f"案 {len(m.plans)}件"))
     m.matched = bool(m.plans)
