@@ -139,14 +139,29 @@ def to_rect(box: NBox, page: Page) -> Rect:
     return Rect(box.x * size.w, box.y * size.h, box.w * size.w, box.h * size.h)
 
 
-def context_for(project: Project, page: Page) -> PageContext:
-    """ページ番号と、直前のページ。**見開きの定石はこれが無いと成立しない。**"""
+def guide_frame(page: Page, margin: float) -> NBox | None:
+    """基本枠（`LayoutSettings.margin` の内側）を正規化座標で。余白が無ければ None。
+
+    **px の余白は、正規化すると縦横で値が変わる**（A4 なら 89px が横 0.072・縦 0.051）。
+    ここで換算しておかないと、空白ページに置くコマが枠からはみ出す。
+    """
+    if margin <= 0:
+        return None
+    size = page.size
+    x, y = margin / size.w, margin / size.h
+    return NBox(x, y, 1.0 - x * 2, 1.0 - y * 2)
+
+
+def context_for(project: Project, page: Page, margin: float = 0.0) -> PageContext:
+    """ページ番号・直前のページ・基本枠。**見開きの定石は直前のページが無いと成立しない。**"""
     index = project.pages.index(page)
     previous = None
     if index > 0:
         before = project.pages[index - 1]
         previous = PreviousPage(number=index, boxes=to_boxes(before))
-    return PageContext(number=index + 1, previous=previous)
+    return PageContext(
+        number=index + 1, previous=previous, frame=guide_frame(page, margin)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -172,7 +187,7 @@ class Suggestion:
 
 
 def suggestions(
-    project: Project, page: Page, ignore: Collection[str] = ()
+    project: Project, page: Page, ignore: Collection[str] = (), margin: float = 0.0
 ) -> list[Suggestion]:
     """そのページへの提案を、**出す順に全部**返す。
 
@@ -180,11 +195,12 @@ def suggestions(
     【提案】を押すたびに、この並びを順繰りに見せる。
 
     `ignore` は「無かったことにするコマ」の id。**直前の提案を差し替えるときに使う。**
+    `margin` は基本枠の余白（px。`LayoutSettings.margin`）。空白ページの置き場所に効く。
     """
     if not supported(page):
         return []
     boxes = to_boxes(page, ignore)
-    ctx = context_for(project, page)
+    ctx = context_for(project, page, margin)
     return [
         Suggestion(
             title=match.title,

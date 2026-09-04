@@ -137,3 +137,14 @@ class TestBlankPage:
         assert not editor.page.panels
         assert editor.suggest_next_panel()
         assert editor.page.panels
+
+    def test_置いたコマは基本枠にぴったり付く(self, qapp):
+        # **枠からはみ出さない。** 目安線の外に出たコマは、置き直す手間になる
+        editor = EditorState(new_project())
+        editor.suggest_next_panel()
+        margin = editor.settings.margin
+        box = editor.page.panels[0].bounds()
+        assert box.y == pytest.approx(margin)
+        assert box.right == pytest.approx(editor.page.size.w - margin)
+        assert box.x >= margin
+        assert box.bottom <= editor.page.size.h - margin + 0.5

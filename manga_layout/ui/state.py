@@ -1343,7 +1343,7 @@ class EditorState(QObject):
         )
         ignore = self._suggested if replacing else ()
 
-        found = next_panel.suggestions(self.project, page, ignore)
+        found = next_panel.suggestions(self.project, page, ignore, self.settings.margin)
         if not found:
             self._suggested = ()
             self.message.emit("提案できる形が見つかりません")

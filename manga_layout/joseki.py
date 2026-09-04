@@ -121,6 +121,10 @@ class PageContext:
     """
     number: int | None = None      # ページ番号。分からなければ None
     previous: PreviousPage | None = None
+    # コマを置いてよい範囲（基本枠）。**空白ページで置き場所を決めるのに要る。**
+    # 既にコマがあるページなら、余白はそのコマから借りられる（→ `borrow_frame`）が、
+    # 1枚も無いページには手本が無い。分からなければ None
+    frame: NBox | None = None
 
 
 # 何も分からないときのページの文脈。**中身が無く、書き換えられない**ので使い回してよい
@@ -704,13 +708,19 @@ def match_blank_page_opening(boxes: Sequence[NBox],
     if not blank:
         return m
 
-    size = OPENING_PANEL_RATIO
+    # **基本枠が分かっているなら、その中に置く。** 分からないときだけ既定の余白を使う。
+    # 枠を無視すると、右上が枠からはみ出したコマを置いてしまう
+    area = ctx.frame or NBox(
+        DEFAULT_MARGIN, DEFAULT_MARGIN, 1.0 - DEFAULT_MARGIN * 2, 1.0 - DEFAULT_MARGIN * 2
+    )
+    width = area.w * OPENING_PANEL_RATIO
+    height = area.h * OPENING_PANEL_RATIO
     m.matched = True
     m.score = 1.0
     m.add_plan([Candidate(
-        box=NBox(1.0 - DEFAULT_MARGIN - size, DEFAULT_MARGIN, size, size),
+        box=NBox(area.right - width, area.y, width, height),
         order=1, joseki=m.joseki,
-        reason="三段構成の右上コマ（幅・高さともページの 1/3）")])
+        reason="三段構成の右上コマ（基本枠の右上に、幅・高さとも枠の 1/3）")])
     return m
 
 

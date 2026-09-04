@@ -16,9 +16,11 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import Polygon, Rect, new_project
+from manga_layout.layout import LayoutSettings
 from manga_layout.next_panel import (
     add_suggestion,
     context_for,
+    guide_frame,
     is_rectangular,
     reading_order,
     suggestions,
@@ -187,6 +189,38 @@ class TestSuggestions:
         project, page = page_with(*band(0.06, 0.28))
         text = suggestions(project, page)[0].text()
         assert "/" in text or text
+
+
+class TestGuideFrame:
+    """基本枠（`LayoutSettings.margin` の内側）。**空白ページの置き場所に効く。**"""
+
+    def test_pxの余白は縦横で違う比になる(self):
+        # A4 は縦長なので、同じ 89px でも横 0.072・縦 0.051。
+        # **換算せずに1つの値を使うと、枠からはみ出す**
+        _project, page = page_with()
+        frame = guide_frame(page, 89.0)
+        assert frame.x == pytest.approx(89.0 / PAGE_W)
+        assert frame.y == pytest.approx(89.0 / PAGE_H)
+        assert frame.right == pytest.approx(1.0 - 89.0 / PAGE_W)
+        assert frame.bottom == pytest.approx(1.0 - 89.0 / PAGE_H)
+
+    def test_余白が無ければ枠も無い(self):
+        _project, page = page_with()
+        assert guide_frame(page, 0.0) is None
+
+    def test_空白ページの提案は基本枠にぴったり付く(self):
+        margin = LayoutSettings().margin
+        project, page = page_with()
+        rect = suggestions(project, page, margin=margin)[0].rects[0]
+        assert rect.y == pytest.approx(margin)                      # 枠の上辺
+        assert rect.right == pytest.approx(PAGE_W - margin)         # 枠の右辺
+        assert rect.bottom <= PAGE_H - margin + 0.5                 # 枠の下辺より内側
+
+    def test_余白を渡さなければ枠に合わせない(self):
+        # 既定の余白で置く。**枠を知らないのだから、合わせようがない**
+        project, page = page_with()
+        rect = suggestions(project, page)[0].rects[0]
+        assert rect.y < LayoutSettings().margin
 
 
 class TestAddSuggestion:
