@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import Polygon, Rect, new_project
-from manga_layout.ui import EditorState
+from manga_layout.ui import EditorState, MainWindow
 
 PAGE_W, PAGE_H = 1240.0, 1754.0
 
@@ -101,6 +101,21 @@ class TestRepeatedPress:
         editor.lock_all_panels()
         editor.suggest_next_panel()
         assert len(editor.page.panels) > count
+
+
+class TestShortcut:
+    def test_キーはN(self, qapp):
+        # **押すたびに次の案へ切り替える操作**なので、1打で繰り返せるキーにしてある。
+        # `Alt+P` は「ページ(&P)」メニューが使っていて割り当てられない
+        window = MainWindow()
+        try:
+            keys = [
+                s.toString()
+                for s in window.panel_menu.suggest_action.shortcuts()
+            ]
+            assert keys == ["N"]
+        finally:
+            window.close()
 
 
 class TestRefusal:
