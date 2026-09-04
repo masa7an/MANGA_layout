@@ -18,6 +18,7 @@ import pytest
 from manga_layout import Polygon, Rect, new_project
 from manga_layout.layout import LayoutSettings
 from manga_layout.next_panel import (
+    BLEED_OVERFLOW,
     add_suggestion,
     context_for,
     guide_frame,
@@ -232,18 +233,29 @@ class TestGuideFrame:
                 assert rect.right <= PAGE_W - margin + 0.5
                 assert rect.bottom <= PAGE_H - margin + 0.5
 
-    def test_断ち切りの案は上だけページの外へ出る(self):
-        # **端ちょうどで止めない。** 断裁のずれで白い筋が出る
+    def test_断ち切りの案は上と右がページの外へ出る(self):
+        # **端ちょうどで止めない。** 断裁のずれで白い筋が出る。
+        # 越える量は線が出ない分だけでよく、**多いほど良いものではない**
         margin = LayoutSettings().margin
         project, page = page_with()
         rect = next(
             s for s in suggestions(project, page, margin=margin)
             if "断ち切り" in s.label
         ).rects[0]
-        assert rect.y < 0                                  # 上はページの外
-        assert rect.x > 0                                  # 左右と下は中
-        assert rect.right <= PAGE_W - margin + 0.5
+        assert rect.y == pytest.approx(-BLEED_OVERFLOW)
+        assert rect.right == pytest.approx(PAGE_W + BLEED_OVERFLOW)
+        assert rect.x > 0                                  # 左と下は紙の中
         assert rect.bottom <= PAGE_H - margin + 0.5
+
+    def test_紙に残るのはページの右半分(self):
+        # 越えた分は切り落とされる。**残る側が半分**になるように左辺を取る
+        margin = LayoutSettings().margin
+        project, page = page_with()
+        rect = next(
+            s for s in suggestions(project, page, margin=margin)
+            if "断ち切り" in s.label
+        ).rects[0]
+        assert PAGE_W - rect.x == pytest.approx(PAGE_W / 2)
 
     def test_雛形は最後に出す(self):
         margin = LayoutSettings().margin

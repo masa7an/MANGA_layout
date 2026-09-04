@@ -21,6 +21,11 @@ from .geometry import Rect
 from .joseki import NBox, PageContext, PreviousPage, match_all, proposals
 from .model import Page, Panel, Project
 
+# 断ち切りでページの端を越える量（px）。**線が出ない分だけあればよい。**
+# 多く出しても仕上がりは変わらず、画面では紙からはみ出して見えるだけになる
+BLEED_OVERFLOW = 10.0
+
+
 # --------------------------------------------------------------------------
 # 読み順
 # --------------------------------------------------------------------------
@@ -173,6 +178,8 @@ def context_for(
         frame=guide_frame(page, margin),
         gutter_x=gutter / size.w if gutter > 0 else None,
         gutter_y=gutter / size.h if gutter > 0 else None,
+        bleed_x=BLEED_OVERFLOW / size.w,
+        bleed_y=BLEED_OVERFLOW / size.h,
     )
 
 

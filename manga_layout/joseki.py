@@ -129,6 +129,9 @@ class PageContext:
     # （基本枠と同じ理由）。分からなければ None で、既定値を使う
     gutter_x: float | None = None
     gutter_y: float | None = None
+    # 断ち切りでページの端を越える量。**こちらも横と縦で別**（理由は隙間と同じ）
+    bleed_x: float | None = None
+    bleed_y: float | None = None
 
 
 # 何も分からないときのページの文脈。**中身が無く、書き換えられない**ので使い回してよい
@@ -707,12 +710,16 @@ OPENING_PANEL_RATIO = 1.0 / 3.0   # 高さは置いてよい範囲の 1/3（三�
 # 「幅いっぱい」は、横帯で始める描き出し
 OPENING_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3), (1, 1))
 
-# 上を断ち切る描き出し。**ページの端を越えて伸ばす。**
+# 上と右を断ち切る描き出し。**ページの端を越えて伸ばす。**
 # 端ちょうどで止めると、断裁のずれで白い筋が出る。越えた分は切り落とされる。
-# 幅は 1/2（半分ほどの大きさが、断ち切りの見せ場として収まりがよい）。
-# **越える量は手で置いた値。** この道具は仕上がり寸法しか持たないので、借りる手本が無い
+#
+# **越える量は「線が出ない」だけあればよく、多いほど良いものではない。**
+# 呼ぶ側が px で渡す（→ `PageContext.bleed_x` / `bleed_y`）。渡されないときの既定は、
+# ページ比 0.008（A4 の横で 10px ほど）。
+#
+# 幅は、**紙に残る側が半分**になるように取る（左端は「幅 1/2」の案と同じ位置）
 OPENING_BLEED_SHARE = (1, 2)
-OPENING_BLEED_OVERFLOW = 0.02
+OPENING_BLEED_OVERFLOW = 0.008
 
 # 4コマ×2列の雛形。**8コマまとめて1つの案。**
 # 読む順は右列を上から下、続いて左列を上から下（→ 縦コマ列の左右反復と同じ）
@@ -751,25 +758,29 @@ def match_blank_page_opening(boxes: Sequence[NBox],
                 reason="三段構成の右上コマ（置いてよい範囲の右上に、高さは枠の 1/3）")],
             label=_width_label(num, den),
         )
-    m.add_plan(_opening_bleed(area, height, m.joseki), label="上を断ち切り（幅 1/2）")
+    m.add_plan(_opening_bleed(area, height, ctx, m.joseki),
+               label="上と右を断ち切り（幅 1/2）")
     # **雛形は最後に置く。** 8コマまとめて敷く案なので、1コマずつの案を見てから
     m.add_plan(_opening_grid(area, ctx, m.joseki), label="4コマ×2列")
     return m
 
 
-def _opening_bleed(area: NBox, height: float, joseki: str) -> list[Candidate]:
-    """上をページの外まで伸ばした、断ち切りの描き出し。
+def _opening_bleed(area: NBox, height: float, ctx: PageContext,
+                   joseki: str) -> list[Candidate]:
+    """上と右をページの外まで伸ばした、断ち切りの描き出し。
 
-    **下辺は他の案と同じ位置。** 上だけが伸びるので、他の案と見比べやすい。
+    **左辺と下辺は「幅 1/2」の案と同じ位置。** 外へ出るのは上と右だけなので、
+    他の案と見比べられるし、**紙に残る部分はページの右半分**になる。
     """
+    over_x = ctx.bleed_x if ctx.bleed_x is not None else OPENING_BLEED_OVERFLOW
+    over_y = ctx.bleed_y if ctx.bleed_y is not None else OPENING_BLEED_OVERFLOW
     num, den = OPENING_BLEED_SHARE
-    width = area.w * num / den
-    bottom = area.y + height
-    top = -OPENING_BLEED_OVERFLOW
+    left = area.right - area.w * num / den
+    top = -over_y
     return [Candidate(
-        box=NBox(area.right - width, top, width, bottom - top),
+        box=NBox(left, top, 1.0 + over_x - left, area.y + height - top),
         order=1, joseki=joseki,
-        reason="上をページの外まで伸ばした断ち切りコマ（下辺は他の案と同じ）")]
+        reason="上と右をページの外まで伸ばした断ち切りコマ（左辺と下辺は他の案と同じ）")]
 
 
 def _opening_grid(area: NBox, ctx: PageContext, joseki: str) -> list[Candidate]:
