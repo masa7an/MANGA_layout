@@ -125,6 +125,10 @@ class PageContext:
     # 既にコマがあるページなら、余白はそのコマから借りられる（→ `borrow_frame`）が、
     # 1枚も無いページには手本が無い。分からなければ None
     frame: NBox | None = None
+    # コマとコマの隙間。**横と縦で別に持つ。** px の隙間を正規化すると縦横で値が変わる
+    # （基本枠と同じ理由）。分からなければ None で、既定値を使う
+    gutter_x: float | None = None
+    gutter_y: float | None = None
 
 
 # 何も分からないときのページの文脈。**中身が無く、書き換えられない**ので使い回してよい
@@ -702,6 +706,11 @@ OPENING_PANEL_RATIO = 1.0 / 3.0   # 高さは置いてよい範囲の 1/3（三�
 # 空白ページには手本が何も無く、**どれが良いかを決める材料がそもそも無い。**
 # 「幅いっぱい」は、横帯で始める描き出し
 OPENING_WIDTH_SHARES = ((1, 3), (1, 2), (2, 3), (1, 1))
+
+# 4コマ×2列の雛形。**8コマまとめて1つの案。**
+# 読む順は右列を上から下、続いて左列を上から下（→ 縦コマ列の左右反復と同じ）
+OPENING_GRID_ROWS = 4
+OPENING_GRID_COLUMNS = 2
 # 空白ページの余白。**手本が無いので、材料の真ん中に置くしかない。**
 # 断ち切りの無いページの余白は実測で二分している（0.006〜0.031 と 0.088〜0.120）。
 # **中間の値。材料が二分しているので、決め手が無い。**
@@ -735,7 +744,32 @@ def match_blank_page_opening(boxes: Sequence[NBox],
                 reason="三段構成の右上コマ（置いてよい範囲の右上に、高さは枠の 1/3）")],
             label=_width_label(num, den),
         )
+    m.add_plan(_opening_grid(area, ctx, m.joseki), label="4コマ×2列")
     return m
+
+
+def _opening_grid(area: NBox, ctx: PageContext, joseki: str) -> list[Candidate]:
+    """4コマ×2列の8コマを、置いてよい範囲いっぱいに敷く。
+
+    **読む順は右列を上から下、続いて左列を上から下。** 4コマのページはそう読む
+    （慣習で決まっている）ので、番号もその順で振る。
+    """
+    gutter_x = ctx.gutter_x if ctx.gutter_x is not None else DEFAULT_GUTTER
+    gutter_y = ctx.gutter_y if ctx.gutter_y is not None else DEFAULT_GUTTER
+    width = (area.w - gutter_x * (OPENING_GRID_COLUMNS - 1)) / OPENING_GRID_COLUMNS
+    height = (area.h - gutter_y * (OPENING_GRID_ROWS - 1)) / OPENING_GRID_ROWS
+
+    plan = []
+    order = 1
+    for column in range(OPENING_GRID_COLUMNS):          # 右の列から左の列へ
+        x = area.right - width - column * (width + gutter_x)
+        for row in range(OPENING_GRID_ROWS):            # 上から下へ
+            plan.append(Candidate(
+                box=NBox(x, area.y + row * (height + gutter_y), width, height),
+                order=order, joseki=joseki,
+                reason=f"4コマ×2列の雛形（{column + 1}列目 {row + 1}段目）"))
+            order += 1
+    return plan
 
 
 # 定石表。**9つ目まで実装済み。** 残りは名前だけ置いてある（設計文書と対応）。

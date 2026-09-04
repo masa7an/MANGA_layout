@@ -203,12 +203,40 @@ class TestBlankPageOpening:
     def test_幅ちがいの案を並べる(self):
         # **空白ページには手本が何も無い。** どれが良いかを決める材料がそもそも無い
         m = hit([], "blank_page_opening")
-        assert [p.label for p in m.plans] == ["幅 1/3", "幅 1/2", "幅 2/3", "幅 いっぱい"]
+        assert [p.label for p in m.plans] == [
+            "幅 1/3", "幅 1/2", "幅 2/3", "幅 いっぱい", "4コマ×2列",
+        ]
+
+    def test_4コマ2列の雛形も案に入る(self):
+        m = hit([], "blank_page_opening")
+        grid = next(p for p in m.plans if p.label == "4コマ×2列")
+        assert len(grid.candidates) == 8
+
+    def test_雛形の読み順は右列を上から下(self):
+        # **4コマのページはそう読む。** 番号もその順で振る
+        m = hit([], "blank_page_opening")
+        grid = next(p for p in m.plans if p.label == "4コマ×2列")
+        boxes = [c.box for c in grid.candidates]
+        assert all(boxes[i].x == boxes[0].x for i in range(4))       # 前半は同じ列
+        assert all(boxes[i].x == boxes[4].x for i in range(4, 8))    # 後半も同じ列
+        assert boxes[0].x > boxes[4].x                               # 右の列が先
+        assert [b.y for b in boxes[:4]] == sorted(b.y for b in boxes[:4])
+
+    def test_雛形は枠いっぱいに敷く(self):
+        frame = NBox(0.07, 0.05, 0.86, 0.90)
+        m = hit([], "blank_page_opening", PageContext(frame=frame, gutter_x=0.03, gutter_y=0.02))
+        boxes = [c.box for p in m.plans if p.label == "4コマ×2列" for c in p.candidates]
+        assert min(b.x for b in boxes) == pytest.approx(frame.x)
+        assert max(b.right for b in boxes) == pytest.approx(frame.right)
+        assert min(b.y for b in boxes) == pytest.approx(frame.y)
+        assert max(b.bottom for b in boxes) == pytest.approx(frame.bottom)
 
     def test_どの案も右上に付く(self):
         frame = NBox(0.07, 0.05, 0.86, 0.90)
         m = hit([], "blank_page_opening", PageContext(frame=frame))
         for plan in m.plans:
+            if plan.label == "4コマ×2列":
+                continue        # 雛形は右上の1コマではなく、枠いっぱいに敷く
             box = plan.candidates[0].box
             assert box.y == pytest.approx(frame.y)         # 枠の上辺
             assert box.right == pytest.approx(frame.right)  # 枠の右辺

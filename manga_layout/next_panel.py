@@ -152,15 +152,27 @@ def guide_frame(page: Page, margin: float) -> NBox | None:
     return NBox(x, y, 1.0 - x * 2, 1.0 - y * 2)
 
 
-def context_for(project: Project, page: Page, margin: float = 0.0) -> PageContext:
-    """ページ番号・直前のページ・基本枠。**見開きの定石は直前のページが無いと成立しない。**"""
+def context_for(
+    project: Project, page: Page, margin: float = 0.0, gutter: float = 0.0
+) -> PageContext:
+    """ページ番号・直前のページ・基本枠・コマの隙間。
+
+    **見開きの定石は直前のページが無いと成立しない。**
+    `margin` と `gutter` は px（`LayoutSettings`）。**縦横で別の比になる**ので、
+    ここでそれぞれ換算して渡す。
+    """
     index = project.pages.index(page)
     previous = None
     if index > 0:
         before = project.pages[index - 1]
         previous = PreviousPage(number=index, boxes=to_boxes(before))
+    size = page.size
     return PageContext(
-        number=index + 1, previous=previous, frame=guide_frame(page, margin)
+        number=index + 1,
+        previous=previous,
+        frame=guide_frame(page, margin),
+        gutter_x=gutter / size.w if gutter > 0 else None,
+        gutter_y=gutter / size.h if gutter > 0 else None,
     )
 
 
@@ -187,7 +199,11 @@ class Suggestion:
 
 
 def suggestions(
-    project: Project, page: Page, ignore: Collection[str] = (), margin: float = 0.0
+    project: Project,
+    page: Page,
+    ignore: Collection[str] = (),
+    margin: float = 0.0,
+    gutter: float = 0.0,
 ) -> list[Suggestion]:
     """そのページへの提案を、**出す順に全部**返す。
 
@@ -195,12 +211,13 @@ def suggestions(
     【提案】を押すたびに、この並びを順繰りに見せる。
 
     `ignore` は「無かったことにするコマ」の id。**直前の提案を差し替えるときに使う。**
-    `margin` は基本枠の余白（px。`LayoutSettings.margin`）。空白ページの置き場所に効く。
+    `margin`・`gutter` は px（`LayoutSettings`）。**空白ページの置き場所に効く**
+    （既にコマがあるページでは、そのコマから借りるので使わない）。
     """
     if not supported(page):
         return []
     boxes = to_boxes(page, ignore)
-    ctx = context_for(project, page, margin)
+    ctx = context_for(project, page, margin, gutter)
     return [
         Suggestion(
             title=match.title,

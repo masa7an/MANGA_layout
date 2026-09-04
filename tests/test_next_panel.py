@@ -227,6 +227,20 @@ class TestGuideFrame:
             assert rect.right <= PAGE_W - margin + 0.5
             assert rect.bottom <= PAGE_H - margin + 0.5
 
+    def test_4コマの雛形を置くと列優先で読まれる(self):
+        # **提案した順と、置いたあとに読み直した順が一致する。**
+        # 食い違うと、次の提案が別のコマを「最後のコマ」とみなしてしまう
+        settings = LayoutSettings()
+        project, page = page_with()
+        grid = next(
+            s
+            for s in suggestions(project, page, margin=settings.margin,
+                                 gutter=settings.gutter)
+            if s.label == "4コマ×2列"
+        )
+        added = add_suggestion(project, page, grid)
+        assert reading_order(page.panels) == added
+
     def test_余白を渡さなければ枠に合わせない(self):
         # 既定の余白で置く。**枠を知らないのだから、合わせようがない**
         project, page = page_with()
