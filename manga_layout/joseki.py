@@ -356,7 +356,7 @@ class Frame:
     gutter: float
 
 
-def borrow_frame(boxes: Sequence[NBox]) -> Frame:
+def borrow_frame(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEXT) -> Frame:
     column = sorted(boxes, key=lambda b: b.y)
     # **横に並んだコマ同士の「縦の間隔」は負になる。** 上下に離れている組だけを数える
     # （数えないと、横並びの2コマから -0.368 のような余白が出る）。
@@ -365,8 +365,19 @@ def borrow_frame(boxes: Sequence[NBox]) -> Frame:
     gutter = _median(gaps) if gaps else DEFAULT_GUTTER
     right = max(b.right for b in boxes)
     top = min(b.y for b in boxes)
-    return Frame(left=max(0.0, 1.0 - right), right=right,
-                 top=top, bottom=min(1.0, 1.0 - top), gutter=gutter)
+    left, bottom = max(0.0, 1.0 - right), min(1.0, 1.0 - top)
+
+    # **断ち切りコマから余白は借りない。**
+    # 断ち切りはページの端まで（外まで）伸びているので、そこから借りると枠が
+    # ページいっぱいに広がり、**次のコマまで断ち切りになる。**
+    # 断ち切りが続くページは多くないので、置いてよい範囲が分かっているなら
+    # そこで挟み込む（分からなければ、これまでどおり借りた値のまま）
+    if ctx.frame is not None:
+        left = max(left, ctx.frame.x)
+        right = min(right, ctx.frame.right)
+        top = max(top, ctx.frame.y)
+        bottom = min(bottom, ctx.frame.bottom)
+    return Frame(left=left, right=right, top=top, bottom=bottom, gutter=gutter)
 
 
 def top_band(boxes: Sequence[NBox]) -> list[NBox]:
@@ -413,7 +424,7 @@ def match_left_half_two_even(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEX
     #   左の余白  = 右の余白と同じとみなす
     #   下の余白  = 上の余白と同じとみなす
     #   コマ間    = 既存の縦の間隔の中央値。測れないときだけ既定値
-    f = borrow_frame(boxes)
+    f = borrow_frame(boxes, ctx)
     gutter, top = f.gutter, f.top
     x = f.left
     width = (min(b.x for b in boxes) - gutter) - x
@@ -499,13 +510,14 @@ def _propose_band_right(m: Match, boxes: Sequence[NBox], f: Frame,
                    label=_width_label(num, den))
 
 
-def _propose_bottom_right(m: Match, boxes: Sequence[NBox], lowest: float) -> None:
+def _propose_bottom_right(m: Match, boxes: Sequence[NBox], lowest: float,
+                          ctx: PageContext) -> None:
     """残った下の領域の右 1/3 に1コマ置く。**定石4と定石8で中身を共有する。**
 
     2つは提案の作り方がまったく同じで、**断ち切りの有無だけが違う。**
     別々に書くと、片方だけ直して食い違う。
     """
-    f = borrow_frame(boxes)
+    f = borrow_frame(boxes, ctx)
     top = lowest + f.gutter
     height = f.bottom - top
     _propose_band_right(m, boxes, f, top, height, "下の帯の右コマ")
@@ -534,7 +546,7 @@ def match_three_band_middle_right(boxes: Sequence[NBox], ctx: PageContext = NO_C
     m.checks.append(Check("描かれているのが1段だけ", only_one_band,
                           f"{1 if only_one_band else 2}段目まで描かれている"))
 
-    f = borrow_frame(boxes)
+    f = borrow_frame(boxes, ctx)
     lowest = max(b.bottom for b in boxes)
     remaining = remaining_ratio(f, lowest)
     m.checks.append(Check("下に空きがある", remaining > 0, f"残り {remaining:.1%}"))
@@ -579,11 +591,11 @@ def match_bleed_top_bottom_right(boxes: Sequence[NBox], ctx: PageContext = NO_CO
 
     lowest = max(b.bottom for b in boxes)
     m.checks.append(Check("下に空きがある", True,
-                          f"残り {remaining_ratio(borrow_frame(boxes), lowest):.1%}"))
+                          f"残り {remaining_ratio(borrow_frame(boxes, ctx), lowest):.1%}"))
     if not bleeding:
         return m
 
-    _propose_bottom_right(m, boxes, lowest)
+    _propose_bottom_right(m, boxes, lowest, ctx)
     return m
 
 
@@ -619,7 +631,7 @@ def match_narrow_top_beside_left(boxes: Sequence[NBox],
     below_ok = empty_below >= MIN_ROOM
     m.checks.append(Check("下に空きがある", below_ok, f"空き {empty_below:.1%}"))
 
-    f = borrow_frame(boxes)
+    f = borrow_frame(boxes, ctx)
     x = top_right.x - f.gutter - top_right.w
     proposed = [NBox(x, top_right.y, top_right.w, top_right.h)]
     fits = x >= f.left - 1e-6
@@ -833,11 +845,11 @@ def match_two_tier_bottom_right(boxes: Sequence[NBox],
 
     lowest = max(b.bottom for b in boxes)
     m.checks.append(Check("下に空きがある", True,
-                          f"残り {remaining_ratio(borrow_frame(boxes), lowest):.1%}"))
+                          f"残り {remaining_ratio(borrow_frame(boxes, ctx), lowest):.1%}"))
     if bleeding:
         return m
 
-    _propose_bottom_right(m, boxes, lowest)
+    _propose_bottom_right(m, boxes, lowest, ctx)
     return m
 
 
@@ -873,10 +885,12 @@ def match_fill_band_left(boxes: Sequence[NBox],
         m.checks.append(Check("コマが検出されている", False, "0個"))
         return m
 
-    f = borrow_frame(boxes)
+    f = borrow_frame(boxes, ctx)
     band = bottom_band(boxes)
-    top = min(b.y for b in band)
-    height = max(b.bottom for b in band) - top
+    # **段の上下も置いてよい範囲で挟む。** 段の右コマが断ち切りだと、
+    # 合わせただけで左隣まで紙の外へ出る（断ち切りが続くページは多くない）
+    top = max(min(b.y for b in band), f.top)
+    height = min(max(b.bottom for b in band), f.bottom) - top
     right_edge = min(b.x for b in band) - f.gutter
     available = right_edge - f.left
 

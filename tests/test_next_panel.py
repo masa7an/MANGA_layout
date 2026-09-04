@@ -257,6 +257,20 @@ class TestGuideFrame:
         ).rects[0]
         assert PAGE_W - rect.x == pytest.approx(PAGE_W / 2)
 
+    def test_断ち切りコマの次の提案は枠の中に収める(self):
+        # **断ち切りから余白を借りない。** 借りると枠がページいっぱいに広がり、
+        # 次のコマまで断ち切りになる（断ち切りが続くページは多くない）
+        margin = LayoutSettings().margin
+        project, page = page_with(Rect(620.0, -10.0, 630.0, 624.3))   # 上と右を断ち切り
+        found = suggestions(project, page, margin=margin, gutter=LayoutSettings().gutter)
+        assert found
+        for suggestion in found:
+            for rect in suggestion.rects:
+                assert rect.x >= margin - 0.5
+                assert rect.y >= margin - 0.5
+                assert rect.right <= PAGE_W - margin + 0.5
+                assert rect.bottom <= PAGE_H - margin + 0.5
+
     def test_雛形は最後に出す(self):
         margin = LayoutSettings().margin
         project, page = page_with()
