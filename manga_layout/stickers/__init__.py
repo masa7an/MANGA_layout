@@ -25,7 +25,7 @@ STICKER_EXCLAIM_QUESTION = "exclaim_question"
 # 増やすのはよいが既存の値を変えてはいけない（既にある作品が指している）。
 #
 # 画面の呼び名はここに持たない。呼び名は画面の都合で変わるものなので、
-# `ui.state.STICKER_KIND_LABELS` に置いて保存形式と切り離してある
+# `ui.state_text.STICKER_KIND_LABELS` に置いて保存形式と切り離してある
 # （フキダシの `BALLOON_STYLE_LABELS` と同じ形 → 6.4）
 STICKER_KINDS = (STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION)
 

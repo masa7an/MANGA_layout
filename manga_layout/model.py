@@ -914,6 +914,8 @@ class StickerObject(SceneObject):
 #     manga_layout/ui/state.py
 #         - `selected_〇〇` プロパティ
 #         - `object_label`（削除・複製で出す呼び名）
+#     manga_layout/ui/state_text.py
+#         - `EditorState.add_〇〇`（画面から作る口。`add_sticker` に倣う）
 #     manga_layout/ui/canvas.py
 #         - `_pick_at`（クリックで拾う優先順位）
 #         - `_apply_move` / `_apply_resize`（確定時の型ごとの分岐）

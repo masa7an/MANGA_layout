@@ -570,7 +570,7 @@ class TestImageAssets:
         書かれないまま project.json だけができ、参照が切れていた
         （2026-08-08 に発見）。
         """
-        from manga_layout.ui import state as state_module
+        from manga_layout.ui import state_file as state_module
 
         ref = window_with_image.state.selected_image.asset
         first = tmp_path / "元"
@@ -590,7 +590,7 @@ class TestImageAssets:
     ):
         """↑の続き。控えが残っていれば、次の保存でちゃんと書かれる。"""
         from manga_layout import AssetStore, find_missing_assets
-        from manga_layout.ui import state as state_module
+        from manga_layout.ui import state_file as state_module
 
         ref = window_with_image.state.selected_image.asset
         first = tmp_path / "元"
@@ -1720,7 +1720,7 @@ class TestAutosave:
         def 書けない(*args, **kwargs):
             raise OSError("書き込めません")
 
-        monkeypatch.setattr("manga_layout.ui.state.write_autosave", 書けない)
+        monkeypatch.setattr("manga_layout.ui.state_file.write_autosave", 書けない)
 
         messages = []
         window.state.message.connect(messages.append)

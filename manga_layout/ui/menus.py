@@ -49,10 +49,9 @@ from .state import (
     TOOL_TEXT,
     TOOL_TONE_AREA,
     TOOL_WAND,
-    WAND_TOLERANCE_MAX,
-    WAND_TOLERANCE_MIN,
     object_label,
 )
+from .state_image import WAND_TOLERANCE_MAX, WAND_TOLERANCE_MIN
 
 if TYPE_CHECKING:
     from .window import MainWindow
