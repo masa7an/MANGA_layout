@@ -506,8 +506,27 @@ class ProjectIO:
         # （→ PySide6の落とし穴.md 6）
         dialog.setAutoReset(False)
 
+        # **PSD だけは、押した直後に窓を出す**（2026-09-05 に追加）。
+        # `setMinimumDuration` の 500ms は Qt がイベントを処理する隙が
+        # ないと数えられないが、この関数が `processEvents` を呼ぶのは
+        # 1ページ書き終えた後だけなので、**1ページ目のあいだは窓が1つも
+        # 出ない**（実測。→ PySide6の落とし穴.md 9）。PSD は1ページ
+        # 1.0 秒（→ 要件定義 6.28）で、画像の多いページならもっとかかる。
+        # 押した直後のいちばん「効いたのか」と思う時間帯が、そのまま
+        # 無反応になっていた。
+        #
+        # **PNG / JPG には出さない。** 1ページ 0.2 秒なので隙が毎秒5回
+        # でき、500ms の見積もりがそのとおりに働く。「一瞬で終わる
+        # 書き出しでは窓を出さない」（→ 要件定義 6.7）を保つほうを採る。
+        # **1枚が極端に大きい PNG では同じ穴が残る**が、そこは倍率で
+        # 決まるので、形式で分けるこの切り方では拾えない
+        if self.export_format in LAYERED_FORMATS:
+            dialog.setLabelText(f"書き出しの準備をしています…（全 {len(indexes)} ページ）")
+            dialog.forceShow()
+            QApplication.processEvents()
+
         def on_page(done: int, total: int) -> bool:
-            dialog.setLabelText(f"書き出しています… ({done}/{total})")
+            dialog.setLabelText(f"書き出しています…（{done}/{total} ページ）")
             dialog.setValue(done)
             QApplication.processEvents()
             return not dialog.wasCanceled()
@@ -553,12 +572,41 @@ class ProjectIO:
             return False
 
         where = written[0].name if len(written) == 1 else f"{len(written)} 枚"
-        self._state.message.emit(
-            f"{dest} に {where} を書き出しました"
+        note = (
             f"（{self.export_format}・{scale_label(self.export_scale)}・"
             f"{self._exported_px_note(indexes)}）"
         )
+        self._state.message.emit(f"{dest} に {where} を書き出しました{note}")
+
+        # **時間のかかる書き出しだけ、消えない窓でも知らせる**（2026-09-05
+        # に追加）。画面下の1行は6秒で消えるので（→ `window` の
+        # `showMessage`）、数分かかる書き出しのあいだに席を立つと、
+        # **終わったことを示すものが何も残らない**。
+        #
+        # **1枚だけの PNG には出さない。** 書き出しの主動線（表示中の
+        # ページ1枚）で、一瞬で終わる操作にクリックを1回足すことになる。
+        # 「一瞬で終わる書き出しでは窓を出さない」（→ 要件定義 6.7）と
+        # 同じ線引きを、始まりだけでなく終わりにも当てる
+        if self._takes_a_while(indexes):
+            what = (
+                f"{written[0].name} を書き出しました。"
+                if len(written) == 1
+                else f"{len(written)} 枚を書き出しました。"
+            )
+            QMessageBox.information(
+                self._window, "書き出しました", f"{what}\n\n{dest}\n{note}"
+            )
         return True
+
+    def _takes_a_while(self, indexes: list[int]) -> bool:
+        """待たされる書き出しか。完了を消えない窓でも出すかの判断に使う。
+
+        **時間そのものは測らない。** 測ってから決めると「速く終わった
+        ときだけ窓が出ない」ことになり、同じ操作の見え方が回ごとに
+        変わる。**押す前から分かる2つ**——PSD であること・複数ページで
+        あること——で決めれば、利用者は結果を予想できる。
+        """
+        return self.export_format in LAYERED_FORMATS or len(indexes) > 1
 
     def _exported_px_note(self, indexes: list[int]) -> str:
         """書き出した画素数を1行で言う。

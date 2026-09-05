@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtGui import QImage
-from PySide6.QtWidgets import QDialog, QMessageBox, QProgressDialog
+from PySide6.QtWidgets import QApplication, QDialog, QMessageBox, QProgressDialog
 
 from manga_layout import ExportError, ImageObject, Rect, Size
 from manga_layout.images import PREVIEW_MAX_PX
@@ -630,6 +630,101 @@ class Test画面からの書き出し:
         dest = export_dir_of(window.state)
         assert sorted(p.name for p in dest.iterdir()) == ["p01.png", "p02.png", "p03.png"]
 
+    def test_長い書き出しは完了を窓でも知らせる(self, window, monkeypatch):
+        """画面下の1行は6秒で消えるので、待たされた書き出しには窓も出す。
+
+        数分かかる書き出しのあいだに席を立つと、戻ったときに終わった
+        ことを示すものが残らなかった（本人の指摘 2026-09-05）。
+        """
+        window.add_page()
+        _accept_dialog(monkeypatch, all_pages=True)
+        shown: list[str] = []
+        monkeypatch.setattr(
+            QMessageBox, "information", lambda *a, **k: shown.append(a[2])
+        )
+
+        assert window.files.export_image()
+
+        assert len(shown) == 1
+        assert "2 枚" in shown[0]
+
+    def test_1枚だけのPNGでは完了の窓を出さない(self, window, monkeypatch):
+        """書き出しの主動線に、クリックを1回足さない（→ 要件定義 6.7）。"""
+        _accept_dialog(monkeypatch, all_pages=False)
+        shown: list[str] = []
+        monkeypatch.setattr(
+            QMessageBox, "information", lambda *a, **k: shown.append(a[2])
+        )
+
+        assert window.files.export_image()
+
+        assert shown == []
+        assert "書き出しました" in window.statusBar().currentMessage()
+
+    def test_PSDは1枚でも完了の窓を出す(self, window, monkeypatch):
+        """1ページでも 1.0 秒かかる（→ 要件定義 6.28）ので、一瞬ではない。"""
+        _accept_dialog(monkeypatch, all_pages=False, fmt="PSD")
+        monkeypatch.setattr(
+            "manga_layout.ui.project_io.export_psd_pages",
+            lambda state, indexes, dest, scale, on_page=None: [dest / "p01.psd"],
+        )
+        shown: list[str] = []
+        monkeypatch.setattr(
+            QMessageBox, "information", lambda *a, **k: shown.append(a[2])
+        )
+
+        assert window.files.export_image()
+
+        assert len(shown) == 1
+        assert "p01.psd" in shown[0]
+
+    def test_PSDは1ページ目を書く前に進捗窓を出す(self, window, monkeypatch):
+        """押した直後を無反応にしない（→ PySide6の落とし穴.md 9）。
+
+        `setMinimumDuration` の 500ms は Qt がイベントを処理する隙が
+        ないと数えられず、書き出しは1ページ書き終えるまで隙を作らない。
+        **1ページ目のあいだ、窓が1つも出ていなかった。**
+        """
+        _accept_dialog(monkeypatch, all_pages=False, fmt="PSD")
+        seen: list[bool] = []
+
+        def fake_psd(state, indexes, dest, scale, on_page=None):
+            # 1ページ目を書き始める時点で、窓が見えているか
+            seen.append(
+                any(
+                    isinstance(w, QProgressDialog) and w.isVisible()
+                    for w in QApplication.topLevelWidgets()
+                )
+            )
+            return [dest / "p01.psd"]
+
+        monkeypatch.setattr("manga_layout.ui.project_io.export_psd_pages", fake_psd)
+
+        assert window.files.export_image()
+        assert seen == [True]
+
+    def test_PNGでは進捗窓を先に出さない(self, window, monkeypatch):
+        """1ページ 0.2 秒なので、Qt の見積もり（500ms）がそのまま働く。
+
+        ここで窓を出すと、一瞬で終わる書き出しに窓が一瞬だけ出て消える。
+        """
+        _accept_dialog(monkeypatch, all_pages=False)
+        seen: list[bool] = []
+
+        def fake_png(state, indexes, dest, scale, fmt, quality, on_page=None):
+            seen.append(
+                any(
+                    isinstance(w, QProgressDialog) and w.isVisible()
+                    for w in QApplication.topLevelWidgets()
+                )
+            )
+            return [dest / "p01.png"]
+
+        monkeypatch.setattr("manga_layout.ui.project_io.export_pages", fake_png)
+
+        assert window.files.export_image()
+        assert seen == [False]
+
     def test_完了メッセージの画素数は書き出したページのもの(self, window, monkeypatch):
         """以前は表示中のページの寸法で決めていた。
 
@@ -731,7 +826,14 @@ class Test画面からの書き出し:
 def _accept_dialog(
     monkeypatch, *, all_pages: bool, scale: float = 0.5, fmt: str = DEFAULT_FORMAT
 ) -> None:
-    """設定の窓を出さずに、選んだことにして進める。"""
+    """設定の窓を出さずに、選んだことにして進める。
+
+    **完了の窓も止める。** 複数ページ・PSD では書き終えたあとに
+    `QMessageBox.information` が出る（→ `project_io._takes_a_while`）。
+    止めないと、押す人のいないテストがそこで待ち続ける。窓が出ること
+    自体の確認は `test_長い書き出しは完了を窓でも知らせる` で別に行う。
+    """
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     monkeypatch.setattr(
         "manga_layout.ui.project_io.ExportDialog.exec",
         lambda self: QDialog.DialogCode.Accepted,
