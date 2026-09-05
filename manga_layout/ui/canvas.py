@@ -305,15 +305,17 @@ TEXT_EDIT_HINT = f"文字を入力してください。{_TEXT_EDIT_KEYS}"
 TEXT_EDIT_HINT_MAX_CHARS = 50
 
 # **縦書きのセリフでも、入力欄は横書きで出る。** Qt に縦書きの入力欄が
-# 無いため（`QTextOption` にあるのは左右の向きだけ）。黙っていると
-# 「縦書きにしたのに横書きで入る」と受け取られるので、先に断っておく。
+# 無いため（`QTextOption` にあるのは左右の向きだけ）。ただし枠の中には
+# 確定後の姿を実時間で出す（→ `render._draw_text_editing`）ので、
+# 案内は「横書きで入る」の断りではなく**どこを見れば仕上がりが分かるか**
+# を指す形にしてある。
 #
 # 「文字を入力してください」を**置き換える**形にしてあり、足していない。
 # 状態表示のうち案内に使えるのは約 560px しかなく（右の常設表示が 696px を
 # 占める）、横書き用の案内 445px に足すと **`Ctrl+Enter で確定` 以降が
 # 切れて消える**（2026-08-03 に実測）。操作キーのほうが失えない。
 # 入力に入った時点で「入力してください」は自明なので、そこを説明に使う
-TEXT_EDIT_HINT_VERTICAL = f"確定すると縦書きになります。{_TEXT_EDIT_KEYS}"
+TEXT_EDIT_HINT_VERTICAL = f"縦書きの見た目は枠に出ます。{_TEXT_EDIT_KEYS}"
 
 _HANDLE_CURSORS = {
     "nw": Qt.CursorShape.SizeFDiagCursor,
@@ -866,6 +868,9 @@ class PageScene(QGraphicsScene):
         self.split_preview: tuple[tuple[float, float], tuple[float, float]] | None = None
         # その場編集中のセリフ。編集中は下地を描かない
         self.editing_text_id: str | None = None
+        # 入力欄にいま入っている文字列。縦書きの下見に使う
+        # （→ `render.DragPreview.editing_text_content`）
+        self.editing_text_content: str | None = None
         self.update_scene_rect()
 
     # -- ドラッグの下見 ------------------------------------------------------
@@ -922,6 +927,7 @@ class PageScene(QGraphicsScene):
             focus=self.focus_preview,
             flow=self.flow_preview,
             editing_text_id=self.editing_text_id,
+            editing_text_content=self.editing_text_content,
         )
 
     def selection_rotation(self) -> float:
@@ -1460,18 +1466,98 @@ class ConfirmHintItem(QGraphicsItem):
         )
 
 
+class ModeLabelItem(QGraphicsItem):
+    """入力欄に添える【テキスト入力モード】の札。
+
+    **これから打つ書体・大きさ・太さ、そのままで描く。** 札そのものが
+    見本を兼ねる。空のセリフを打ち始めるとき、入力欄には1文字も無いので
+    「どの書体の何 px で入るのか」が画面のどこにも出ていなかった。
+    状態表示に書体名を文字で足す手もあるが、**名前を読んでも大きさは
+    分からない**（本人の指摘 2026-09-05）。
+
+    `ConfirmHintItem` と違い、**表示倍率を無視しない**（`ItemIgnores-
+    Transformations` を付けない）。見本である以上、拡大すれば札も同じだけ
+    大きくならないと「実際の大きさ」を示したことにならない。同じ理由で
+    間隔も余白も px 固定にせず、字の高さに対する割合で決める。
+
+    押しても自分では受け取らない（`NoButton`）。クリックは下の画面へ
+    素通りし、「画面を触ったら確定」という既にある道に乗る——これは
+    `ConfirmHintItem` と同じ線引き。
+    """
+
+    LABEL = "【テキスト入力モード】"
+
+    # 字の高さに対する割合。px 固定にすると、大きい書体で札だけ詰まって見える
+    PADDING_X_RATIO = 0.25
+    PADDING_Y_RATIO = 0.12
+    GAP_RATIO = 0.35
+
+    BG = QColor("#E3F2FD")
+    BORDER = QColor("#1E88E5")
+    FG = QColor("#0D47A1")
+
+    def __init__(self, parent: QGraphicsItem, font: QFont):
+        super().__init__(parent)
+        self._font = QFont(font)
+        metrics = QFontMetricsF(self._font)
+
+        line = metrics.height()
+        pad_x = line * self.PADDING_X_RATIO
+        pad_y = line * self.PADDING_Y_RATIO
+        self._gap = line * self.GAP_RATIO
+        self._w = metrics.horizontalAdvance(self.LABEL) + pad_x * 2
+        self._h = line + pad_y * 2
+        self._text_pos = QPointF(pad_x, pad_y + metrics.ascent())
+
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setZValue(1001)  # 入力欄（1000）より上
+
+    def total_height(self) -> float:
+        """札が要する高さ。**上下の間隔を含む。**
+
+        縦書きのときに入力欄をどれだけ下げるかは、この値で決まる
+        （→ `TextEditorItem._place_in`）。札の高さだけを返すと、呼ぶ側が
+        間隔を足し忘れて枠と札がくっつく。
+        """
+        return self._h + self._gap * 2
+
+    def _box(self) -> QRectF:
+        """入力欄の上端から、間隔ぶん離した位置。**上へ伸びる（y が負）。**"""
+        return QRectF(0.0, -(self._gap + self._h), self._w, self._h)
+
+    def boundingRect(self) -> QRectF:
+        # 枠線が半分はみ出すぶんを見ておく
+        return self._box().adjusted(-1.0, -1.0, 1.0, 1.0)
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        box = self._box()
+        radius = self._h * 0.2
+        painter.setPen(QPen(self.BORDER, 1.0))
+        painter.setBrush(QBrush(self.BG))
+        painter.drawRoundedRect(box, radius, radius)
+
+        painter.setFont(self._font)
+        painter.setPen(QPen(self.FG))
+        painter.drawText(box.topLeft() + self._text_pos, self.LABEL)
+
+
 class TextEditorItem(QGraphicsTextItem):
     """その場編集の入力欄。
 
     画面に重ねた別の部品ではなく、シーンに置いた項目にしてある。
     拡大縮小や画面移動に自動で付いてくるので、位置合わせを自分で
     やらずに済む（要件定義 6.5「画面上でその場編集」）。
+
+    **縦書きのセリフでは、枠の中に確定後の姿が出ている**
+    （→ `render._draw_text_editing`）。そこへ重ねると二重になって
+    両方読めないので、入力欄のほうを枠の下へ逃がす（→ `_place_in`）。
     """
 
     def __init__(self, view: PageView, text: TextObject):
         super().__init__(text.content)
         self._view = view
         self._closing = False
+        self._vertical = text.direction == "vertical"
 
         # 座標系が px なので、フォントの画素数をそのまま渡せる。
         # mm だった頃は、小さすぎて丸められるのを避けるために 20 倍で作って
@@ -1491,19 +1577,46 @@ class TextEditorItem(QGraphicsTextItem):
         self.setTextWidth(text.rect.w)
 
         self.setZValue(1000)
-        self._center_in(text.rect)
+        # 札は入力欄の上へ付く。置き場所の計算で高さを使うので、先に作る
+        self._mode_label = ModeLabelItem(self, text_font(text.font))
+        self._place_in(text.rect)
 
         self._confirm = ConfirmHintItem(self)
         self._place_confirm()
         # 行が増えると入力欄の下端が下がる。目印も付いていく
-        self.document().contentsChanged.connect(self._place_confirm)
+        self.document().contentsChanged.connect(self._on_contents_changed)
 
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
 
-    def _center_in(self, rect: Rect) -> None:
-        """確定後の描画（上下中央）に合わせて置く。"""
-        height = self.boundingRect().height()
-        self.setPos(rect.x, rect.y + max(0.0, (rect.h - height) / 2.0))
+    def _place_in(self, rect: Rect) -> None:
+        """入力欄を置く。**縦書きのときだけ枠の外へ逃がす。**
+
+        横書きは確定後の描画（上下中央）にそのまま重ねる。入力中と確定後で
+        字が 1px も動かないのが一番よい（要件定義 6.5）。
+
+        縦書きは枠の中に**確定後の姿**が出ているので、重ねられない。枠の
+        下へ下ろし、間に【テキスト入力モード】の札ぶんの高さを空ける。
+        **札の高さは書体の大きさで変わる**ので、定数では決められない。
+        """
+        if self._vertical:
+            top = rect.y + rect.h + self._mode_label.total_height()
+        else:
+            height = self.boundingRect().height()
+            top = rect.y + max(0.0, (rect.h - height) / 2.0)
+        self.setPos(rect.x, top)
+
+    def _on_contents_changed(self) -> None:
+        self._place_confirm()
+        self.publish_preview()
+
+    def publish_preview(self) -> None:
+        """打っている内容を、縦書きの下見として画面へ渡す。
+
+        横書きでは渡さない。入力欄が枠に重なったまま同じ字を出すことに
+        なり、二重に見えるだけになる（→ `render._draw_text_editing`）。
+        """
+        if self._vertical:
+            self._view.update_text_preview(self.toPlainText())
 
     def _place_confirm(self) -> None:
         """確定の目印を入力欄の下端へ付け直す。"""
@@ -2239,6 +2352,15 @@ class PageView(QGraphicsView):
     def is_editing_text(self) -> bool:
         return self._text_editor is not None
 
+    def update_text_preview(self, content: str) -> None:
+        """入力中の内容を、縦書きの下見として画面へ渡す。
+
+        モデルには確定するまで触らない。途中経過はしっぽや回転と同じく
+        `DragPreview` に載せて渡す（→ `TextEditorItem.publish_preview`）。
+        """
+        self._scene.editing_text_content = content
+        self.viewport().update()
+
     def begin_text_edit(self, text_id: str, *, is_new: bool = False) -> bool:
         """セリフの入力を始める。始められたら True。
 
@@ -2257,6 +2379,7 @@ class PageView(QGraphicsView):
         editor = TextEditorItem(self, text)
         self._scene.addItem(editor)
         self._scene.editing_text_id = text_id
+        self._scene.editing_text_content = text.content
         self._text_editor = editor
         self._text_editor_is_new = is_new
 
@@ -2304,6 +2427,7 @@ class PageView(QGraphicsView):
         self._text_editor = None
         self._text_editor_is_new = False
         self._scene.editing_text_id = None
+        self._scene.editing_text_content = None
         self._scene.removeItem(editor)
 
         if is_new and (not commit or not content.strip()):

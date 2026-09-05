@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from PySide6.QtGui import QFont
 
@@ -1070,6 +1072,217 @@ class TestConfirmHint:
         window_with_text.view.finish_text_edit(commit=False)
 
 
+class Test縦書きの下見:
+    """入力中に、確定後の縦書きを枠の中へ出す（2026-09-05）。
+
+    **入力欄は横書きでしか開けない**（Qt に日本語の縦書きの入力欄が無い
+    → 要件定義 6.11）。打っている間は横書きの1行しか見えず、列が何本に
+    なるか・どこで改行されるか・枠からはみ出すかが確定するまで分からな
+    かった。確定後と同じ経路（`render._draw_text_vertical`）へ流して枠の
+    中に出し、入力欄のほうを枠の下へ逃がす。
+
+    **組んだ字そのものは確かめられない**（offscreen にフォントが無い）。
+    ここで押さえるのは「下見に何が渡るか」と「入力欄が枠に重ならないか」。
+    """
+
+    def scene(self, window):
+        return window.view._scene
+
+    def test_入力を始めると今の内容が下見へ渡る(self, window_with_text):
+        text = window_with_text.state.selected_text
+        window_with_text.view.begin_text_edit(text.id)
+        assert self.scene(window_with_text).editing_text_content == text.content
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_打つたびに下見が追いつく(self, window_with_text):
+        text_id = window_with_text.state.selected_text.id
+        window_with_text.view.begin_text_edit(text_id)
+
+        window_with_text.view._text_editor.setPlainText("あい\nうえお")
+
+        assert self.scene(window_with_text).editing_text_content == "あい\nうえお"
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_確定すると下見を畳む(self, window_with_text):
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        window_with_text.view.finish_text_edit(commit=True)
+        assert self.scene(window_with_text).editing_text_content is None
+
+    def test_取り消しても下見を畳む(self, window_with_text):
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        window_with_text.view.finish_text_edit(commit=False)
+        assert self.scene(window_with_text).editing_text_content is None
+
+    def test_縦書きの入力欄は枠の下へ逃げる(self, window_with_text):
+        # 枠の中には確定後の姿が出ている。重ねると二重になって両方読めない
+        text = window_with_text.state.selected_text
+        window_with_text.view.begin_text_edit(text.id)
+
+        editor = window_with_text.view._text_editor
+        assert editor.pos().y() > text.rect.y + text.rect.h
+
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_逃がした先に札のぶんの高さを空ける(self, window_with_text):
+        # 入力欄と枠の間に【テキスト入力モード】の札が入る
+        text = window_with_text.state.selected_text
+        window_with_text.view.begin_text_edit(text.id)
+
+        editor = window_with_text.view._text_editor
+        空き = editor.pos().y() - (text.rect.y + text.rect.h)
+        assert 空き >= editor._mode_label.total_height()
+
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_横書きの入力欄は枠に重ねたまま(self, window_with_text):
+        # 入力中と確定後で字が 1px も動かないのが一番よい（要件定義 6.5）
+        window_with_text.toggle_vertical()
+        text = window_with_text.state.selected_text
+        assert text.direction == "horizontal"
+
+        window_with_text.view.begin_text_edit(text.id)
+        editor = window_with_text.view._text_editor
+        assert text.rect.y <= editor.pos().y() <= text.rect.y + text.rect.h
+
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_横書きでは打っても下見を渡さない(self, window_with_text):
+        # 入力欄が枠に重なったまま同じ字を出すので、二重に見えるだけになる
+        window_with_text.toggle_vertical()
+        text_id = window_with_text.state.selected_text.id
+        window_with_text.view.begin_text_edit(text_id)
+
+        window_with_text.view._text_editor.setPlainText("あいうえお")
+
+        assert self.scene(window_with_text).editing_text_content != "あいうえお"
+        window_with_text.view.finish_text_edit(commit=False)
+
+
+class Test下見の描画:
+    """下見が実際に画面まで届くか（2026-09-05）。
+
+    **組んだ字は数えられない**（offscreen にフォントが無いので、文字を
+    描いても画素が1つも増えない）。数えられるのは線だけなので、ここでは
+    **空のときに出る点線枠**を見る。中身のあるときは `test_vertical.py` が
+    Qt 抜きで置き場所を押さえており、描く経路は確定後と同じ1本
+    （`_draw_text_vertical`）なので、そちらの検証が効く。
+    """
+
+    def 描いた画素数(self, state, text, preview) -> int:
+        from PySide6.QtGui import QImage, QPainter
+
+        from manga_layout.ui.render import PageRenderer
+
+        image = QImage(600, 600, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        PageRenderer(state)._draw_text(painter, text, preview)
+        painter.end()
+        return sum(
+            1
+            for y in range(image.height())
+            for x in range(image.width())
+            if image.pixelColor(x, y).alpha() > 0
+        )
+
+    def preview(self, text_id, content):
+        from manga_layout.ui.render import DragPreview
+
+        return DragPreview(editing_text_id=text_id, editing_text_content=content)
+
+    def test_空のまま打ち始めても枠が残る(self, window_with_text):
+        """入力欄は枠の外へ逃げている。ここに何も描かないと、**どこへ字が
+        入るのかが画面から消える**（空のセリフに点線枠を出すのと同じ理由）。
+        """
+        state = window_with_text.state
+        text = dataclasses.replace(state.selected_text, content="")
+
+        画素 = self.描いた画素数(state, text, self.preview(text.id, ""))
+
+        assert 画素 > 0
+
+    def test_横書きの入力中は何も描かない(self, window_with_text):
+        # 入力欄が枠に重なったまま同じ字を出すことになり、二重に見える
+        state = window_with_text.state
+        text = dataclasses.replace(
+            state.selected_text, content="", direction="horizontal"
+        )
+
+        画素 = self.描いた画素数(state, text, self.preview(text.id, "あいうえお"))
+
+        assert 画素 == 0
+
+
+class Testテキスト入力モードの札:
+    """入力中に出す【テキスト入力モード】の札（2026-09-05）。
+
+    **札そのものが書体の見本を兼ねる。** 空のセリフを打ち始めるときは
+    入力欄に1文字も無く、「どの書体の何 px で入るのか」が画面のどこにも
+    出ていなかった。状態表示に名前を書き足しても、**名前を読んで大きさは
+    分からない**（本人の指摘 2026-09-05）。
+    """
+
+    def label(self, window):
+        return window.view._text_editor._mode_label
+
+    def test_入力中だけ出る(self, window_with_text):
+        assert window_with_text.view._text_editor is None
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        assert self.label(window_with_text).LABEL == "【テキスト入力モード】"
+        window_with_text.view.finish_text_edit(commit=False)
+        assert window_with_text.view._text_editor is None
+
+    def test_打つ書体と大きさで描く(self, window_with_text):
+        state = window_with_text.state
+        text = state.selected_text
+        state.set_text_font(text.id, family="Meiryo", size_px=48.0)
+
+        window_with_text.view.begin_text_edit(text.id)
+        font = self.label(window_with_text)._font
+        window_with_text.view.finish_text_edit(commit=False)
+
+        assert font.family() == "Meiryo"
+        assert font.pixelSize() == 48
+
+    def test_太字も写す(self, window_with_text):
+        text_id = window_with_text.state.selected_text.id
+        window_with_text.toggle_bold()
+
+        window_with_text.view.begin_text_edit(text_id)
+        font = self.label(window_with_text)._font
+        window_with_text.view.finish_text_edit(commit=False)
+
+        assert font.bold()
+
+    def test_表示倍率を無視しない(self, window_with_text):
+        """見本である以上、拡大したら札も同じだけ大きくならないと嘘になる。
+
+        `ConfirmHintItem`（確定の目印）とはここが逆で、あちらは画面の道具
+        なので倍率を無視する。**同じ入力欄に付く2つの札で扱いが違う**ので、
+        取り違えないよう両方を1つのテストで見る。
+        """
+        from PySide6.QtWidgets import QGraphicsItem
+
+        無視する = QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        editor = window_with_text.view._text_editor
+
+        assert not (editor._mode_label.flags() & 無視する)
+        assert editor._confirm.flags() & 無視する
+
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_押しても自分では受け取らない(self, window_with_text):
+        # クリックは下の画面へ素通りし、「触ったら確定」の道に乗る
+        from PySide6.QtCore import Qt
+
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        受け取る = self.label(window_with_text).acceptedMouseButtons()
+        window_with_text.view.finish_text_edit(commit=False)
+
+        assert 受け取る == Qt.MouseButton.NoButton
+
+
 class TestDirection:
     """縦書きの切り替え。
 
@@ -1122,14 +1335,15 @@ class TestDirection:
 
     def test_縦書きでもその場編集に入れる(self, window_with_text):
         # **入力欄は横書きのまま出る。** Qt に縦書きの入力欄が無いため。
-        # 見た目の食い違いは案内で断る方針にした（下のテスト）
+        # 仕上がりは枠の中に出す（→ `Test縦書きの下見`）
         text_id = window_with_text.state.selected_text.id
         assert window_with_text.view.begin_text_edit(text_id)
         window_with_text.view.finish_text_edit(commit=True)
         assert only_text(window_with_text.state.page).direction == "vertical"
 
-    def test_縦書きの入力では確定後どうなるかを断る(self, window_with_text):
-        # 黙っていると「縦書きなのに横書きで入る」と受け取られる
+    def test_縦書きの入力では仕上がりの在りかを指す(self, window_with_text):
+        # 黙っていると「縦書きなのに横書きで入る」と受け取られる。
+        # 下見を入れてからは、断りではなく**どこを見ればよいか**を出す
         window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
         message = window_with_text.statusBar().currentMessage()
         window_with_text.view.finish_text_edit(commit=False)

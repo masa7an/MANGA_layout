@@ -145,6 +145,13 @@ class DragPreview:
     flow: tuple[str, FlowLines] | None = None
     # その場編集中のセリフ。二重に見えないよう、下地を描かない
     editing_text_id: str | None = None
+    # 入力欄にいま入っている文字列。**縦書きの下見のためだけに渡す**。
+    # 入力欄は横書きでしか開けない（Qt に縦書きの入力欄が無い → 要件定義
+    # 6.11）ので、打っている最中は列の並びも改行位置も確かめられなかった。
+    # モデルには確定するまで触らないので、途中経過はしっぽや回転と同じく
+    # ここに載せて渡す。**サムネイルと書き出しは `NO_PREVIEW` を受け取る**
+    # ので、下見が焼き付くことはない
+    editing_text_content: str | None = None
 
 
 NO_PREVIEW = DragPreview()
@@ -560,8 +567,10 @@ class PageRenderer:
         """セリフ。手動改行のみ（要件定義 6.5、9章）。
 
         その場編集の最中は描かない。編集中の文字が二重に見えてしまう。
+        **縦書きだけは例外**で、確定後の姿を実時間で出す（下記）。
         """
         if preview.editing_text_id == obj.id:
+            self._draw_text_editing(painter, obj, preview)
             return
 
         if not obj.content:
@@ -580,6 +589,44 @@ class PageRenderer:
             self._draw_text_vertical(painter, obj)
         else:
             self._draw_text_horizontal(painter, obj)
+        painter.restore()
+
+    def _draw_text_editing(
+        self, painter: QPainter, obj: TextObject, preview: DragPreview
+    ) -> None:
+        """その場編集の最中に、縦書きの仕上がりを枠の中へ出す。
+
+        **入力欄は縦書きにできない**（Qt に日本語の縦書きの入力欄が無い
+        → 要件定義 6.11）。打っている間は横書きの1行しか見えないので、
+        列が何本になるか・どこで改行されるか・枠からはみ出すかが、確定して
+        みるまで分からなかった。ここで確定後と同じ経路（`_draw_text_vertical`）
+        へ流し、**入力欄のほうを枠の外へ逃がす**ことで両方が同時に見える。
+
+        **確定後と同じ描き方でなければ意味がない**ので、色も字形も変えない。
+        別の描き方にすると「下見では収まっていたのに確定したらはみ出した」
+        が起こり、下見を見る理由そのものが無くなる。
+
+        横書きのセリフでは何もしない。入力欄が枠に重なったまま同じ字を
+        出すので、二重に見えるだけになる。
+        """
+        if obj.direction != "vertical":
+            return
+
+        content = preview.editing_text_content
+        if not content:
+            # 1文字も入っていない間は枠だけ出す。入力欄は枠の外へ逃げて
+            # いるので、ここに何も描かないと**どこへ字が入るのかが画面から
+            # 消える**（空のセリフに点線枠を出すのと同じ理由）
+            if not self.aids:
+                return
+            painter.setPen(cosmetic_pen(PLACEHOLDER, 1.0, Qt.PenStyle.DotLine))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRect(qrect(obj.rect))
+            return
+
+        painter.save()
+        painter.setPen(QPen(QColor("#000000")))
+        self._draw_text_vertical(painter, dataclasses.replace(obj, content=content))
         painter.restore()
 
     def _draw_text_horizontal(self, painter: QPainter, obj: TextObject) -> None:
