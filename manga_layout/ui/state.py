@@ -627,6 +627,36 @@ class EditorState(QObject):
                 raise KeyError(f"{what}が見つかりません: {object_id}")
             yield target
 
+    def _step_value(
+        self, holder: Any, field: str, step, steps: int, label, apply
+    ) -> bool:
+        """`holder` の持つ値を1段ずらす。ずらせたら True。
+
+        **端まで来ていたら `apply` を呼ばずに False を返す。** 押しても何も
+        変わらない操作で Undo の一手を使わせない。
+
+        **この判断をここ1か所に置くのが、この入れ物の目的。** 集中線・流線・
+        トーンで3回書いていたときは、4つめを足す人が落とせる形だった。
+        落としても**画面の上では正しく動いて見える**——増えなくなった端で
+        押し続けたぶんだけ、履歴に空の手が積まれるだけなので、気づくのは
+        Undo を連打したときになる。
+
+        `holder` が None なら何もしない（属性が入っていない）。`apply` は
+        新しい値を受け取って**持ち主を id で引き直してから**書き込む
+        （→ `_edit_found`）。ここで受け取った `holder` は値を読むためだけに
+        使う。
+        """
+        if holder is None:
+            return False
+        current = getattr(holder, field)
+        value = step(current, steps)
+        if value == current:
+            return False
+
+        apply(value)
+        self.message.emit(label(value))
+        return True
+
     def undo(self) -> None:
         label = self.history.undo()
         if label is None:
@@ -1332,7 +1362,7 @@ class EditorState(QObject):
         """このページのコマをすべてロックする。変わったら True。
 
         既に全部ロック済みなら**何もしない**。押しても変化の無い操作で
-        Undo の一手を使わせない（→ `_step_focus` と同じ流儀）。
+        Undo の一手を使わせない（→ `_step_value` と同じ流儀）。
         """
         page = self.page
         if not page.panels or all(p.locked for p in page.panels):
@@ -1577,25 +1607,17 @@ class EditorState(QObject):
         )
 
     def _step_focus(self, field: str, step, steps: int, label) -> bool:
-        """本数と太さの増減は、値の名前と刻み方だけが違う。
-
-        書き分けると、端で止まったときの扱い（履歴に積まない）が
-        片方だけ抜ける。
-        """
+        """本数と太さの増減は、値の名前と刻み方だけが違う（→ `_step_value`）。"""
         panel = self.selected_panel
-        if panel is None or panel.focus_lines is None:
+        if panel is None:
             return False
-        value = step(getattr(panel.focus_lines, field), steps)
-        if value == getattr(panel.focus_lines, field):
-            # 端まで来ている。**履歴に積まない。** 押しても何も変わらない
-            # 操作で Undo の一手を使わせない
-            return False
-
         panel_id = panel.id
-        with self._edit_focus(panel_id, "集中線の調整") as target:
-            setattr(target.focus_lines, field, value)
-        self.message.emit(label(value))
-        return True
+
+        def apply(value) -> None:
+            with self._edit_focus(panel_id, "集中線の調整") as target:
+                setattr(target.focus_lines, field, value)
+
+        return self._step_value(panel.focus_lines, field, step, steps, label, apply)
 
     def reseed_focus(self) -> bool:
         """ばらつきだけを作り直す。中心・本数・太さは変えない。
@@ -1616,7 +1638,7 @@ class EditorState(QObject):
         """線の色を黒⇄白で切り替える。**単純な色違い**（要件定義 6.19）。
 
         形（本数・太さ・空き・中心）には触らない。押すたびに必ず変わる
-        操作なので、`_step_focus` の端で止まるガードは要らない。
+        操作なので、`_step_value` の端で止まるガードは要らない。
         """
         panel = self.selected_panel
         if panel is None or panel.focus_lines is None:
@@ -1634,7 +1656,8 @@ class EditorState(QObject):
     #
     # **集中線の操作と1つにまとめていない。** 値の名前だけでなく、決まる
     # ものが違う（中心と空き ⇄ 向きと長さ）ので、まとめると分岐だらけの
-    # 1本になる。`_step_flow` だけは形が同じなので、そちらでまとめてある。
+    # 1本になる。**増減だけは形が同じ**なので、そこは `_step_value` で
+    # 集中線・トーンともまとめてある。
 
     @property
     def selected_flow(self) -> FlowLines | None:
@@ -1711,21 +1734,18 @@ class EditorState(QObject):
 
     def _step_flow(self, field: str, step, steps: int, label) -> bool:
         """本数・太さ・長さの増減は、値の名前と刻み方だけが違う
-        （→ `_step_focus`）。
+        （→ `_step_value`）。
         """
         panel = self.selected_panel
-        if panel is None or panel.flow_lines is None:
+        if panel is None:
             return False
-        value = step(getattr(panel.flow_lines, field), steps)
-        if value == getattr(panel.flow_lines, field):
-            # 端まで来ている。**履歴に積まない**（→ `_step_focus`）
-            return False
-
         panel_id = panel.id
-        with self._edit_flow(panel_id, "流線の調整") as target:
-            setattr(target.flow_lines, field, value)
-        self.message.emit(label(value))
-        return True
+
+        def apply(value) -> None:
+            with self._edit_flow(panel_id, "流線の調整") as target:
+                setattr(target.flow_lines, field, value)
+
+        return self._step_value(panel.flow_lines, field, step, steps, label, apply)
 
     def reseed_flow(self) -> bool:
         """ばらつきだけを作り直す。向き・本数・太さ・長さは変えない。"""
@@ -1937,7 +1957,7 @@ class EditorState(QObject):
 
     def _step_tone(self, field: str, step, steps: int, label) -> bool:
         """しきい値・間隔・濃さ・細さの増減は、値の名前と刻み方だけが違う
-        （→ `_step_flow`）。
+        （→ `_step_value`）。
 
         **連打ぶんは履歴の1手にまとめる**（`merge_key`）。1回ずつ積むと、
         20回押した調整を戻すのに Undo を20回押すことになる（セリフの入力と
@@ -1945,20 +1965,17 @@ class EditorState(QObject):
         濃さを触ってからしきい値を触っても別の手として積まれる。
         """
         image = self.tone_image
-        if image is None or image.tone is None:
+        if image is None:
             return False
-        value = step(getattr(image.tone, field), steps)
-        if value == getattr(image.tone, field):
-            # 端まで来ている。**履歴に積まない**（→ `_step_flow`）
-            return False
-
         image_id = image.id
-        with self._edit_tone(
-            image_id, "トーンの調整", merge_key=f"tone:{image_id}:{field}"
-        ) as target:
-            setattr(target.tone, field, value)
-        self.message.emit(label(value))
-        return True
+
+        def apply(value) -> None:
+            with self._edit_tone(
+                image_id, "トーンの調整", merge_key=f"tone:{image_id}:{field}"
+            ) as target:
+                setattr(target.tone, field, value)
+
+        return self._step_value(image.tone, field, step, steps, label, apply)
 
     def set_tone_area(self, image_id: str, area: Rect | None) -> None:
         """絞る矩形を差し替える。1回のドラッグで1手（流線の向きと同じ流儀）。
