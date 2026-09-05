@@ -365,18 +365,28 @@ def borrow_frame(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEXT) -> Frame:
     gutter = _median(gaps) if gaps else DEFAULT_GUTTER
     right = max(b.right for b in boxes)
     top = min(b.y for b in boxes)
-    left, bottom = max(0.0, 1.0 - right), min(1.0, 1.0 - top)
 
     # **断ち切りコマから余白は借りない。**
     # 断ち切りはページの端まで（外まで）伸びているので、そこから借りると枠が
     # ページいっぱいに広がり、**次のコマまで断ち切りになる。**
-    # 断ち切りが続くページは多くないので、置いてよい範囲が分かっているなら
-    # そこで挟み込む（分からなければ、これまでどおり借りた値のまま）
+    #
+    # **見るのは借りた辺そのものが断ち切りかどうかだけ。** そうでなければ、
+    # たとえ置いてよい範囲の外にあっても借りた値を使う。無条件に枠で挟むと、
+    # **断ち切りでないのに枠の外へ描いたページ**——余白 40px で描いたページなど——の
+    # 余白まで、アプリの余白 89px で上書きしてしまう（2026-09-05 実測。提案8件すべてが
+    # 既存コマの右端より 49px 内側で終わっていた）。
+    #
+    # **2番目に右のコマへ移らない。** ここで欲しいのは「最も右の辺」＝右の余白で、
+    # 2番目はコマとコマの境目でしかない。断ち切りなら**余白は分からない**のであって、
+    # 別の値が分かるわけではない。分からないときだけ、置いてよい範囲へ落ちる
+    # （枠も無ければ、これまでどおり借りた値のまま）。
     if ctx.frame is not None:
-        left = max(left, ctx.frame.x)
-        right = min(right, ctx.frame.right)
-        top = max(top, ctx.frame.y)
-        bottom = min(bottom, ctx.frame.bottom)
+        if right >= 1.0 - BLEED_MARGIN:
+            right = ctx.frame.right
+        if top <= BLEED_MARGIN:
+            top = ctx.frame.y
+
+    left, bottom = max(0.0, 1.0 - right), min(1.0, 1.0 - top)
     return Frame(left=left, right=right, top=top, bottom=bottom, gutter=gutter)
 
 

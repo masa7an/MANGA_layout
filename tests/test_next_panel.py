@@ -286,15 +286,58 @@ class TestGuideFrame:
                 assert rect.bottom <= PAGE_H - margin + 0.5
 
     def test_最下段の案に幅いっぱいがある(self):
-        # 3段のうち2段を埋めた状態。**最後の段は帯まるごとにもできる**
+        """3段のうち2段を埋めた状態。**最後の段は帯まるごとにもできる。**
+
+        **左右は既存コマに揃う。基本枠ではない。** この材料は `band()` が作る形で、
+        左端 74.4px・右端 1165.6px と**基本枠（89〜1151）の 14.6px 外側**にある。
+        断ち切りではないので、余白は既存コマから借りる（→ `joseki.borrow_frame`）。
+        以前はここに `settings.margin` を書いていたが、それは**借りた余白を基本枠が
+        上書きした値**だった（2026-09-05 修正）。
+        """
         settings = LayoutSettings()
         project, page = page_with(*band(0.06, 0.28), *band(0.38, 0.22))
         found = suggestions(project, page, margin=settings.margin,
                             gutter=settings.gutter)
         widest = next(s for s in found if s.label == "幅 いっぱい")
         rect = widest.rects[0]
-        assert rect.x == pytest.approx(settings.margin)
-        assert rect.right == pytest.approx(PAGE_W - settings.margin)
+        assert rect.x == pytest.approx(min(p.bounds().x for p in page.panels))
+        assert rect.right == pytest.approx(max(p.bounds().right for p in page.panels))
+
+    def test_枠の外に描いたページでも既存コマの余白を使う(self):
+        # **断ち切りでなければ、枠の外に描かれていても借りる。** 余白 40px で
+        # 描いたページに、アプリの余白 89px を押し付けない
+        project, page = page_with(
+            Rect(640.0, 40.0, 560.0, 460.0), Rect(40.0, 40.0, 560.0, 460.0)
+        )
+        found = suggestions(project, page, margin=LayoutSettings().margin, gutter=35.0)
+        assert found
+        for suggestion in found:
+            for rect in suggestion.rects:
+                assert rect.right <= 1200.0 + 0.5      # 既存コマの右端
+                assert rect.x >= 40.0 - 0.5            # その鏡写しの左端
+        widest = next(s for s in found if s.label == "幅 いっぱい")
+        assert widest.rects[0].right == pytest.approx(1200.0)
+        assert widest.rects[0].x == pytest.approx(40.0)
+
+    def test_段の左隣は既存コマの上端と高さに揃う(self):
+        # 上端を基本枠で挟むと、右コマ（y=40）と左コマ（y=89）で段がずれる
+        project, page = page_with(Rect(640.0, 40.0, 560.0, 460.0))
+        found = suggestions(project, page, margin=LayoutSettings().margin, gutter=35.0)
+        left = next(s for s in found if "同じ段の左" in s.title)
+        for rect in left.rects:
+            assert rect.y == pytest.approx(40.0)
+            assert rect.h == pytest.approx(460.0)
+
+    def test_断ち切りページは今までどおり枠に収める(self):
+        # **借りた辺そのものが断ち切りのときだけ**、置いてよい範囲へ落ちる
+        margin = LayoutSettings().margin
+        project, page = page_with(Rect(620.0, -10.0, 630.0, 624.3))
+        found = suggestions(project, page, margin=margin, gutter=LayoutSettings().gutter)
+        assert found
+        for suggestion in found:
+            for rect in suggestion.rects:
+                assert rect.x >= margin - 0.5
+                assert rect.right <= PAGE_W - margin + 0.5
 
     def test_雛形は最後に出す(self):
         margin = LayoutSettings().margin
