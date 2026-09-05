@@ -71,6 +71,7 @@ from ..layout import (
     image_at,
     image_orphaned_at,
     image_pixel_at,
+    images_at,
     keep_anchor,
     next_in_stack,
     panel_at,
@@ -2327,16 +2328,39 @@ class PageView(QGraphicsView):
         1回ごとに作品へ書き込むので、積んでおく選択そのものが存在しない。
         """
         panel = panel_at(self.state.page, x, y)
-        image = image_at(panel, x, y) if panel is not None else None
-        if image is None:
-            self.state.message.emit("コマの中の絵を押してください")
+        found = self._wand_target(panel, x, y) if panel is not None else None
+        if found is None:
+            # **絵が無いのと、全部消してあるのを分ける。** 同じ「押しても
+            # 消えない」でも、次にすることが違う（別の所を押す／戻す）
+            self.state.message.emit(
+                "そこは切り抜いてあります。残っている所を押してください"
+                if panel is not None and image_at(panel, x, y) is not None
+                else "コマの中の絵を押してください"
+            )
             return
 
-        seed = image_pixel_at(image, x, y)
-        if seed is None:
-            return
+        image, seed = found
         keep_only = bool(modifiers & Qt.KeyboardModifier.ShiftModifier)
         self.state.erase_region_at(image.id, seed, keep_only=keep_only)
+
+    def _wand_target(self, panel, x: float, y: float):
+        """切り抜きが当たる絵と、元画像の画素。**消えている所は下の絵へ抜ける。**
+
+        `image_at`（＝いちばん手前）で決めると、**切り抜いて透けている所を
+        押しても手前の絵が対象のまま**になり、背景の上にキャラを重ねた作りで
+        奥の絵に手が届かない（2026-09-05 発見）。
+
+        **素通りさせるのはこの道具だけ。** 選ぶ側（`image_at`）まで同じに
+        すると、マスクが絵をまるごと消したときに掴む手立てが無くなる
+        （→ `layout.image_at` の注記）。
+        """
+        for image in images_at(panel, x, y):
+            seed = image_pixel_at(image, x, y)
+            if seed is None:
+                continue
+            if not self.state.mask_hides(image, seed):
+                return image, seed
+        return None
 
     def _begin_tone_drag(self, x: float, y: float) -> None:
         """トーン範囲の道具で押された。つまみなら隅を動かし、それ以外は囲い直す。

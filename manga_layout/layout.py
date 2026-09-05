@@ -248,18 +248,36 @@ def panel_at(page: Page, x: float, y: float) -> Panel | None:
     return None
 
 
+def images_at(panel: Panel, x: float, y: float) -> list[ImageObject]:
+    """コマの中のその位置にある画像を、**手前から奥の順**で全部返す。
+
+    重なりを上から見ていきたい側（→ `PageView._wand_target`）が使う。
+    切り抜き（→ 要件定義 10.3）で消えた所は、手前の絵を素通りして下の絵へ
+    届かせたいが、**どこが消えているかは `assets/` を読まないと分からない**。
+    ここは並べるところまでで、選ぶのは読める側に任せる。
+    """
+    if not panel.shape.contains(x, y):
+        return []
+    return [
+        image
+        for image in reversed(sorted(panel.children, key=lambda i: i.z))
+        if rotated_rect_contains(image.rect, x, y, image.rotation)
+    ]
+
+
 def image_at(panel: Panel, x: float, y: float) -> ImageObject | None:
     """コマの中のその位置にある画像。重なっていれば手前のものを返す。
 
     コマの外にはみ出した部分は当たらない。そこは切り抜かれて見えておらず、
     見えていないものを掴めるとどこを触っているのか分からなくなる。
+
+    **切り抜き（→ 10.3）で消えた所は見ない。** 消えた所も掴めるままにして
+    あるのは、マスクが絵をまるごと消していると**選ぶ手立てが無くなる**ため
+    （`image_orphaned_in` が防いでいる「見えない孤児」と同じ形。動かすことも
+    消すこともできなくなる）。素通りさせるのは切り抜きの道具だけでよい。
     """
-    if not panel.shape.contains(x, y):
-        return None
-    for image in reversed(sorted(panel.children, key=lambda i: i.z)):
-        if rotated_rect_contains(image.rect, x, y, image.rotation):
-            return image
-    return None
+    found = images_at(panel, x, y)
+    return found[0] if found else None
 
 
 def image_orphaned_in(bounds: Rect, image_rect: Rect, rotation: float) -> bool:

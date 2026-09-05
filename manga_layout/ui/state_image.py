@@ -383,6 +383,33 @@ class ImageMixin:
             self.message.emit(f"{label}ました（押した区画は絵の {chosen.ratio:.0%}）")
         return True
 
+    def mask_hides(self, image: ImageObject, seed: tuple[int, int]) -> bool:
+        """その絵の、その画素が切り抜きで消えているか（→ 要件定義 10.3）。
+
+        **効いていないマスクは「消えていない」と答える。** 実体が欠けている・
+        壊れている・寸法が違うのどれでも、画面には切り抜き前の絵が出ている
+        （→ `_masked_preview`、`image_masks.safe_masked_preview`）。ここだけ
+        「消えている」と答えると、**見えている絵が押せない**という食い違いが出る。
+
+        中間の濃さは消えた扱いにしない。透けているだけの所を素通りされると、
+        押した絵と消える絵が食い違う（いま作れるのは 0 と 255 だけ → `wand`）。
+        """
+        if not image.mask_asset:
+            return False
+        data = self.read_asset(image.mask_asset)
+        if data is None:
+            return False
+        try:
+            mask = decode_mask(data)
+        except AssetError:
+            return False
+        x, y = seed
+        if size_px(mask) != image.src_px or not (
+            0 <= x < mask.width() and 0 <= y < mask.height()
+        ):
+            return False
+        return mask.pixelColor(x, y).value() == 0
+
     def image_mask_or_full(self, image: ImageObject):
         """その画像の今のマスク。掛かっていなければ**全面が残った**マスク。
 

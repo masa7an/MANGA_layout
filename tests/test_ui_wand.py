@@ -17,6 +17,7 @@ from manga_layout import Rect
 from manga_layout.assets import AssetStore
 from manga_layout.image_masks import decode_mask
 from manga_layout.images import size_px, to_png_bytes
+from manga_layout.layout import image_at
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import TOOL_SELECT, TOOL_WAND
 
@@ -171,6 +172,81 @@ class Test手の届く範囲:
         window_with_image.state.set_tool(TOOL_SELECT)
         click(window_with_image, 0.5, 0.5)
         assert image_of(window_with_image).mask_asset == ""
+
+
+class Test重なった絵:
+    """**切り抜いて透けた所を押したら、下の絵が対象になる**（2026-09-05 に直した）。
+
+    背景の上にキャラを重ねる作り（→ `EditorState.replace_image` の注記）で、
+    キャラを切り抜いたあと、透けて見えている背景を切り抜けなかった。
+    """
+
+    @pytest.fixture
+    def 二枚重ね(self, window_with_image):
+        """同じ場所に、同じ大きさでもう1枚重ねる。**後から置いたほうが手前。**"""
+        panel_id = window_with_image.state.page.panels[0].id
+        window_with_image.state.place_image(panel_id, boxed_png())
+        return window_with_image
+
+    def 手前と奥(self, window):
+        並び = sorted(window.state.page.panels[0].children, key=lambda i: i.z)
+        return 並び[-1].id, 並び[0].id
+
+    def mask_ref(self, window, image_id):
+        return window.state.page.find(image_id).mask_asset
+
+    def test_1回目は手前の絵が消える(self, 二枚重ね):
+        手前, 奥 = self.手前と奥(二枚重ね)
+        click(二枚重ね, 0.5, 0.5)
+        assert self.mask_ref(二枚重ね, 手前) != ""
+        assert self.mask_ref(二枚重ね, 奥) == "", "奥はまだ触られていない"
+
+    def test_透けた所をもう一度押すと奥の絵が消える(self, 二枚重ね):
+        手前, 奥 = self.手前と奥(二枚重ね)
+        click(二枚重ね, 0.5, 0.5)  # 手前の中を消す
+        前の手前 = self.mask_ref(二枚重ね, 手前)
+        click(二枚重ね, 0.5, 0.5)  # 同じ所——手前は消えているので奥へ抜ける
+
+        assert self.mask_ref(二枚重ね, 奥) != "", "奥の絵が対象になる"
+        assert self.mask_ref(二枚重ね, 手前) == 前の手前, "手前は変わらない"
+
+    def test_残っている所を押せば手前のまま(self, 二枚重ね):
+        """**素通りするのは消えた所だけ。** 残っている所は今までどおり手前が対象。"""
+        手前, 奥 = self.手前と奥(二枚重ね)
+        click(二枚重ね, 0.5, 0.5)  # 中を消す
+        click(二枚重ね, 0.05, 0.05)  # 外——手前にまだ残っている
+        assert self.mask_ref(二枚重ね, 奥) == ""
+
+    def test_効いていないマスクでは素通りしない(self, 二枚重ね):
+        """実体の欠けたマスクは**画面では効いていない**。押せる所と見える所を揃える。"""
+        手前, 奥 = self.手前と奥(二枚重ね)
+        click(二枚重ね, 0.5, 0.5)
+        state = 二枚重ね.state
+        AssetStore(state.project_dir).resolve(self.mask_ref(二枚重ね, 手前)).unlink()
+        click(二枚重ね, 0.5, 0.5)
+        assert self.mask_ref(二枚重ね, 奥) == "", "切り抜き前の絵が出ているので、手前が対象"
+
+    def test_下に絵が無ければ理由を言う(self, window_with_image):
+        """1枚だけの絵を消した所を押した場合。**絵が無いのとは案内を分ける。**"""
+        said = []
+        window_with_image.state.message.connect(said.append)
+        click(window_with_image, 0.5, 0.5)
+        click(window_with_image, 0.5, 0.5)
+        assert "切り抜いてあります" in said[-1], said
+
+    def test_選ぶほうは今までどおり手前(self, 二枚重ね):
+        """**素通りさせるのは切り抜きの道具だけ。**
+
+        選ぶ側まで同じにすると、マスクが絵をまるごと消したときに掴む手立てが
+        無くなる（→ `layout.image_at` の注記）。
+        """
+        手前, _ = self.手前と奥(二枚重ね)
+        click(二枚重ね, 0.5, 0.5)
+        page = 二枚重ね.state.page
+        image = page.panels[0].children[0]
+        x = image.rect.x + image.rect.w * 0.5
+        y = image.rect.y + image.rect.h * 0.5
+        assert image_at(page.panels[0], x, y).id == 手前
 
 
 class Test使えない絵:
