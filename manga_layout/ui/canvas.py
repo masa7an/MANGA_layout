@@ -237,7 +237,7 @@ ZOOM_OUT_KEYS = (Qt.Key.Key_Minus,)
 # Shift を押した `[` `]` は配列によって `{` `}` として届くので、両方を拾う
 # （`+` に対して `=` も拾っているのと同じ手当て）。
 #
-# **セリフの大きさ（`Ctrl+]` / `Ctrl+[`）と向きを揃える。** 右が増える側で、
+# **セリフの大きさ（`Ctrl+.` / `Ctrl+,`）と向きを揃える。** 右が増える側で、
 # 左が減る側。修飾キーが違うので取り合いにはならない
 TONE_THRESHOLD_UP_KEYS = (Qt.Key.Key_BraceRight, Qt.Key.Key_BracketRight)
 TONE_THRESHOLD_DOWN_KEYS = (Qt.Key.Key_BraceLeft, Qt.Key.Key_BracketLeft)

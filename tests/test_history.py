@@ -188,6 +188,41 @@ class TestMerge:
         )
         assert restored.content == "テスト\nセリフ"
 
+    def test_まとめ鍵は名前と別に読める(self, sample_project):
+        # **`undo_label` と混同しない。** あちらは積まれた1手の名前で、
+        # まとめを区切っても変わらない。「直前の1手の続きか」はこちらで見る
+        history = History(sample_project)
+        text = next(f for f in history.project.pages[0].floating if isinstance(f, TextObject))
+        text.content = "あ"
+        history.commit("セリフの入力", merge_key="text:1")
+        assert history.merge_key == "text:1"
+
+        history.break_merge()
+        assert history.merge_key is None
+        assert history.undo_label == "セリフの入力"      # 名前のほうは変わらない
+
+    def test_まとめ鍵は元に戻すと消える(self, sample_project):
+        history = History(sample_project)
+        text = next(f for f in history.project.pages[0].floating if isinstance(f, TextObject))
+        text.content = "あ"
+        history.commit("セリフの入力", merge_key="text:1")
+
+        history.undo()
+        assert history.merge_key is None
+        history.redo()
+        assert history.merge_key is None
+
+    def test_鍵を渡さなければまとめ鍵は残らない(self, sample_project):
+        history = History(sample_project)
+        text = next(f for f in history.project.pages[0].floating if isinstance(f, TextObject))
+        text.content = "あ"
+        history.commit("セリフの入力", merge_key="text:1")
+
+        obj = next(f for f in history.project.pages[0].floating if isinstance(f, TextObject))
+        obj.content = "あい"
+        history.commit("別の操作")                       # 鍵なし
+        assert history.merge_key is None
+
     def test_鍵を区切れば別の手になる(self, sample_project):
         history = History(sample_project)
         text = next(f for f in history.project.pages[0].floating if isinstance(f, TextObject))

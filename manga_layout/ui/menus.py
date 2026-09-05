@@ -73,6 +73,16 @@ TAIL_TURN_LABELS = {direction: where for where, direction in TAIL_TURN_ITEMS}
 # ので、書き分けないよう1箇所に持つ（→ `BalloonMenu`）
 BALLOON_STYLE_MENU_LABEL = "種類を変える"
 
+# 次のコマの提案（→ 要件定義 10.5）のキー。
+#
+# **名前にも括弧付きで入れる。** 道具の項目が「コマ追加 (P)」の形になっており
+# （→ `_build_tool_actions`）、こちらだけキーを名前に出さないと、
+# 「メニューを探す」窓で **「次のコマを提案　［N］」** と体裁が割れる
+# （あちらは名前にキーが無い項目にだけ ［ ］ を足す → `menu_search.item_text`）。
+#
+# キーは1か所に持つ。名前と割り当てを別々に書くと、片方だけ直したときに食い違う
+SUGGEST_KEY = "N"
+
 # ラフ（下敷き → 6.23）を畳んだメニューの見出しと、その中の項目の文言。
 #
 # **畳むのは、ファイルのメニューが4項目ぶん伸びるのを避けるため。** ラフは
@@ -387,7 +397,7 @@ class EditMenu:
 
 
 class PanelMenu:
-    """コマのメニュー。割る道具・斜めの反転・ロック・集中線／流線（畳み）。"""
+    """コマのメニュー。割る道具・次のコマの提案・斜めの反転・ロック・集中線／流線（畳み）。"""
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
@@ -395,6 +405,19 @@ class PanelMenu:
         # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
         # 何も選んでいない間はメニュー全体がグレーになる（吹き出しでの失敗）
         menu.addAction(window._tool_actions[TOOL_PANEL])
+        # 提案も「作る」の仲間なので隣に置く（→ 要件定義 10.5）。
+        # **グレーにしない。** 出せないときは理由を状態表示に出す。押せなくすると
+        # 「できない」ことは伝わっても理由が伝わらない（複製と同じ判断）
+        # **キーを付けるのは、押すたびに次の案へ切り替える操作だから。**
+        # 案は複数あるので、1打で繰り返せないと一周できない（→ 要件定義 7章の
+        # 「キーの本数は増やさない」は、繰り返し押す操作までは禁じていない）
+        self.suggest_action = window._act(
+            f"次のコマを提案 ({SUGGEST_KEY})",
+            window.suggest_next_panel,
+            SUGGEST_KEY,
+            "描きかけのページを見て、次に置くコマを提案する。押すたびに別の案へ差し替える",
+        )
+        menu.addAction(self.suggest_action)
         menu.addSeparator()
         for tool in (TOOL_SPLIT_H, TOOL_SPLIT_V, TOOL_SPLIT_SLANT):
             menu.addAction(window._tool_actions[tool])
@@ -1176,8 +1199,18 @@ class TextMenu:
             add(label, lambda _=False, a=align: window.set_text_align(a))
         menu.addSeparator()
 
-        add("大きく", lambda: window.step_text_size(1), "Ctrl+]")
-        add("小さく", lambda: window.step_text_size(-1), "Ctrl+[")
+        # **`Ctrl+.` / `Ctrl+,`**（2026-09-05 に `Ctrl+]` / `Ctrl+[` から変更）。
+        #
+        # **理由は位置ではなく、記号が読めないこと。** `[` `]` はキーの刻印を見ても
+        # 何という記号か分からず、**探すのに時間がかかる**（本人談 2026-09-05）。
+        # 句読点は名前で呼べるので、キーの上を目で探さずに指が行く。
+        #
+        # **押しにくさで選ぶと外す。** 位置だけ見れば角括弧も遠くはない。
+        # 効いていたのは「その記号を知っているか」のほうだった。
+        #
+        # 並びの約束（右が増える側）も保てる（→ 要件定義 6.27 のトーンと同じ向き）
+        add("大きく", lambda: window.step_text_size(1), "Ctrl+.")
+        add("小さく", lambda: window.step_text_size(-1), "Ctrl+,")
         self.bold_action = add("太字", window.toggle_bold, "Ctrl+B")
         self.bold_action.setCheckable(True)
         menu.addSeparator()

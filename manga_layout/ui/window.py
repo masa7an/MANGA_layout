@@ -150,6 +150,11 @@ FONT_DIALOG_SIZE = (820, 620)
 
 
 
+# メニューバーの右端に出す案内。**`ファイル(F)` の括弧が何なのかは、初めて見た人には
+# 分からない。** Alt と一緒に押す、という説明を、その括弧が並んでいる場所に置く
+ALT_HINT = "＋ Alt キー"
+
+
 class MainWindow(QMainWindow):
     def __init__(self, state: EditorState | None = None):
         super().__init__()
@@ -455,6 +460,33 @@ class MainWindow(QMainWindow):
                 "ショートカットキーの一覧...", self.show_shortcuts, None, SHORTCUTS_HINT
             )
         )
+        self._add_alt_hint()
+
+    def _add_alt_hint(self) -> None:
+        """メニューバーの右端に「＋ Alt キー」と灰色で出す。
+
+        **`ファイル(F)` の括弧が何なのかは、初めて見た人には分からない。**
+        Alt と一緒に押す、という説明を、その括弧が並んでいる場所そのものに置く。
+
+        **項目ではなく、メニューバーの隅に置く部品にする**（`setCornerWidget`）。
+        以前は「押せない項目」として置いていたが、**押せない項目を飛ばすかどうかは
+        見た目（スタイル）任せ**で、`SH_Menu_AllowActiveAndDisabled` が 1 の
+        `windowsvista` と `windows` では **Alt → → と進んだときに反転表示で止まる**
+        （↓ を押しても何も開かない。抜けられはするが行き止まりに見える）。
+        このPCの既定 `windows11` と `fusion` では起きないので、**手元では見えない**
+        （2026-09-05 に4つのスタイルで実測して確認）。
+
+        部品にすれば**どのスタイルでも項目ではなくなる**ので、この違いごと無くなる。
+        「メニューを探す」窓にも、そもそも項目でないので出ない。
+        """
+        hint = QLabel(ALT_HINT)
+        hint.setEnabled(False)                 # 灰色にするため（押せる部品ではない）
+        # **メニューの文字の大きさに揃える。** 既定のままだと本文の大きさになり、
+        # 隣の `ヘルプ(H)` より大きく見える（利用者の設定は大きめ）
+        hint.setFont(self.menuBar().font())
+        hint.setContentsMargins(0, 0, 8, 0)    # 右端に貼り付かないよう少しだけ空ける
+        self.menuBar().setCornerWidget(hint, Qt.Corner.TopRightCorner)
+        self._alt_hint_widget = hint
 
     def _build_toolbar(self) -> None:
         """道具箱。**一覧は `_tool_actions` から取る。**
@@ -756,6 +788,16 @@ class MainWindow(QMainWindow):
         """
         if self.state.flip_slant():
             self.state.message.emit("斜めの向きを反転しました")
+
+    def suggest_next_panel(self) -> None:
+        """次に置くコマを提案する（要件定義 10.5）。
+
+        **押すたびに、直前の提案を次の案へ差し替える。** 気に入ったら別の操作へ移れば
+        そのまま残り、要らなければ Undo 1回で消える。
+
+        お知らせは `state` の側で出している。**何番目の案かはここからは分からない。**
+        """
+        self.state.suggest_next_panel()
 
     def toggle_panel_lock(self) -> None:
         """選んだコマのロックを付け外しする（要件定義 6.17）。

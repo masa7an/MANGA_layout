@@ -113,6 +113,20 @@ class History:
         return self._redo[-1].label if self._redo else None
 
     @property
+    def merge_key(self) -> str | None:
+        """直前の1手をまとめている鍵。**次の `commit` が吸い込まれる先。**
+
+        `undo_label` と混同しない。あちらは**積まれた1手の名前**で、
+        `break_merge()` でも Undo でも変わらないが、こちらは**まとめ扱いが
+        続いているか**を表し、区切られた時点で None に戻る。
+
+        「直前の1手の続きか」を呼ぶ側で知りたいときは、**こちらを見る**
+        （→ `EditorState.suggest_next_panel`）。`undo_label` で見ると、
+        まとめが切れているのに続きだと思い込む。
+        """
+        return self._merge_key
+
+    @property
     def depth(self) -> int:
         """積まれている手数。"""
         return len(self._undo)

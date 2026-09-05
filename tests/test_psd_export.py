@@ -362,6 +362,33 @@ class Test読み順の番号:
         panels, page = self.make(Rect(10, 10, 100, 80), Rect(200, 60, 100, 80))
         assert reading_order(page.panels, 35.0) == [panels[0], panels[1]]
 
+    def test_4コマ2列でも行優先のまま(self):
+        """**提案の読み順とは食い違う。承知のうえで揃えていない**（→ 要件定義 10.5）。
+
+        4コマ2列のページを人が読む順は「右列を上から下、続いて左列」だが、
+        ここは行優先のまま。**揃えると既に書き出した作品の番号が変わる**ので、
+        周知にとどめると決めた（本人判断・2026-09-05）。
+
+        **このテストは「直っていないこと」ではなく「決めたとおりであること」を見る。**
+        揃えたくなったら、まず要件定義 10.5 の判断から変えること。
+        """
+        rects = [Rect(x, y, 500.0, 380.0)
+                 for y in (89.0, 504.0, 919.0, 1334.0) for x in (638.0, 89.0)]
+        panels, page = self.make(*rects)
+        ordered = reading_order(page.panels, 35.0)
+        xs = [p.bounds().x for p in ordered]
+        assert xs == [638.0, 89.0] * 4          # 行優先（列優先なら右4つが先に並ぶ）
+
+    def test_段の高さが揃わないページも行優先のまま(self):
+        """右のコマだけ背が高いページ。**提案側は背の高いコマを1つの段と見る。**"""
+        panels, page = self.make(
+            Rect(638.0, 89.0, 500.0, 900.0),        # 右：背が高い
+            Rect(89.0, 89.0, 500.0, 400.0),         # 左上
+            Rect(89.0, 524.0, 500.0, 400.0),        # 左下
+        )
+        ordered = reading_order(page.panels, 35.0)
+        assert ordered == [panels[0], panels[1], panels[2]]
+
     def test_番号は1から振る(self, overlapping):
         items = page_layers(overlapping, overlapping.project.pages[0], 1.0)
         names = sorted(x.name for x in items if isinstance(x, PsdGroup))

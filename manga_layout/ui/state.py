@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
 
+from .. import next_panel
 from ..assets import AssetStore, PendingAssets
 from ..errors import AssetError, MaskSizeError
 from ..flow import (
@@ -112,6 +113,10 @@ from ..wand import (
     removed,
     select_at,
 )
+
+# 次のコマの提案（→ 要件定義 10.5）。**1手の名前と、履歴のまとめ鍵を兼ねる。**
+# 「直前の1手の続きか」は `history.merge_key` で見る（→ `suggest_next_panel`）
+SUGGEST_LABEL = "次のコマを提案"
 
 # 道具（ツール）
 TOOL_SELECT = "select"
@@ -328,6 +333,9 @@ class EditorState(QObject):
         self.focus_settings = DEFAULT_FOCUS_SETTINGS
         self.flow_settings = DEFAULT_FLOW_SETTINGS
         self._page_index = 0
+        # 直前の提案で置いたコマの id と、その案の番号（→ `suggest_next_panel`）
+        self._suggested: tuple[str, ...] = ()
+        self._suggest_index = 0
         self._tool = TOOL_SELECT
         self._selected_id: str | None = None
         # 保存先が決まる前に貼り付けた画像の預かり所。保存時に書き出す
@@ -1300,6 +1308,76 @@ class EditorState(QObject):
         with self.edit_page("このページのコマのロックをすべて解除") as page:
             for panel in page.panels:
                 panel.locked = False
+        return True
+
+    # -- 次のコマの提案 ------------------------------------------------------
+    #
+    # 描きかけのページを見て、次に置くコマを提案する（→ 要件定義 10.5）。
+    # 幾何の計算は `next_panel.py` にあり、ここは**押されたときの振る舞い**だけを持つ。
+    #
+    # **押すたびに、直前の提案を次の案へ差し替える。** 増やしていくのではない。
+    # 案どうしは重なるので、並べて置くと読めない絵になる。
+    #
+    # **履歴は `merge_key` で1手にまとめる。** 5回押しても Undo 1回で消える。
+    # 「気に入らなければ元に戻す」を、押した回数だけ繰り返させない。
+
+    def suggest_next_panel(self) -> bool:
+        """次のコマを提案し、そのとおりに置く。置けたら True。
+
+        **成功のお知らせもここで出す。** 何番目の案かは呼ぶ側からは分からないため
+        （他の操作は窓の側でお知らせを出しているが、ここだけ例外にしてある）。
+        """
+        page = self.page
+        if not next_panel.supported(page):
+            # **「斜め」だけではない。** 面積の無いコマや、頂点の順が崩れたコマも
+            # 断る（→ `next_panel.supported`）。文言はその全部を指す言い方にしてある
+            self.message.emit("四角でないコマがあるページでは提案できません")
+            return False
+
+        # 差し替えるかどうかは、**履歴がまとめている鍵**だけで決める。
+        # これは次の `edit()` が直前の1手へ吸い込まれる条件そのものなので、
+        # **「差し替えたのに履歴は別の1手」があり得なくなる。**
+        #
+        # `undo_label` で見てはいけない。あちらは**積まれた1手の名前**で、
+        # コマを選ぶ・道具を持ち替える・ページを移るだけで `break_merge()` が
+        # 走っても変わらない。差し替えたのに新しい1手が積まれ、**Undo 1回では
+        # 戻らなくなる**（2026-09-05 実測。コマをクリックしてもう一度押すと再現）。
+        #
+        # 途中で別の操作をしたら、その提案は**確定したもの**として扱い、次は新しく足す
+        replacing = self.history.merge_key == SUGGEST_LABEL
+        ignore = self._suggested if replacing else ()
+
+        found = next_panel.suggestions(
+            self.project, page, ignore, self.settings.margin, self.settings.gutter
+        )
+        if not found:
+            self._suggested = ()
+            self.message.emit("提案できる形が見つかりません")
+            return False
+
+        index = (self._suggest_index + 1) % len(found) if replacing else 0
+        with self.edit(SUGGEST_LABEL, merge_key=SUGGEST_LABEL) as project:
+            edited = project.pages[self._page_index]
+            if replacing:
+                # **消すのは `remove_panel` を通す。** 一覧を直に書き替えると、
+                # 紐づいたフキダシ・セリフの紐づけ解除と、斜めの組の解消を
+                # 飛ばす。今は直前に自分が置いたコマしか消さないので、どちらも
+                # 持たない——**だから今は無害だが、削除の作法がここだけ違う**
+                # （2026-09-05 に揃えた）。
+                #
+                # 見つからないものは飛ばす。`remove_panel` は無いと例外を投げ、
+                # `edit()` が巻き戻して画面にエラーが出る。**提案の押し直しで
+                # 出してよいエラーではない。**
+                for panel_id in ignore:
+                    if any(p.id == panel_id for p in edited.panels):
+                        edited.remove_panel(panel_id)
+            added = next_panel.add_suggestion(project, edited, found[index])
+        self._suggested = tuple(p.id for p in added)
+        self._suggest_index = index
+        self.message.emit(
+            f"提案 {index + 1}/{len(found)}: {found[index].text()}"
+            "（もう一度押すと次の案）"
+        )
         return True
 
     # -- コマの重なり順 ------------------------------------------------------

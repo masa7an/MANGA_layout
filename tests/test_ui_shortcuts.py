@@ -116,6 +116,35 @@ class Testメニューに無いキー:
         assert not (from_menu & by_hand)
 
 
+class Test公開する文書:
+    """`docs/ショートカットキー一覧.md` が古くなっていないこと。
+
+    **公開する一覧を手で書くと、キーを1つ変えた日から嘘をつき始める**
+    （→ `shortcuts.py` の冒頭と同じ理由）。`tools/dump_shortcuts.py` が
+    アプリのメニューから作り、ここで作り直し忘れを見つける。
+    """
+
+    def test_書き出した内容と一致する(self):
+        from tools.dump_shortcuts import OUTPUT, build
+
+        assert OUTPUT.exists(), "docs/ショートカットキー一覧.md が無い"
+        expected = build()
+        actual = OUTPUT.read_text(encoding="utf-8")
+        assert actual == expected, (
+            "一覧が古くなっている。作り直す: "
+            "./venv/Scripts/python.exe tools/dump_shortcuts.py --write"
+        )
+
+    def test_セリフの大きさは句読点(self, groups):
+        # 2026-09-05 に `Ctrl+]` / `Ctrl+[` から移した。**角括弧は刻印を見ても
+        # 何という記号か分からず、探すのに時間がかかる**（本人談）
+        keys = [row.keys for group in groups for row in group.rows]
+        assert "Ctrl+." in keys
+        assert "Ctrl+," in keys
+        assert "Ctrl+]" not in keys
+        assert "Ctrl+[" not in keys
+
+
 class Test窓:
     def test_押すまで作らない(self, window):
         """一度も使わない人のぶんの窓を、起動のたびに作らない。"""
