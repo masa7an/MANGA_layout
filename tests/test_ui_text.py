@@ -1123,14 +1123,14 @@ class Test縦書きの下見:
 
         window_with_text.view.finish_text_edit(commit=False)
 
-    def test_逃がした先に札のぶんの高さを空ける(self, window_with_text):
-        # 入力欄と枠の間に【テキスト入力モード】の札が入る
+    def test_逃がした先で枠にくっつけない(self, window_with_text):
+        # 空ける幅は書体の大きさから決まる（大きい書体で詰まって見える）
         text = window_with_text.state.selected_text
         window_with_text.view.begin_text_edit(text.id)
 
         editor = window_with_text.view._text_editor
         空き = editor.pos().y() - (text.rect.y + text.rect.h)
-        assert 空き >= editor._mode_label.total_height()
+        assert 空き == pytest.approx(editor._mode_label.gap)
 
         window_with_text.view.finish_text_edit(commit=False)
 
@@ -1270,6 +1270,33 @@ class Testテキスト入力モードの札:
         assert not (editor._mode_label.flags() & 無視する)
         assert editor._confirm.flags() & 無視する
 
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_札も確定の目印も入力欄の下に並ぶ(self, window_with_text):
+        """上から 入力欄 → 札 → 確定の目印 の順。
+
+        札を入力欄の上に出すと**フキダシの輪郭と重なりやすい**（本人の
+        指摘 2026-09-05）。セリフはフキダシの中に置くのが普通なので、
+        入力欄の真上は輪郭が通っている確率が高い。
+        """
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        editor = window_with_text.view._text_editor
+
+        入力欄の下端 = editor.boundingRect().bottom()
+        assert editor._mode_label.pos().y() >= 入力欄の下端
+        assert editor._confirm.pos().y() > editor._mode_label.pos().y()
+
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_行が増えたら札も付いていく(self, window_with_text):
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        editor = window_with_text.view._text_editor
+        前 = editor._mode_label.pos().y()
+
+        editor.setPlainText("あ" + chr(10) + "い" + chr(10) + "う")
+
+        assert editor._mode_label.pos().y() > 前
+        assert editor._confirm.pos().y() > editor._mode_label.pos().y()
         window_with_text.view.finish_text_edit(commit=False)
 
     def test_押しても自分では受け取らない(self, window_with_text):

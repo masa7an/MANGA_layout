@@ -1467,7 +1467,7 @@ class ConfirmHintItem(QGraphicsItem):
 
 
 class ModeLabelItem(QGraphicsItem):
-    """入力欄に添える【テキスト入力モード】の札。
+    """入力欄の**下**に添える【テキスト入力モード】の札。
 
     **これから打つ書体・大きさ・太さ、そのままで描く。** 札そのものが
     見本を兼ねる。空のセリフを打ち始めるとき、入力欄には1文字も無いので
@@ -1483,6 +1483,10 @@ class ModeLabelItem(QGraphicsItem):
     押しても自分では受け取らない（`NoButton`）。クリックは下の画面へ
     素通りし、「画面を触ったら確定」という既にある道に乗る——これは
     `ConfirmHintItem` と同じ線引き。
+
+    **入力欄の上ではなく下に置く。** 上へ出すとフキダシの輪郭と重なり
+    やすい（本人の指摘 2026-09-05）。セリフはフキダシの中に置くのが普通
+    なので、入力欄の真上は輪郭が通っている確率が高い。
     """
 
     LABEL = "【テキスト入力モード】"
@@ -1512,18 +1516,27 @@ class ModeLabelItem(QGraphicsItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setZValue(1001)  # 入力欄（1000）より上
 
-    def total_height(self) -> float:
-        """札が要する高さ。**上下の間隔を含む。**
+    @property
+    def gap(self) -> float:
+        """札の前後に空ける間隔。**字の高さから決まる**ので定数では持てない。
 
-        縦書きのときに入力欄をどれだけ下げるかは、この値で決まる
-        （→ `TextEditorItem._place_in`）。札の高さだけを返すと、呼ぶ側が
-        間隔を足し忘れて枠と札がくっつく。
+        縦書きのときに入力欄を枠からどれだけ下げるかにも、この値を使う
+        （→ `TextEditorItem._place_in`）。
         """
-        return self._h + self._gap * 2
+        return self._gap
+
+    def total_height(self) -> float:
+        """札が下に占める高さ。**手前の間隔を含む。**
+
+        確定の目印をどこへ置くかは、この値で決まる
+        （→ `TextEditorItem._place_hints`）。札の高さだけを返すと、呼ぶ側が
+        間隔を足し忘れて札と目印がくっつく。
+        """
+        return self._gap + self._h
 
     def _box(self) -> QRectF:
-        """入力欄の上端から、間隔ぶん離した位置。**上へ伸びる（y が負）。**"""
-        return QRectF(0.0, -(self._gap + self._h), self._w, self._h)
+        """入力欄の下端から、間隔ぶん離した位置。**下へ伸びる。**"""
+        return QRectF(0.0, self._gap, self._w, self._h)
 
     def boundingRect(self) -> QRectF:
         # 枠線が半分はみ出すぶんを見ておく
@@ -1577,13 +1590,13 @@ class TextEditorItem(QGraphicsTextItem):
         self.setTextWidth(text.rect.w)
 
         self.setZValue(1000)
-        # 札は入力欄の上へ付く。置き場所の計算で高さを使うので、先に作る
+        # 枠から下げる幅に札の間隔を使うので、置く前に作る
         self._mode_label = ModeLabelItem(self, text_font(text.font))
         self._place_in(text.rect)
 
         self._confirm = ConfirmHintItem(self)
-        self._place_confirm()
-        # 行が増えると入力欄の下端が下がる。目印も付いていく
+        self._place_hints()
+        # 行が増えると入力欄の下端が下がる。札も目印も付いていく
         self.document().contentsChanged.connect(self._on_contents_changed)
 
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextEditorInteraction)
@@ -1595,18 +1608,18 @@ class TextEditorItem(QGraphicsTextItem):
         字が 1px も動かないのが一番よい（要件定義 6.5）。
 
         縦書きは枠の中に**確定後の姿**が出ているので、重ねられない。枠の
-        下へ下ろし、間に【テキスト入力モード】の札ぶんの高さを空ける。
-        **札の高さは書体の大きさで変わる**ので、定数では決められない。
+        下へ下ろす。空ける幅は札と同じ間隔にしてある——**字の大きさから
+        決まる**ので、定数では決められない（大きい書体で詰まって見える）。
         """
         if self._vertical:
-            top = rect.y + rect.h + self._mode_label.total_height()
+            top = rect.y + rect.h + self._mode_label.gap
         else:
             height = self.boundingRect().height()
             top = rect.y + max(0.0, (rect.h - height) / 2.0)
         self.setPos(rect.x, top)
 
     def _on_contents_changed(self) -> None:
-        self._place_confirm()
+        self._place_hints()
         self.publish_preview()
 
     def publish_preview(self) -> None:
@@ -1618,10 +1631,23 @@ class TextEditorItem(QGraphicsTextItem):
         if self._vertical:
             self._view.update_text_preview(self.toPlainText())
 
-    def _place_confirm(self) -> None:
-        """確定の目印を入力欄の下端へ付け直す。"""
+    def _place_hints(self) -> None:
+        """札と確定の目印を、入力欄の下端へ付け直す。
+
+        **上から 入力欄 →【テキスト入力モード】の札 → 確定の目印**の順。
+        札を入力欄の上に出すとフキダシの輪郭と重なりやすいので、両方とも
+        下へ回した（本人の指摘 2026-09-05）。
+
+        **2つは長さの単位が違う。** 札は書体と同じ px（表示倍率で伸び縮み
+        する）、目印は画面の画素（倍率を無視する）。目印の位置に札の高さを
+        足しているのは、**足す側が px だから**——目印は自分の内側で画面
+        画素ぶんの間隔をさらに空ける。
+        """
         box = self.boundingRect()
-        self._confirm.setPos(box.left(), box.bottom())
+        self._mode_label.setPos(box.left(), box.bottom())
+        self._confirm.setPos(
+            box.left(), box.bottom() + self._mode_label.total_height()
+        )
 
     def keyPressEvent(self, event) -> None:
         if event.key() == Qt.Key.Key_Escape:
