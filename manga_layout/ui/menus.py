@@ -1199,8 +1199,12 @@ class TextMenu:
             add(label, lambda _=False, a=align: window.set_text_align(a))
         menu.addSeparator()
 
-        add("大きく", lambda: window.step_text_size(1), "Ctrl+]")
-        add("小さく", lambda: window.step_text_size(-1), "Ctrl+[")
+        # **`Ctrl+.` / `Ctrl+,`**（2026-09-05 に `Ctrl+]` / `Ctrl+[` から変更）。
+        # 角括弧は配列によって押しにくい位置にある（本人談）。句読点は
+        # どの配列でもホームポジションのすぐ下にあり、**右が増える側という
+        # 並びの約束も保てる**（→ 要件定義 6.27 のトーンと同じ向き）
+        add("大きく", lambda: window.step_text_size(1), "Ctrl+.")
+        add("小さく", lambda: window.step_text_size(-1), "Ctrl+,")
         self.bold_action = add("太字", window.toggle_bold, "Ctrl+B")
         self.bold_action.setCheckable(True)
         menu.addSeparator()
