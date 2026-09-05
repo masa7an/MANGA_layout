@@ -237,7 +237,7 @@ ZOOM_OUT_KEYS = (Qt.Key.Key_Minus,)
 # Shift を押した `[` `]` は配列によって `{` `}` として届くので、両方を拾う
 # （`+` に対して `=` も拾っているのと同じ手当て）。
 #
-# **セリフの大きさ（`Ctrl+.` / `Ctrl+,`）と向きを揃える。** 右が増える側で、
+# **セリフの大きさ（`Ctrl+>` / `Ctrl+<`）と向きを揃える。** 右が増える側で、
 # 左が減る側。修飾キーが違うので取り合いにはならない
 TONE_THRESHOLD_UP_KEYS = (Qt.Key.Key_BraceRight, Qt.Key.Key_BracketRight)
 TONE_THRESHOLD_DOWN_KEYS = (Qt.Key.Key_BraceLeft, Qt.Key.Key_BracketLeft)
@@ -1480,10 +1480,10 @@ class SizeKeysHintItem(QGraphicsItem):
     看板が食い違うと、読んだとおりに押しても何も起きない。テストで
     メニュー側の `QAction` と突き合わせてある。
 
-    **`Ctrl+.` が大きく、`Ctrl+,` が小さく。** 右が増える側という並びの
+    **`Ctrl+>` が大きく、`Ctrl+<` が小さく。** 右が増える側という並びの
     約束で、トーンの濃さと向きを揃えてある（→ 要件定義 6.27）。
-    角括弧から句読点へ移したのは 2026-09-05 で、**刻印を見て何という記号か
-    分からないと探すのに時間がかかる**ため（→ `menus.TextMenu`）。
+    山括弧なのは、**向きが記号の形そのものに出ている**ため。角括弧 → 句読点
+    → 山括弧と 2026-09-05 に2度動かしている（→ `menus.TextMenu`）。
 
     `ConfirmHintItem` の子にしてある。あちらは表示倍率を無視する
     （`ItemIgnoresTransformations`）ので、**その子は倍率の掛かっていない
@@ -1500,7 +1500,7 @@ class SizeKeysHintItem(QGraphicsItem):
     # 確定の目印の下端との間隔（画面の画素）。目印と1組に見えるよう、
     # 入力欄との間（`ConfirmHintItem.GAP` ＝ 26）より詰める
     GAP = 6.0
-    LABEL = "文字拡大 Ctrl+.　文字縮小 Ctrl+,"
+    LABEL = "文字拡大 Ctrl+>　文字縮小 Ctrl+<"
 
     # 薄い橙。確定の目印（青）と役目が違うことを色で分ける——
     # あちらは「入力から抜ける」、こちらは「入力の外にある書式の操作」
