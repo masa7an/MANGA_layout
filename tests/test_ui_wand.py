@@ -58,28 +58,44 @@ def image_of(window):
     return window.state.page.panels[0].children[0]
 
 
-def click(window, u: float, v: float, *, shift: bool = False) -> None:
-    """絵の中の割合（0〜1）で押す。ページ座標へ直してから canvas に渡す。
-
-    **押すだけ**（`test_ui_balloon.press` の Shift 付き版）。この道具は
-    ドラッグを持たないので、離す動きは要らない。
-    """
+def _mouse_event(window, kind, u: float, v: float, shift: bool) -> QMouseEvent:
+    """絵の中の割合（0〜1）を、ページ座標を経由して canvas の座標へ直す。"""
     image = image_of(window)
     x = image.rect.x + image.rect.w * u
     y = image.rect.y + image.rect.h * v
     view = window.view
     position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mousePressEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonPress,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.ShiftModifier
-            if shift
-            else Qt.KeyboardModifier.NoModifier,
-        )
+    return QMouseEvent(
+        kind,
+        position,
+        view.viewport().mapToGlobal(position),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.ShiftModifier
+        if shift
+        else Qt.KeyboardModifier.NoModifier,
+    )
+
+
+def click(window, u: float, v: float, *, shift: bool = False) -> None:
+    """絵の中の割合（0〜1）で押す。
+
+    **押すだけ**（`test_ui_balloon.press` の Shift 付き版）。この道具は
+    ドラッグを持たないので、離す動きは要らない。
+    """
+    window.view.mousePressEvent(
+        _mouse_event(window, QMouseEvent.Type.MouseButtonPress, u, v, shift)
+    )
+
+
+def quick_second_click(window, u: float, v: float, *, shift: bool = False) -> None:
+    """**素早い2回目の押下。** Qt はこれを「押下」ではなく「ダブルクリック」として配る。
+
+    `click` を2回呼んでも再現できない——あちらは押下が2回届く経路で、
+    **ゆっくり2回押した場合**にあたる。連打のほうを確かめるにはこちらが要る。
+    """
+    window.view.mouseDoubleClickEvent(
+        _mouse_event(window, QMouseEvent.Type.MouseButtonDblClick, u, v, shift)
     )
 
 
@@ -154,6 +170,49 @@ class Test手の届く範囲:
         window_with_image.state.set_tool(TOOL_SELECT)
         click(window_with_image, 0.5, 0.5)
         assert image_of(window_with_image).mask_asset == ""
+
+
+class Test連打:
+    """**素早い2回目も1手として消える**（2026-09-05 に発見して直した）。
+
+    Qt は素早い2回目の押下を `mousePressEvent` ではなく
+    `mouseDoubleClickEvent` へ配る。切り抜きは**押すこと自体が1手**なので、
+    そちらでも同じ処理へ回さないと、要件定義 10.3 の「続けて押せば足せる」を
+    素直にやったときに2回目が落ちる。
+    """
+
+    def test_素早い2回目も消える(self, window_with_image):
+        click(window_with_image, 0.5, 0.5)  # 枠の中
+        quick_second_click(window_with_image, 0.05, 0.05)  # 枠の外
+        mask = mask_of(window_with_image)
+        assert mask.pixelColor(60, 60).value() == 0, "1回目のぶん"
+        assert mask.pixelColor(5, 5).value() == 0, "素早い2回目のぶんも消える"
+
+    def test_素早い2回目も1手として積まれる(self, window_with_image):
+        click(window_with_image, 0.5, 0.5)
+        quick_second_click(window_with_image, 0.05, 0.05)
+        window_with_image.state.undo()
+        mask = mask_of(window_with_image)
+        assert mask.pixelColor(5, 5).value() == 255, "2回目だけが戻る"
+        assert mask.pixelColor(60, 60).value() == 0, "1回目は残っている"
+
+    def test_素早い2回目でも選択は動かない(self, window_with_image):
+        """**押した所を消すだけ**（→ `PageView.mousePressEvent` の注記）。
+
+        踏み込みの巡回に入ると、連打しただけで絵やコマが選ばれる。
+        """
+        window_with_image.state.select(None)
+        click(window_with_image, 0.5, 0.5)
+        quick_second_click(window_with_image, 0.5, 0.5)
+        assert window_with_image.state.selected_id is None
+
+    def test_素早い2回目でも_Shiftは裏返しのまま届く(self, window_with_image):
+        """2回目だけ Shift を落とすと、**残すつもりが消す**に化ける。"""
+        click(window_with_image, 0.05, 0.05)  # 枠の外を消す
+        quick_second_click(window_with_image, 0.5, 0.5, shift=True)  # 中だけ残す
+        mask = mask_of(window_with_image)
+        assert mask.pixelColor(60, 60).value() == 255, "押した中が残る"
+        assert mask.pixelColor(30, 60).value() == 0, "残す指定なので枠線は落ちる"
 
 
 class Test許容差:

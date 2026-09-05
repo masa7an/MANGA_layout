@@ -2681,6 +2681,10 @@ class PageView(QGraphicsView):
         選ばれるとコマを動かすつもりのドラッグが絵だけを動かすため、
         踏み込む操作を分けてあるのは今までどおりで（→ 6.3）、2回目から
         先が足した分。
+
+        **道具を持っている間は、どれも踏み込まない。** 素早い2回目の押下は
+        `mousePressEvent` ではなくここへ届く（Qt の配り方）ので、ここで
+        打ち切らないと、道具を持ったまま連打しただけで選択が動く。
         """
         if event.button() != Qt.MouseButton.LeftButton:
             super().mouseDoubleClickEvent(event)
@@ -2693,6 +2697,15 @@ class PageView(QGraphicsView):
             return
 
         x, y = self._scene_px(event)
+
+        # 切り抜き（→ 10.3）は**押すこと自体が1手**なので、通り過ぎさせるだけの
+        # ラフ・トーン範囲とは違い、押下と同じ処理へ回す。素早い2回目がここへ
+        # 届くため、拾わないと「続けて押せば足せる」の2回目が落ちる
+        # （消えないうえに、選択の巡回に入って絵が選ばれる。2026-09-05 発見）
+        if self.state.tool == TOOL_WAND:
+            self._wand_click(x, y, event.modifiers())
+            event.accept()
+            return
 
         text = text_at(self.state.page, x, y)
         if text is not None:
