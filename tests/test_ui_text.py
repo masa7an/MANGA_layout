@@ -1310,6 +1310,86 @@ class Testテキスト入力モードの札:
         assert 受け取る == Qt.MouseButton.NoButton
 
 
+class Test文字の大きさの看板:
+    """確定の目印の下に積む、大きさを変えるキーの看板（2026-09-05）。
+
+    **看板と実際の割り当てが食い違うと、読んだとおりに押しても動かない。**
+    ここはメニューの `QAction` と突き合わせて、片方だけ直したときに落ちる
+    ようにしてある。
+    """
+
+    def 看板(self):
+        from manga_layout.ui.canvas import SizeKeysHintItem
+
+        return SizeKeysHintItem
+
+    def 割り当て(self, window, 名前: str) -> str:
+        for action in window.text_menu.actions:
+            if action.text() == 名前:
+                return action.shortcut().toString()
+        raise AssertionError(f"セリフメニューに「{名前}」が無い")
+
+    def test_確定の目印の下に積む(self, window_with_text):
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        editor = window_with_text.view._text_editor
+
+        # 目印の子。倍率を無視する親の座標系に並ぶので、置き直しが要らない
+        assert editor._size_keys.parentItem() is editor._confirm
+        assert editor._size_keys.pos().y() >= editor._confirm.total_height()
+
+        window_with_text.view.finish_text_edit(commit=False)
+
+    def test_看板のキーはメニューの割り当てと同じ(self, window_with_text):
+        label = self.看板().LABEL
+        assert self.割り当て(window_with_text, "大きく") in label
+        assert self.割り当て(window_with_text, "小さく") in label
+
+    def test_拡大と縮小を取り違えていない(self, window_with_text):
+        """**`Ctrl+.` が大きく、`Ctrl+,` が小さく**（右が増える側）。
+
+        取り違えても看板の文字は正しく見えるので、目視では捕まらない。
+        語とキーが交互に同じ順で並んでいることで確かめる。
+        """
+        label = self.看板().LABEL
+        並び = [
+            label.index("拡大"),
+            label.index(self.割り当て(window_with_text, "大きく")),
+            label.index("縮小"),
+            label.index(self.割り当て(window_with_text, "小さく")),
+        ]
+        assert 並び == sorted(並び)
+
+    def test_大きさのキーは入力を確定してから効く(self, window_with_text):
+        """**押すと入力から抜ける。** 看板を読んで「打ちながら変えられる」と
+        期待すると外れるので、その差をここに残す。
+
+        メニューのショートカットは入力欄より手前で解決されるため、項目の
+        実行前に必ず確定する形に揃えてある（`MainWindow.run_action`、
+        2026-08-08）。塞がずにいると、打った文字が黙って消えることまで
+        起きていた。**打った内容は捨てられない**（`commit=True`）。
+        """
+        window = window_with_text
+        text_id = window.state.selected_text.id
+        window.view.begin_text_edit(text_id)
+        window.view._text_editor.setPlainText("あいう")
+        前 = window.state.selected_text.font.size_px
+
+        window.run_action(lambda: window.step_text_size(1))
+
+        assert not window.view.is_editing_text
+        assert window.state.page.find(text_id).content == "あいう"
+        assert window.state.page.find(text_id).font.size_px > 前
+
+    def test_押しても自分では受け取らない(self, window_with_text):
+        from PySide6.QtCore import Qt
+
+        window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
+        受け取る = window_with_text.view._text_editor._size_keys.acceptedMouseButtons()
+        window_with_text.view.finish_text_edit(commit=False)
+
+        assert 受け取る == Qt.MouseButton.NoButton
+
+
 class TestDirection:
     """縦書きの切り替え。
 

@@ -1450,6 +1450,13 @@ class ConfirmHintItem(QGraphicsItem):
         self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         self.setZValue(1001)  # 入力欄（1000）より上
 
+    def total_height(self) -> float:
+        """目印が下に占める高さ。**手前の間隔を含む。**
+
+        下へ続けて札を積むときの足し幅（→ `SizeKeysHintItem`）。
+        """
+        return self.GAP + self._h
+
     def boundingRect(self) -> QRectF:
         return QRectF(0.0, self.GAP, self._w, self._h)
 
@@ -1464,6 +1471,74 @@ class ConfirmHintItem(QGraphicsItem):
         painter.drawText(
             QPointF(self.PADDING_X, self.GAP + self._baseline), self.LABEL
         )
+
+
+class SizeKeysHintItem(QGraphicsItem):
+    """確定の目印の下に積む、文字の大きさを変えるキーの看板。
+
+    **キーの綴りは `menus.TextMenu` が持つものと同じでなければならない。**
+    看板が食い違うと、読んだとおりに押しても何も起きない。テストで
+    メニュー側の `QAction` と突き合わせてある。
+
+    **`Ctrl+.` が大きく、`Ctrl+,` が小さく。** 右が増える側という並びの
+    約束で、トーンの濃さと向きを揃えてある（→ 要件定義 6.27）。
+    角括弧から句読点へ移したのは 2026-09-05 で、**刻印を見て何という記号か
+    分からないと探すのに時間がかかる**ため（→ `menus.TextMenu`）。
+
+    `ConfirmHintItem` の子にしてある。あちらは表示倍率を無視する
+    （`ItemIgnoresTransformations`）ので、**その子は倍率の掛かっていない
+    座標系に並ぶ**。同じ画面画素の単位で積めるので、間隔を px と画素で
+    混ぜずに済む。倍率を無視するのはこれも同じ理由で、**キーの案内は
+    作品の一部ではなく画面の道具**だから。
+
+    押しても自分では受け取らない（`NoButton`）。クリックは下の画面へ
+    素通りし、「画面を触ったら確定」という既にある道に乗る。
+    """
+
+    PADDING_X = 8.0
+    PADDING_Y = 4.0
+    # 確定の目印の下端との間隔（画面の画素）。目印と1組に見えるよう、
+    # 入力欄との間（`ConfirmHintItem.GAP` ＝ 26）より詰める
+    GAP = 6.0
+    LABEL = "文字拡大 Ctrl+.　文字縮小 Ctrl+,"
+
+    # 薄い橙。確定の目印（青）と役目が違うことを色で分ける——
+    # あちらは「入力から抜ける」、こちらは「入力の外にある書式の操作」
+    BG = QColor("#FFE0B2")
+    BORDER = QColor("#FFB74D")
+    FG = QColor("#E65100")
+
+    def __init__(self, parent: ConfirmHintItem):
+        super().__init__(parent)
+        self._font = QFont()
+        self._font.setPixelSize(12)
+        metrics = QFontMetricsF(self._font)
+        self._w = metrics.horizontalAdvance(self.LABEL) + self.PADDING_X * 2
+        self._h = metrics.height() + self.PADDING_Y * 2
+        self._baseline = self.PADDING_Y + metrics.ascent()
+
+        # 親が倍率を無視するので、自分に付ける必要はない（付けても無害だが、
+        # 「親の座標系に並んでいる」という意図が読めなくなる）
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setZValue(1001)
+        self.setPos(0.0, parent.total_height())
+
+    def _box(self) -> QRectF:
+        return QRectF(0.0, self.GAP, self._w, self._h)
+
+    def boundingRect(self) -> QRectF:
+        # 枠線が半分はみ出すぶんを見ておく
+        return self._box().adjusted(-1.0, -1.0, 1.0, 1.0)
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        box = self._box()
+        painter.setPen(QPen(self.BORDER, 1.0))
+        painter.setBrush(QBrush(self.BG))
+        painter.drawRoundedRect(box, 3.0, 3.0)
+
+        painter.setFont(self._font)
+        painter.setPen(QPen(self.FG))
+        painter.drawText(QPointF(self.PADDING_X, self.GAP + self._baseline), self.LABEL)
 
 
 class ModeLabelItem(QGraphicsItem):
@@ -1595,6 +1670,8 @@ class TextEditorItem(QGraphicsTextItem):
         self._place_in(text.rect)
 
         self._confirm = ConfirmHintItem(self)
+        # 目印の子。位置は目印の座標系で決まるので、置き直しは要らない
+        self._size_keys = SizeKeysHintItem(self._confirm)
         self._place_hints()
         # 行が増えると入力欄の下端が下がる。札も目印も付いていく
         self.document().contentsChanged.connect(self._on_contents_changed)
@@ -1634,7 +1711,9 @@ class TextEditorItem(QGraphicsTextItem):
     def _place_hints(self) -> None:
         """札と確定の目印を、入力欄の下端へ付け直す。
 
-        **上から 入力欄 →【テキスト入力モード】の札 → 確定の目印**の順。
+        **上から 入力欄 →【テキスト入力モード】の札 → 確定の目印 →
+        文字の大きさのキー**の順。いちばん下の看板は目印の子なので、
+        目印を動かせば付いてくる（ここで置き直すのは上の2つだけ）。
         札を入力欄の上に出すとフキダシの輪郭と重なりやすいので、両方とも
         下へ回した（本人の指摘 2026-09-05）。
 
