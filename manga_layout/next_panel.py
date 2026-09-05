@@ -153,16 +153,28 @@ def to_rect(box: NBox, page: Page) -> Rect:
 
 
 def guide_frame(page: Page, margin: float) -> NBox | None:
-    """基本枠（`LayoutSettings.margin` の内側）を正規化座標で。余白が無ければ None。
+    """基本枠（`LayoutSettings.margin` の内側）を正規化座標で。**無ければ None。**
 
     **px の余白は、正規化すると縦横で値が変わる**（A4 なら 89px が横 0.072・縦 0.051）。
     ここで換算しておかないと、空白ページに置くコマが枠からはみ出す。
+
+    **余白が入り切らないページでは None を返す。** ページの大きさは 50px まで
+    下げられる（`ui/pages.PAGE_SIZE_MIN_PX`）のに余白は既定 89px なので、
+    **左右の余白だけでページ幅を超える**ことがある。そのまま作ると幅も高さも
+    負の枠になり、**裏返った枠を「置いてよい範囲」として配り歩く**ことになる
+    （150x150px で幅 -0.187 の枠を返していた。2026-09-05 修正）。
+
+    **無いことにするのは、間違った枠を渡すよりよい。** 受け取る側は枠が無ければ
+    既定の余白へ落ちる（→ `joseki.DEFAULT_MARGIN`）。
     """
     if margin <= 0:
         return None
     size = page.size
     x, y = margin / size.w, margin / size.h
-    return NBox(x, y, 1.0 - x * 2, 1.0 - y * 2)
+    width, height = 1.0 - x * 2, 1.0 - y * 2
+    if width <= 0 or height <= 0:
+        return None
+    return NBox(x, y, width, height)
 
 
 def context_for(

@@ -221,6 +221,23 @@ class TestGuideFrame:
         assert frame.right == pytest.approx(1.0 - 89.0 / PAGE_W)
         assert frame.bottom == pytest.approx(1.0 - 89.0 / PAGE_H)
 
+    def test_余白が入り切らなければ枠は無い(self):
+        # ページは 50px まで小さくできるのに余白は 89px。**左右だけで幅を超える**
+        margin = LayoutSettings().margin
+        for w, h in ((178.0, 178.0), (150.0, 150.0), (120.0, 200.0), (50.0, 50.0)):
+            _project, page = page_with()
+            page.size = Size(w, h)
+            assert guide_frame(page, margin) is None, f"{w}x{h}"
+
+    def test_枠を返すときは必ず面積を持つ(self):
+        margin = LayoutSettings().margin
+        for w in range(50, 1300, 37):
+            _project, page = page_with()
+            page.size = Size(float(w), float(w) * 1.4)
+            frame = guide_frame(page, margin)
+            if frame is not None:
+                assert frame.w > 0 and frame.h > 0, w
+
     def test_余白が無ければ枠も無い(self):
         _project, page = page_with()
         assert guide_frame(page, 0.0) is None
@@ -396,14 +413,33 @@ class TestGuideFrame:
                 for rect in found.rects:
                     assert rect.w > 0 and rect.h > 0, f"{w}x{h}: {found.text()}"
 
-    def test_枠が潰れるページでも断ち切りの案は残る(self):
-        # 断ち切りは枠を使わずページの外まで伸ばす。**潰れても作れる**
+    def test_余白が入り切らないページは既定の余白へ落ちる(self):
+        """178x178px に余白 89px は入らない。**枠は「無い」ことにする。**
+
+        受け取る側は枠が無ければ既定の余白（`joseki.DEFAULT_MARGIN`）へ落ちるので、
+        幅ちがいの4案も置ける大きさになる。**裏返った枠を配り歩くよりよい**
+        （以前はここで潰れた枠を渡し、大きさ0になった4案が落ちて断ち切り2案だけが
+        残っていた。2026-09-05 修正）。**雛形だけは4段が入らず落ちる。**
+        """
         project, page = page_with()
         page.size = Size(178.0, 178.0)
+        assert guide_frame(page, LayoutSettings().margin) is None
         found = suggestions(project, page, margin=LayoutSettings().margin, gutter=35.0)
         assert [s.label for s in found] == [
+            "幅 1/3", "幅 1/2", "幅 2/3", "幅 いっぱい",
             "上と右を断ち切り（幅 1/2）", "上半分を断ち切り",
         ]
+        for suggestion in found:
+            for rect in suggestion.rects:
+                assert rect.w > 0 and rect.h > 0
+
+    def test_余白が入るうちは薄い枠でも尊重する(self):
+        # 200x200 なら 89px の余白が両側に入る。**入るなら、その余白で置く**
+        project, page = page_with()
+        page.size = Size(200.0, 200.0)
+        frame = guide_frame(page, LayoutSettings().margin)
+        assert frame is not None
+        assert frame.w == pytest.approx(1.0 - 89.0 / 200.0 * 2)
 
 
 class TestAddSuggestion:
