@@ -539,10 +539,19 @@ class MainWindow(QMainWindow):
             menu.refresh()
 
     def _hint(self) -> str:
-        """いま何を選んでいるかを状態表示に出す。
+        """状態表示の右側に出す1行。**道具が先、選択があと。**
 
-        コマと画像は見た目が似ているので、文字でも示さないと
-        どちらを動かしているのか分からなくなる。
+        道具そのものが名乗る案内（`_tool_hint`）があればそれを出し、
+        無ければ選んでいるものの案内（`_selection_hint`）を出す。
+
+        **2つは混ざらない。** ラフやトーンの範囲を調整している間はそもそも
+        何も選べないので、選択の話をしても出るものが無い（→ 6.23、6.27）。
+        """
+        tool = self._tool_hint()
+        return self._selection_hint() if tool is None else tool
+
+    def _tool_hint(self) -> str | None:
+        """道具そのものが名乗る案内。**名乗らない道具では None。**
 
         ラフの調整中は選択の話をしない（→ 6.23）。この道具では何も選べず、
         掴めるのはラフだけなので、そちらの寸法を出す。**トーンの範囲も同じ**
@@ -602,6 +611,14 @@ class MainWindow(QMainWindow):
         if self.state.tool == TOOL_TEXT:
             return f"セリフを追加: {self._next_font_label()}"
 
+        return None
+
+    def _selection_hint(self) -> str:
+        """いま何を選んでいるかを出す。**何も選んでいなくても1行返す。**
+
+        コマと画像は見た目が似ているので、文字でも示さないと
+        どちらを動かしているのか分からなくなる。
+        """
         image = self.state.selected_image
         if image is not None:
             r = image.rect

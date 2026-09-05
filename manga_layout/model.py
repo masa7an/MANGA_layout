@@ -919,7 +919,7 @@ class StickerObject(SceneObject):
 #         - `_apply_move` / `_apply_resize`（確定時の型ごとの分岐）
 #         - `mousePressEvent` の道具分岐（クリックで置ける道具にする場合）
 #     manga_layout/ui/window.py
-#         - `_hint`（状態表示）
+#         - `_selection_hint`（状態表示。道具側は `_tool_hint`）
 #         - `delete_target`（「削除」で消える対象と呼び名）
 #     manga_layout/ui/menus.py
 #         - メニュー部品（`StickerMenu` に倣ってクラスを1つ足し、
