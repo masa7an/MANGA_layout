@@ -11,6 +11,7 @@ import contextlib
 import dataclasses
 import pathlib
 from collections.abc import Iterator
+from typing import Any
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
@@ -585,6 +586,46 @@ class EditorState(QObject):
         """
         with self.edit(label, merge_key=merge_key) as project:
             yield project.pages[self._page_index]
+
+    @contextlib.contextmanager
+    def _edit_found(
+        self,
+        object_id: str,
+        label: str,
+        kind: type,
+        what: str,
+        *,
+        having: str | None = None,
+        merge_key: str | None = None,
+    ) -> Iterator[Any]:
+        """id で引き直してから触るための入れ物。**1件を直す操作はここを通す。**
+
+        Undo で `Project` の実体が差し替わるため、**外で掴んだオブジェクトを
+        そのまま書き換えてはいけない**（要件定義 6.8）。id だけを渡し、編集の
+        中で引き直す。
+
+        **この約束を種類ごとに書き分けない。** 吹き出し・セリフ・集中線・
+        流線・トーンで5回書いていたときは、6つめを足す人が引き直しごと
+        写し忘れられる形だった。**間違いは「書き忘れ」で起き、書き忘れは
+        テストに出ない**（引き直さなくても、Undo を挟まなければ動く）。
+
+        `having` は「その属性が入っていること」も条件にするときの属性名。
+        集中線・流線・トーンは**独立したオブジェクトではなくコマや画像の
+        属性**なので、型が合っていても入っていなければ触れない。
+
+        `merge_key` を渡すと、連打ぶんが履歴の1手にまとまる
+        （→ `History.commit`）。
+
+        呼ぶ側は種類ごとの小さな入れ物（`_edit_balloon` など）を使う。
+        **そちらに残っているのは名前と型だけで、約束はここにしかない。**
+        """
+        with self.edit_page(label, merge_key=merge_key) as page:
+            target = page.find(object_id)
+            if not isinstance(target, kind) or (
+                having is not None and getattr(target, having) is None
+            ):
+                raise KeyError(f"{what}が見つかりません: {object_id}")
+            yield target
 
     def undo(self) -> None:
         label = self.history.undo()
@@ -1461,22 +1502,13 @@ class EditorState(QObject):
         panel = self.selected_panel
         return None if panel is None else panel.focus_lines
 
-    def _edit_focus(self, panel_id: str, label: str):
-        """id で引き直してから触るための小さな入れ物。
-
-        Undo で `Project` の実体が差し替わるため、外で掴んだコマを
-        そのまま書き換えてはいけない（`_edit_balloon` と同じ）。
-        """
-
-        @contextlib.contextmanager
-        def scope():
-            with self.edit_page(label) as page:
-                target = page.find(panel_id)
-                if not isinstance(target, Panel) or target.focus_lines is None:
-                    raise KeyError(f"集中線の入ったコマが見つかりません: {panel_id}")
-                yield target
-
-        return scope()
+    def _edit_focus(
+        self, panel_id: str, label: str
+    ) -> contextlib.AbstractContextManager[Panel]:
+        """集中線の入ったコマを引き直して触る（→ `_edit_found`）。"""
+        return self._edit_found(
+            panel_id, label, Panel, "集中線の入ったコマ", having="focus_lines"
+        )
 
     def add_focus_lines(self) -> bool:
         """選択中のコマに集中線を入れる。入れたら True。
@@ -1610,18 +1642,13 @@ class EditorState(QObject):
         panel = self.selected_panel
         return None if panel is None else panel.flow_lines
 
-    def _edit_flow(self, panel_id: str, label: str):
-        """id で引き直してから触るための小さな入れ物（`_edit_focus` と同じ）。"""
-
-        @contextlib.contextmanager
-        def scope():
-            with self.edit_page(label) as page:
-                target = page.find(panel_id)
-                if not isinstance(target, Panel) or target.flow_lines is None:
-                    raise KeyError(f"流線の入ったコマが見つかりません: {panel_id}")
-                yield target
-
-        return scope()
+    def _edit_flow(
+        self, panel_id: str, label: str
+    ) -> contextlib.AbstractContextManager[Panel]:
+        """流線の入ったコマを引き直して触る（→ `_edit_found`）。"""
+        return self._edit_found(
+            panel_id, label, Panel, "流線の入ったコマ", having="flow_lines"
+        )
 
     def add_flow_lines(self) -> bool:
         """選択中のコマに流線を入れる。入れたら True。
@@ -1767,21 +1794,21 @@ class EditorState(QObject):
         image = self.tone_image
         return None if image is None else image.tone
 
-    def _edit_tone(self, image_id: str, label: str, *, merge_key: str | None = None):
-        """id で引き直してから触るための小さな入れ物（`_edit_flow` と同じ）。
+    def _edit_tone(
+        self, image_id: str, label: str, *, merge_key: str | None = None
+    ) -> contextlib.AbstractContextManager[ImageObject]:
+        """トーンの入った画像を引き直して触る（→ `_edit_found`）。
 
         `merge_key` を渡すと、連打ぶんが履歴の1手にまとまる（→ `History.commit`）。
         """
-
-        @contextlib.contextmanager
-        def scope():
-            with self.edit_page(label, merge_key=merge_key) as page:
-                target = page.find(image_id)
-                if not isinstance(target, ImageObject) or target.tone is None:
-                    raise KeyError(f"トーンの入った画像が見つかりません: {image_id}")
-                yield target
-
-        return scope()
+        return self._edit_found(
+            image_id,
+            label,
+            ImageObject,
+            "トーンの入った画像",
+            having="tone",
+            merge_key=merge_key,
+        )
 
     def add_tone(self) -> bool:
         """選択中の画像にトーンを入れる。入れたら True。
@@ -2064,16 +2091,11 @@ class EditorState(QObject):
         self.select(text.id)
         return text
 
-    def _edit_text(self, text_id: str, label: str):
-        @contextlib.contextmanager
-        def scope():
-            with self.edit_page(label) as page:
-                target = page.find(text_id)
-                if not isinstance(target, TextObject):
-                    raise KeyError(f"セリフが見つかりません: {text_id}")
-                yield target
-
-        return scope()
+    def _edit_text(
+        self, text_id: str, label: str
+    ) -> contextlib.AbstractContextManager[TextObject]:
+        """セリフを引き直して触る（→ `_edit_found`）。"""
+        return self._edit_found(text_id, label, TextObject, "セリフ")
 
     def set_text_content(self, text_id: str, content: str) -> None:
         with self._edit_text(text_id, "セリフの入力") as text:
@@ -2145,22 +2167,11 @@ class EditorState(QObject):
             self.next_text_font, **_font_changes(family, size_px, bold)
         )
 
-    def _edit_balloon(self, balloon_id: str, label: str):
-        """id で引き直してから触るための小さな入れ物。
-
-        Undo で `Project` の実体が差し替わるため、外で掴んだ吹き出しを
-        そのまま書き換えてはいけない（要件定義 6.8）。
-        """
-
-        @contextlib.contextmanager
-        def scope():
-            with self.edit_page(label) as page:
-                target = page.find(balloon_id)
-                if not isinstance(target, BalloonObject):
-                    raise KeyError(f"吹き出しが見つかりません: {balloon_id}")
-                yield target
-
-        return scope()
+    def _edit_balloon(
+        self, balloon_id: str, label: str
+    ) -> contextlib.AbstractContextManager[BalloonObject]:
+        """吹き出しを引き直して触る（→ `_edit_found`）。"""
+        return self._edit_found(balloon_id, label, BalloonObject, "吹き出し")
 
     def set_balloon_style(self, balloon_id: str, style: str) -> None:
         with self._edit_balloon(balloon_id, "フキダシの種類変更") as balloon:
