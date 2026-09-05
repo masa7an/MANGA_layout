@@ -114,9 +114,8 @@ from ..wand import (
     select_at,
 )
 
-# 次のコマの提案（→ 要件定義 10.5）。**履歴のまとめ鍵と同じ文字列を使う。**
-# 「直前の1手が提案か」を `history.undo_label` で見るので、名前がずれると差し替えが
-# 効かなくなる（増えていくだけになる）
+# 次のコマの提案（→ 要件定義 10.5）。**1手の名前と、履歴のまとめ鍵を兼ねる。**
+# 「直前の1手の続きか」は `history.merge_key` で見る（→ `suggest_next_panel`）
 SUGGEST_LABEL = "次のコマを提案"
 
 # 道具（ツール）
@@ -1333,14 +1332,17 @@ class EditorState(QObject):
             self.message.emit("斜めのコマがあるページでは提案できません")
             return False
 
-        # 直前の1手が提案で、そのとき置いたコマが今もあるなら「差し替え」。
+        # 差し替えるかどうかは、**履歴がまとめている鍵**だけで決める。
+        # これは次の `edit()` が直前の1手へ吸い込まれる条件そのものなので、
+        # **「差し替えたのに履歴は別の1手」があり得なくなる。**
+        #
+        # `undo_label` で見てはいけない。あちらは**積まれた1手の名前**で、
+        # コマを選ぶ・道具を持ち替える・ページを移るだけで `break_merge()` が
+        # 走っても変わらない。差し替えたのに新しい1手が積まれ、**Undo 1回では
+        # 戻らなくなる**（2026-09-05 実測。コマをクリックしてもう一度押すと再現）。
+        #
         # 途中で別の操作をしたら、その提案は**確定したもの**として扱い、次は新しく足す
-        ids = {p.id for p in page.panels}
-        replacing = (
-            self.history.undo_label == SUGGEST_LABEL
-            and bool(self._suggested)
-            and ids.issuperset(self._suggested)
-        )
+        replacing = self.history.merge_key == SUGGEST_LABEL
         ignore = self._suggested if replacing else ()
 
         found = next_panel.suggestions(

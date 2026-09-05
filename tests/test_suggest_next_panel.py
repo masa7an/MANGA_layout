@@ -102,6 +102,46 @@ class TestRepeatedPress:
         editor.suggest_next_panel()
         assert len(editor.page.panels) > count
 
+    def test_コマを選んだだけでも足す側に戻る(self, editor):
+        # 選ぶのは編集ではないが、**まとめ扱いは打ち切られる**（`break_merge`）。
+        # 差し替えたつもりで新しい1手が積まれると、Undo 1回では戻らなくなる
+        editor.suggest_next_panel()
+        count = len(editor.page.panels)
+        editor.select(editor.page.panels[0].id)
+        editor.suggest_next_panel()
+        assert len(editor.page.panels) > count
+
+    def test_置いた数だけ元に戻せる(self, editor):
+        # **1回の提案＝履歴1手。** 差し替えと履歴のまとめが同じ鍵で決まるので、
+        # 「差し替えたのに履歴は別の1手」が起きない
+        before = shapes(editor.page)
+        editor.suggest_next_panel()
+        after_first = shapes(editor.page)
+        editor.select(editor.page.panels[0].id)
+        editor.suggest_next_panel()
+
+        editor.undo()
+        assert shapes(editor.page) == after_first
+        editor.undo()
+        assert shapes(editor.page) == before
+
+    def test_ページを移ったら足す側に戻る(self, editor):
+        editor.suggest_next_panel()
+        count = len(editor.page.panels)
+        editor.add_page()
+        editor.set_page_index(0)
+        editor.suggest_next_panel()
+        assert len(editor.page.panels) > count
+
+    def test_元に戻したあとは足す側から始める(self, editor):
+        # 元に戻すとまとめ鍵も消える。**置いた覚えの無いコマを差し替えない**
+        before = shapes(editor.page)
+        editor.suggest_next_panel()
+        editor.undo()
+        assert shapes(editor.page) == before
+        editor.suggest_next_panel()
+        assert len(editor.page.panels) > len(before)
+
 
 class TestShortcut:
     def test_名前にキーを入れて道具と体裁を揃える(self, qapp):
