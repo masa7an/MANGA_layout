@@ -17,6 +17,10 @@ Python の繰り返しは「連なりの数」ぶんしか回らない。
 
 （根拠: `select_at` を実画像に対して3回ずつ実行 / 確認日: 2026-08-27）
 
+**その固定費は、続けて押すなら1回で済む**（→ `GrayImage`・`select_in`）。
+同じ絵を押している間は濃淡に直した1枚を使い回せるように、選ぶ処理から
+切り出してある。**許容差は後から掛ける**ので、許容差を変えても作り直さない。
+
 得意・不得意がはっきりしている。**地が一様で、線が閉じていること**が前提で、
 グラデーションで塗った絵では許容差をどう回しても収まらない。1画素の隙間が
 あれば、その区画は外へつながる。**下見を出して人が見て気づける形が要る。**
@@ -70,19 +74,38 @@ class Selection:
         return self.ratio >= LEAK_RATIO
 
 
-def _gray_rows(image: QImage) -> tuple[bytes, int, int]:
+@dataclass(frozen=True)
+class GrayImage:
+    """濃淡だけにした1枚（行の詰め物を外した並び）。
+
+    **選ぶ処理から切り出してあるのは、続けて押すときに使い回すため。**
+    これを作るのが選択1回の固定費の大半で、2048×2048 で 45ms 前後
+    （うち展開ぶんは別。→ `to_gray`）。**許容差は後から掛ける**ので、
+    許容差を変えても作り直さなくてよい。
+    """
+
+    rows: bytes
+    width: int
+    height: int
+
+
+def to_gray(image: QImage) -> GrayImage:
     """濃淡を「行の詰め物を外した」バイト列にする。
 
     **透明は白に倒す**（→ `tone.flatten_on_white`）。画面では紙の白の上に
     置かれるので、利用者が見ているとおりの濃さで判断することになる。
     """
+    if image.isNull() or image.width() == 0 or image.height() == 0:
+        # 空の1枚に絵を描くことはできない（`flatten_on_white` が
+        # `QPainter` を通す）。**手で書き換えた project.json などで来る**
+        return GrayImage(b"", max(0, image.width()), max(0, image.height()))
     gray = flatten_on_white(image).convertToFormat(QImage.Format.Format_Grayscale8)
     w, h, stride = gray.width(), gray.height(), gray.bytesPerLine()
     raw = bytes(gray.constBits())
-    if stride == w:
-        return raw, w, h
-    # 行の末尾の詰め物を落として、幅ちょうどに詰め直す
-    return b"".join(raw[y * stride : y * stride + w] for y in range(h)), w, h
+    if stride != w:
+        # 行の末尾の詰め物を落として、幅ちょうどに詰め直す
+        raw = b"".join(raw[y * stride : y * stride + w] for y in range(h))
+    return GrayImage(raw, w, h)
 
 
 def _same_table(value: int, tolerance: int) -> bytes:
@@ -153,6 +176,27 @@ def _mask_image(chosen: bytes, w: int, h: int) -> QImage:
     return QImage(raw, w, h, w, QImage.Format.Format_Grayscale8).copy()
 
 
+def select_in(
+    gray: GrayImage,
+    seed: tuple[int, int],
+    *,
+    tolerance: int = DEFAULT_TOLERANCE,
+) -> Selection:
+    """濃淡に直した1枚から選ぶ。**同じ絵を続けて押す側はこちらを使う。**
+
+    `seed` は元画像のピクセル座標。範囲の外を指されたら空の選択を返す
+    （画面の側で押さえてはいるが、ここでも落ちないようにしておく）。
+    """
+    w, h, rows = gray.width, gray.height, gray.rows
+    x, y = seed
+    if w == 0 or h == 0 or not (0 <= x < w and 0 <= y < h):
+        return Selection(mask=_mask_image(bytes(max(0, w * h)), w, h), count=0, ratio=0.0)
+
+    same = rows.translate(_same_table(rows[y * w + x], max(0, tolerance)))
+    chosen, count = _spread(same, w, h, (x, y))
+    return Selection(mask=_mask_image(chosen, w, h), count=count, ratio=count / (w * h))
+
+
 def select_at(
     image: QImage,
     seed: tuple[int, int],
@@ -161,18 +205,10 @@ def select_at(
 ) -> Selection:
     """指した1点から広げて選ぶ。**元画像は変えない。**
 
-    `seed` は元画像のピクセル座標。範囲の外を指されたら空の選択を返す
-    （画面の側で押さえてはいるが、ここでも落ちないようにしておく）。
+    濃淡に直す手間（→ `to_gray`）を毎回払う形。**1回きりならこちら**で、
+    続けて押す側は `to_gray` の結果を持ち回って `select_in` を呼ぶ。
     """
-    w, h = image.width(), image.height()
-    x, y = seed
-    if not (0 <= x < w and 0 <= y < h) or w == 0 or h == 0:
-        return Selection(mask=_mask_image(bytearray(max(0, w * h)), w, h), count=0, ratio=0.0)
-
-    gray, w, h = _gray_rows(image)
-    same = gray.translate(_same_table(gray[y * w + x], max(0, tolerance)))
-    chosen, count = _spread(same, w, h, (x, y))
-    return Selection(mask=_mask_image(chosen, w, h), count=count, ratio=count / (w * h))
+    return select_in(to_gray(image), seed, tolerance=tolerance)
 
 
 # -- 選んだ範囲どうしの組み合わせ ------------------------------------------

@@ -66,7 +66,7 @@ from ..model import (
 )
 from ..settings import ROUGH_OPACITY_DEFAULT
 from ..stickers import STICKER_EXCLAIM, STICKER_EXCLAIM_QUESTION
-from ..wand import DEFAULT_TOLERANCE as WAND_TOLERANCE_DEFAULT
+from ..wand import DEFAULT_TOLERANCE as WAND_TOLERANCE_DEFAULT, GrayImage
 from .state_effects import EffectsMixin
 from .state_file import FileMixin
 from .state_image import ImageMixin
@@ -281,6 +281,10 @@ class EditorState(EffectsMixin, FileMixin, ImageMixin, PanelMixin, TextMixin, QO
         # 切り抜きの許容差（→ 10.3）。**作品ではなく操作の設定**なので
         # `project.json` には入れない（道具の選択と同じ扱い）
         self.wand_tolerance = WAND_TOLERANCE_DEFAULT
+        # 切り抜きで押している絵の、濃淡に直した1枚（→ `wand_gray`）。
+        # **入れ物ではなく1枚だけ。** 続けて押すたびに展開し直さないための
+        # 覚えで、原寸ぶん（2048×2048 で 4MB）あるので抱え込まない
+        self.wand_scan: tuple[str, GrayImage] | None = None
         # ラフの濃さ（→ `settings.rough_opacity`）。作品ではなく好みなので
         # `project.json` ではなく `settings.json` から来る。窓が起動時と
         # ラフを読み込む直前に入れ直す（→ `MainWindow.load_rough`）

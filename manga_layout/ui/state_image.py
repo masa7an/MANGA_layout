@@ -37,9 +37,11 @@ from ..model import (
     PageRough,
 )
 from ..wand import (
+    GrayImage,
     intersected,
     removed,
-    select_at,
+    select_in,
+    to_gray,
 )
 
 # 切り抜き（自動領域選択）の許容差で動かせる範囲と、1回ぶん。
@@ -187,6 +189,8 @@ class ImageMixin:
             return
         self.image_cache.forget(ref)
         self.baked_cache.forget(ref)
+        if self.wand_scan is not None and self.wand_scan[0] == ref:
+            self.forget_wand_gray()
 
     def import_bytes(self, data: bytes) -> tuple[str, tuple[int, int]]:
         """画像を取り込み、参照と原寸のピクセル寸法を返す。
@@ -266,6 +270,15 @@ class ImageMixin:
         判断できなくなる（→ `ImageCache` の注記）。
         """
         decode_mask(data)  # 壊れていればここで例外
+        return self._keep_mask(data)
+
+    def _keep_mask(self, data: bytes) -> str:
+        """**展開して確かめ済みの**マスクを `assets/` へ入れて、参照を返す。
+
+        確認を済ませた側（→ `apply_image_mask` は寸法を見るために展開する）が
+        もう一度展開しないための入口。**同じ PNG を2回展開していた**
+        （11KB のマスクで 8ms ずつ。2026-09-05 発見）。
+        """
         if self.project_dir is None:
             return self.pending_assets.add(data)
         return AssetStore(self.project_dir).add_bytes(data)
@@ -304,7 +317,8 @@ class ImageMixin:
             )
 
         old_ref = image.mask_asset
-        ref = self.import_mask_bytes(data)
+        # 展開はすぐ上の寸法検査で済ませてある（→ `_keep_mask`）
+        ref = self._keep_mask(data)
         if ref == old_ref:
             # **同じ内容のマスクは同じ参照になる**（`assets/` は内容ハッシュが
             # 名前 → `assets.ref_for`）。作品は1文字も変わらないので、履歴にも
@@ -344,6 +358,24 @@ class ImageMixin:
         **原寸に対して選ぶ。** マスクは元画像と同じ寸法でなければ適用できない
         ので、画面用の縮小版（`image_cache`）は使えない。
 
+        **使えない絵では None を返す**（→ `wand_gray`）。
+        """
+        gray = self.wand_gray(image.asset)
+        if gray is None:
+            return None
+        return select_in(gray, seed, tolerance=self.wand_tolerance)
+
+    def wand_gray(self, ref: str) -> GrayImage | None:
+        """濃淡に直した1枚。**押している絵1つぶんだけ覚える。** 使えない絵では None。
+
+        **続けて押すのがこの道具の使い方**（→ 要件定義 10.3「続けて押せば
+        足せる」）なので、押すたびに PNG を展開して濃淡に直すと、2回目から
+        まるごと無駄になる。2048×2048 で展開 33ms・濃淡 45ms（2026-09-06 実測）。
+
+        **覚えるのは1枚だけ。** 入れ物にすると手放し忘れが増える
+        （→ `BakedCache` の注記）。参照は内容ハッシュ（→ `assets.ref_for`）
+        なので、**参照が同じなら中身も同じ**——古い絵を使い回す心配が無い。
+
         **使えない絵では None を返す。** 実体が無い場合だけでなく、**実体は
         あるが展開できない**場合も同じ（→ `has_asset`「無い」と「開けない」を
         分けない）。ここで例外を素通しすると、押した瞬間の処理から漏れて
@@ -353,14 +385,22 @@ class ImageMixin:
         握って描き進めているので、こちらだけ素通しにする理由が無い
         （2026-09-05 発見）。
         """
-        data = self.read_asset(image.asset)
+        if self.wand_scan is not None and self.wand_scan[0] == ref:
+            return self.wand_scan[1]
+        data = self.read_asset(ref)
         if data is None:
             return None
         try:
             full = decode(data)
         except AssetError:
             return None
-        return select_at(full, seed, tolerance=self.wand_tolerance)
+        gray = to_gray(full)
+        self.wand_scan = (ref, gray)
+        return gray
+
+    def forget_wand_gray(self) -> None:
+        """覚えている濃淡の1枚を手放す。**原寸ぶん（4MB前後）を抱え続けない。**"""
+        self.wand_scan = None
 
     def erase_region_at(
         self, image_id: str, seed: tuple[int, int], *, keep_only: bool = False

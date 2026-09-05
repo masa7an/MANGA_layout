@@ -18,6 +18,7 @@ from manga_layout.assets import AssetStore
 from manga_layout.image_masks import decode_mask
 from manga_layout.images import size_px, to_png_bytes
 from manga_layout.layout import image_at
+from manga_layout.model import new_project
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import TOOL_SELECT, TOOL_WAND
 
@@ -333,6 +334,51 @@ class Test重なった絵:
         x = image.rect.x + image.rect.w * 0.5
         y = image.rect.y + image.rect.h * 0.5
         assert image_at(page.panels[0], x, y).id == 手前
+
+
+class Test押している絵の覚え:
+    """**濃淡に直した1枚は、押している絵1つぶんだけ覚える**（→ `wand_gray`）。
+
+    続けて押すのがこの道具の使い方なので、押すたびに展開して濃淡に直すと
+    2回目からまるごと無駄になる。2048×2048 で1回 150ms → 90ms（2026-09-06 実測）。
+    """
+
+    def test_同じ絵なら作り直さない(self, window_with_image):
+        state = window_with_image.state
+        ref = image_of(window_with_image).asset
+        first = state.wand_gray(ref)
+        assert first is not None
+        assert state.wand_gray(ref) is first, "同じ1枚を使い回す"
+
+    def test_続けて押しても覚えたまま(self, window_with_image):
+        state = window_with_image.state
+        click(window_with_image, 0.5, 0.5)
+        覚え = state.wand_scan
+        click(window_with_image, 0.05, 0.05)
+        assert state.wand_scan is 覚え, "押すたびに作り直さない"
+
+    def test_別の絵に移ると入れ替わる(self, window_with_image):
+        """**覚えるのは1枚だけ。** 入れ物にすると手放し忘れが増える。"""
+        state = window_with_image.state
+        first = state.wand_gray(image_of(window_with_image).asset)
+        別の絵 = state.import_bytes(plain_png())[0]
+        assert state.wand_gray(別の絵) is not first
+        assert state.wand_scan[0] == 別の絵, "後から見たほうだけが残る"
+
+    def test_別の作品を開いたら手放す(self, window_with_image):
+        """原寸ぶん（2048×2048 で 4MB）を抱えたままにしない。"""
+        state = window_with_image.state
+        state.wand_gray(image_of(window_with_image).asset)
+        assert state.wand_scan is not None
+        state.reset(new_project(), None)
+        assert state.wand_scan is None
+
+    def test_使われなくなった絵は手放す(self, window_with_image):
+        state = window_with_image.state
+        image = image_of(window_with_image)
+        state.wand_gray(image.asset)
+        state.replace_image(image.id, plain_png())  # 元の絵は使われなくなる
+        assert state.wand_scan is None
 
 
 class Test記録と実物の食い違い:
