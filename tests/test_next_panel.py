@@ -278,6 +278,26 @@ class TestGuideFrame:
         assert rect.x > 0                                  # 左と下は紙の中
         assert rect.bottom <= PAGE_H - margin + 0.5
 
+    def test_見開きドンも端ちょうどでは止めない(self):
+        """奇数ページの次に出る案。**上・左・右をページの外まで伸ばす。**
+
+        この案だけ端ちょうどで止まっており、自プロジェクトの決まりに反していた
+        （2026-09-05 修正）。**断ち切りを作る3か所は同じ入口を通す。**
+        """
+        settings = LayoutSettings()
+        project, first = page_with(
+            Rect(640.0, 89.0, 511.0, 1576.0), Rect(89.0, 89.0, 511.0, 1576.0)
+        )
+        page = project.add_page()          # 2ページ目は空白。直前は奇数ページ
+        found = suggestions(project, page, margin=settings.margin,
+                            gutter=settings.gutter)
+        spread = next(s for s in found if "見開き" in s.title)
+        rect = spread.rects[0]
+        assert rect.x == pytest.approx(-BLEED_OVERFLOW)
+        assert rect.y == pytest.approx(-BLEED_OVERFLOW)
+        assert rect.right == pytest.approx(PAGE_W + BLEED_OVERFLOW)
+        assert 0.0 < rect.bottom < PAGE_H          # 下辺だけが紙の中
+
     def test_紙に残るのはページの右半分(self):
         # 越えた分は切り落とされる。**残る側が半分**になるように左辺を取る
         margin = LayoutSettings().margin

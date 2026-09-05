@@ -742,6 +742,18 @@ def match_narrow_top_beside_left(boxes: Sequence[NBox],
 OPENING_BAND_HEIGHT = 0.37
 
 
+def _overflow(ctx: PageContext) -> tuple[float, float]:
+    """断ち切りが**ページの端を越える量**（横, 縦）。
+
+    **断ち切りを作る場所は全部ここを通す。** 3か所（見開きドン・上と右を断ち切り・
+    上半分を断ち切り）で別々に書いていたころ、**見開きドンだけ端ちょうどで止まって
+    いた**（2026-09-05 修正）。同じ規則を3回書けば、いつか1つだけずれる。
+    """
+    over_x = ctx.bleed_x if ctx.bleed_x is not None else OPENING_BLEED_OVERFLOW
+    over_y = ctx.bleed_y if ctx.bleed_y is not None else OPENING_BLEED_OVERFLOW
+    return over_x, over_y
+
+
 def match_spread_opening_bleed(boxes: Sequence[NBox],
                                ctx: PageContext = NO_CONTEXT) -> Match:
     m = Match(joseki="spread_opening_bleed", title="見開きドン",
@@ -764,8 +776,12 @@ def match_spread_opening_bleed(boxes: Sequence[NBox],
 
     m.matched = True
     m.score = 1.0   # 条件はすべて成立か不成立か。**中間が無いので惜しさも無い**
+    # **上・左・右をページの外まで伸ばす。下辺だけが紙の中。**
+    # 端ちょうどで止めると断裁のずれで白い筋が出る（→ `_overflow`）
+    over_x, over_y = _overflow(ctx)
     m.add_plan([Candidate(
-        box=NBox(0.0, 0.0, 1.0, OPENING_BAND_HEIGHT), order=1, joseki=m.joseki,
+        box=NBox(-over_x, -over_y, 1.0 + over_x * 2, OPENING_BAND_HEIGHT + over_y),
+        order=1, joseki=m.joseki,
         reason="奇数ページ（{}p）の次を開くコマ。上部を横切る断ち切り".format(
             prev.number if prev.number is not None else "?"))])
     return m
@@ -878,8 +894,7 @@ def _opening_bleed(area: NBox, height: float, ctx: PageContext,
     **左辺と下辺は「幅 1/2」の案と同じ位置。** 外へ出るのは上と右だけなので、
     他の案と見比べられるし、**紙に残る部分はページの右半分**になる。
     """
-    over_x = ctx.bleed_x if ctx.bleed_x is not None else OPENING_BLEED_OVERFLOW
-    over_y = ctx.bleed_y if ctx.bleed_y is not None else OPENING_BLEED_OVERFLOW
+    over_x, over_y = _overflow(ctx)
     num, den = OPENING_BLEED_SHARE
     left = area.right - area.w * num / den
     top = -over_y
@@ -895,8 +910,7 @@ def _opening_top_half(ctx: PageContext, joseki: str) -> list[Candidate]:
     **左右と上を外へ出し、下辺だけがページの中。** 大きく開く始め方で、
     置いてよい範囲（基本枠）には収めない——**収めたら断ち切りではなくなる。**
     """
-    over_x = ctx.bleed_x if ctx.bleed_x is not None else OPENING_BLEED_OVERFLOW
-    over_y = ctx.bleed_y if ctx.bleed_y is not None else OPENING_BLEED_OVERFLOW
+    over_x, over_y = _overflow(ctx)
     return [Candidate(
         box=NBox(-over_x, -over_y, 1.0 + over_x * 2, OPENING_TOP_HALF_BOTTOM + over_y),
         order=1, joseki=joseki,

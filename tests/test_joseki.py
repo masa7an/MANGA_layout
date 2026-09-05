@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
 from manga_layout.joseki import (
@@ -261,10 +263,34 @@ class TestSpreadOpening:
         assert hit(TOP_BAND, "spread_opening_bleed", self.context(4)) is None
 
     def test_提案は幅いっぱいの帯(self):
-        m = hit([], "spread_opening_bleed", self.context(4))
-        box = m.plans[0].candidates[0].box
-        assert (box.x, box.w) == (0.0, 1.0)
-        assert box.h < 1.0        # 全面ではない。次のコマを置く余地を残す
+        """**上・左・右をページの外まで伸ばす。下辺だけが紙の中。**
+
+        以前はここに `(box.x, box.w) == (0.0, 1.0)` と書いてあり、**端ちょうどで
+        止まる姿を固定していた。** 断ち切りは端で止めると断裁のずれで白い筋が出る
+        ので、越えるのが決まり（2026-09-05 修正）。
+        """
+        over = 0.01
+        ctx = dataclasses.replace(self.context(4), bleed_x=over, bleed_y=over)
+        box = hit([], "spread_opening_bleed", ctx).plans[0].candidates[0].box
+        assert box.x == pytest.approx(-over)
+        assert box.y == pytest.approx(-over)
+        assert box.right == pytest.approx(1.0 + over)
+        assert 0.0 < box.bottom < 1.0     # 下辺だけが紙の中。全面ではない
+
+    def test_断ち切りの3案は同じ量だけ外へ出る(self):
+        """**断ち切りを作る3か所は、同じ入口を通る。**
+
+        同じ規則を3回書けば、いつか1つだけずれる（実際に見開きドンだけずれた）。
+        """
+        over = 0.01
+        ctx = dataclasses.replace(self.context(4), bleed_x=over, bleed_y=over)
+        spread = hit([], "spread_opening_bleed", ctx).plans[0].candidates[0].box
+        opening = hit([], "blank_page_opening", ctx)
+        others = [p.candidates[0].box for p in opening.plans if "断ち切り" in p.label]
+        assert len(others) == 2
+        for box in [spread, *others]:
+            assert box.y == pytest.approx(-over)
+            assert box.right == pytest.approx(1.0 + over)
 
 
 class TestBlankPageOpening:
