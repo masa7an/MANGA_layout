@@ -16,6 +16,7 @@ from manga_layout.layout import (
     handle_positions,
     image_at,
     image_orphaned_at,
+    image_pixel_at,
     panel_at,
     panel_rect_orphans,
     resize_rect,
@@ -30,6 +31,7 @@ from manga_layout.layout import (
     text_frame,
     text_ink_bands,
 )
+from manga_layout.model import ImageObject
 
 # 座標の計算そのものは単位に依らないので、値は px 化の前から変えていない。
 # ページの寸法（A4 相当 1240×1754px）だけが px になっている
@@ -467,6 +469,66 @@ class TestImageAtZ同値:
         front.z = back.z
 
         assert image_at(panel, 50.0, 50.0) is front
+
+
+class TestImagePixelAt:
+    """ページ座標の1点を、元画像の何画素目かに翻訳する（→ 要件定義 10.3）。
+
+    切り抜きの道具が押した所を渡す経路。**傾いた絵で本当に合っているかは、
+    ここでは分からない**——符号を1つ間違えても、真っ直ぐな絵のテストは全部
+    通る。描いた絵と突き合わせる側は tests/test_ui_wand.py。
+    """
+
+    RECT = Rect(100.0, 200.0, 200.0, 100.0)
+    PX = (400, 200)  # 絵はコマの矩形の2倍の細かさ
+
+    def image(self, rotation: float = 0.0) -> ImageObject:
+        project = new_project()
+        panel = project.add_panel(project.pages[0], Rect(0.0, 0.0, 500.0, 500.0))
+        image = project.add_image(panel, "assets/a.png", self.RECT, self.PX)
+        image.rotation = rotation
+        return image
+
+    def test_矩形の中の割合が画素になる(self):
+        image = self.image()
+        assert image_pixel_at(image, 100.0, 200.0) == (0, 0), "左上の角"
+        assert image_pixel_at(image, 200.0, 250.0) == (200, 100), "真ん中"
+
+    def test_右端と下端は内側へ丸める(self):
+        """割合がちょうど 1.0 になる縁。**画素数と同じ値を返すと1つ外を指す。**"""
+        image = self.image()
+        assert image_pixel_at(image, 300.0, 300.0) == (399, 199)
+
+    def test_矩形の外は_None(self):
+        image = self.image()
+        assert image_pixel_at(image, 99.0, 250.0) is None
+        assert image_pixel_at(image, 301.0, 250.0) is None
+        assert image_pixel_at(image, 200.0, 199.0) is None
+        assert image_pixel_at(image, 200.0, 301.0) is None
+
+    def test_寸法や矩形が空なら_None(self):
+        """手で書き換えた project.json など。**0 で割らない。**"""
+        image = self.image()
+        image.src_px = (0, 0)
+        assert image_pixel_at(image, 200.0, 250.0) is None
+
+        image = self.image()
+        image.rect = Rect(100.0, 200.0, 0.0, 100.0)
+        assert image_pixel_at(image, 100.0, 250.0) is None
+
+    def test_傾けると押す場所も回る(self):
+        """90度回した絵では、**回す前の真ん中の上**が、元画像の左寄りになる。
+
+        中心のまわりに回すので、真ん中だけは動かない。
+        """
+        傾き無し = self.image()
+        傾き = self.image(90.0)
+        assert image_pixel_at(傾き, 200.0, 250.0) == (200, 100), "中心は動かない"
+        assert image_pixel_at(傾き無し, 200.0, 220.0) == (200, 40)
+        # 90度ぶん回した先を指せば、同じ画素に当たる（どちら回りかは
+        # 描画と揃っていることが要で、それは tests/test_ui_wand.py で見る）
+        回した先 = {image_pixel_at(傾き, 230.0, 250.0), image_pixel_at(傾き, 170.0, 250.0)}
+        assert (200, 40) in 回した先
 
 
 class TestResizeKeepAspect:

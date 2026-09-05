@@ -16,10 +16,11 @@ from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter
 from manga_layout import Rect
 from manga_layout.assets import AssetStore
 from manga_layout.image_masks import decode_mask
-from manga_layout.images import size_px, to_png_bytes
-from manga_layout.layout import image_at
+from manga_layout.images import decode, size_px, to_png_bytes
+from manga_layout.layout import image_at, image_pixel_at
 from manga_layout.model import new_project
 from manga_layout.ui import EditorState, MainWindow
+from manga_layout.ui.export import render_page
 from manga_layout.ui.state import TOOL_SELECT, TOOL_WAND
 
 # コマは用紙の左上に大きく取り、絵をその中いっぱいに置く
@@ -65,6 +66,19 @@ def plain_png() -> bytes:
     """一様な白だけの絵。**1回押すと全部が選ばれる**（漏れた疑いの側を通す）。"""
     image = QImage(IMAGE_PX[0], IMAGE_PX[1], QImage.Format.Format_ARGB32)
     image.fill(QColor("#FFFFFF"))
+    return to_png_bytes(image)
+
+
+def 四色の絵() -> bytes:
+    """四隅で色が違う絵。**どの画素を指しているかが色で分かる。**"""
+    image = QImage(IMAGE_PX[0], IMAGE_PX[1], QImage.Format.Format_ARGB32)
+    painter = QPainter(image)
+    半 = IMAGE_PX[0] // 2
+    painter.fillRect(0, 0, 半, 半, QColor("#FF0000"))
+    painter.fillRect(半, 0, 半, 半, QColor("#00FF00"))
+    painter.fillRect(0, 半, 半, 半, QColor("#0000FF"))
+    painter.fillRect(半, 半, 半, 半, QColor("#FFFF00"))
+    painter.end()
     return to_png_bytes(image)
 
 
@@ -334,6 +348,45 @@ class Test重なった絵:
         x = image.rect.x + image.rect.w * 0.5
         y = image.rect.y + image.rect.h * 0.5
         assert image_at(page.panels[0], x, y).id == 手前
+
+
+class Test押した所と描いた絵が合う:
+    """**押した1点を元画像の画素へ翻訳する**（`layout.image_pixel_at`）ところを、
+    描いた絵と突き合わせる。
+
+    傾きは `unrotate_point` で戻す——**回転を持ち込む3か所の境目の1つ**
+    （要件定義 6.3）。ここの向きが逆でも、**真っ直ぐな絵のテストは全部通る**。
+    描いた結果と照らさないと分からないので、翻訳した画素の色と、描いた絵の
+    その場所の色が同じであることを見る。
+    """
+
+    @pytest.fixture
+    def 四色(self, window):
+        with window.state.edit("コマの追加") as project:
+            project.add_panel(project.pages[0], PANEL)
+        panel_id = window.state.page.panels[0].id
+        window.state.place_image(panel_id, 四色の絵())
+        window.state.set_tool(TOOL_WAND)
+        return window
+
+    @pytest.mark.parametrize("rotation", [0.0, 90.0, 180.0, 270.0])
+    @pytest.mark.parametrize(
+        "u,v", [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)]
+    )
+    def test_翻訳した画素の色と_描いた色が同じ(self, 四色, rotation, u, v):
+        state = 四色.state
+        with state.edit_page("傾ける") as page:
+            page.panels[0].children[0].rotation = rotation
+
+        image = image_of(四色)
+        x = image.rect.x + image.rect.w * u
+        y = image.rect.y + image.rect.h * v
+        seed = image_pixel_at(image, x, y)
+        assert seed is not None, "絵の上を指している"
+
+        元 = decode(state.read_asset(image.asset))
+        描いた = render_page(state, state.page)
+        assert 元.pixelColor(*seed).name() == 描いた.pixelColor(round(x), round(y)).name()
 
 
 class Test押している絵の覚え:
