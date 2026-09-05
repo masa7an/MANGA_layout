@@ -390,6 +390,21 @@ class ImageMixin:
         if chosen.empty:
             return False
 
+        # **記録と実物の食い違いは、ここで止める。** `src_px`（project.json に
+        # 書いてある寸法）と実体の寸法がずれていると、この先の組み合わせが
+        # `MaskSizeError` を投げ、押した瞬間の処理から漏れてコンソールへ落ちる。
+        # **アプリは落ちないので**、利用者には「押しても何も起きない」だけが
+        # 残る（→ `region_mask_at` と同じ形。2026-09-05 発見）
+        actual_px = size_px(chosen.mask)
+        if actual_px != image.src_px:
+            self.message.emit(
+                f"絵の大きさが記録と違うため切り抜けません"
+                f"（実物 {actual_px[0]:,} × {actual_px[1]:,}、"
+                f"記録 {image.src_px[0]:,} × {image.src_px[1]:,} 画素）。"
+                "絵を差し替えると直ります"
+            )
+            return False
+
         current = self.image_mask_or_full(image)
         if current is None:
             return False
@@ -446,15 +461,24 @@ class ImageMixin:
 
         **無い状態を「全部残す」に読み替える。** こうすると、1枚目を押すときと
         2枚目以降を押すときで処理が分かれない。
+
+        **効いていないマスクも「無い」に読み替える。** 壊れているときだけで
+        なく、寸法が記録と違うときも同じ（→ `mask_hides`、
+        `image_masks.safe_masked_preview`）。画面には切り抜き前の絵が出て
+        いるので、引き算の元にすると**見えている絵と食い違う**うえ、そこで
+        大きさが合わずに例外になる。
         """
         px = image.src_px
         if image.mask_asset:
             data = self.read_asset(image.mask_asset)
             if data is not None:
                 try:
-                    return decode_mask(data)
+                    mask = decode_mask(data)
                 except AssetError:
                     pass  # 壊れている。全面から引き直す（描画と同じ考え方）
+                else:
+                    if size_px(mask) == px:
+                        return mask
         full = QImage(px[0], px[1], QImage.Format.Format_Grayscale8)
         if full.isNull():
             return None

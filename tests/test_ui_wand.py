@@ -67,6 +67,13 @@ def plain_png() -> bytes:
     return to_png_bytes(image)
 
 
+def 小さいマスク(px=(60, 60)) -> bytes:
+    """**絵より小さい**全面白のマスク。寸法が合わないものの代表。"""
+    mask = QImage(px[0], px[1], QImage.Format.Format_Grayscale8)
+    mask.fill(Qt.GlobalColor.white)
+    return to_png_bytes(mask)
+
+
 def _mouse_event(window, kind, u: float, v: float, shift: bool) -> QMouseEvent:
     """絵の中の割合（0〜1）を、ページ座標を経由して canvas の座標へ直す。"""
     image = image_of(window)
@@ -326,6 +333,50 @@ class Test重なった絵:
         x = image.rect.x + image.rect.w * 0.5
         y = image.rect.y + image.rect.h * 0.5
         assert image_at(page.panels[0], x, y).id == 手前
+
+
+class Test記録と実物の食い違い:
+    """**`src_px` と実体の寸法がずれていても、例外を漏らさない**（2026-09-05 に直した）。
+
+    `src_px` は project.json に書いてある寸法。手で書き換えた作品や、
+    `assets/` を外から差し替えた作品で実物とずれる。ずれたまま組み合わせると
+    `MaskSizeError` が押した瞬間の処理から漏れ、**アプリは落ちないので**
+    利用者には「押しても何も起きない」だけが残っていた。
+    """
+
+    def ずらす(self, window, px=(60, 60)):
+        """project.json 側の寸法だけを、実物と違う値にする。"""
+        image_id = image_of(window).id
+        with window.state.edit_page("記録の寸法をずらす") as page:
+            page.find(image_id).src_px = px
+
+    def test_例外が漏れない(self, window_with_image):
+        self.ずらす(window_with_image)
+        click(window_with_image, 0.5, 0.5)  # 例外が漏れればここで落ちる
+        assert image_of(window_with_image).mask_asset == ""
+
+    def test_理由を言う(self, window_with_image):
+        said = []
+        window_with_image.state.message.connect(said.append)
+        self.ずらす(window_with_image)
+        click(window_with_image, 0.5, 0.5)
+        assert "大きさが記録と違う" in said[-1], said
+        assert "120" in said[-1] and "60" in said[-1], "実物と記録の両方を出す"
+
+    def test_寸法の合わないマスクは無いものとして扱う(self, window_with_image):
+        """**画面には切り抜き前の絵が出ている**（→ `mask_hides`）。押せる所と揃える。"""
+        state = window_with_image.state
+        image_id = image_of(window_with_image).id
+        ずれたマスク = state.import_mask_bytes(小さいマスク())
+        with state.edit_page("寸法の合わないマスクを差し込む") as page:
+            page.find(image_id).mask_asset = ずれたマスク
+
+        click(window_with_image, 0.5, 0.5)
+
+        mask = mask_of(window_with_image)
+        assert size_px(mask) == IMAGE_PX, "全面から引き直す"
+        assert mask.pixelColor(60, 60).value() == 0, "押した中は消えた"
+        assert mask.pixelColor(5, 5).value() == 255, "外は残っている"
 
 
 class Test使えない絵:
