@@ -725,16 +725,24 @@ def match_narrow_top_beside_left(boxes: Sequence[NBox],
 #
 #   条件  1. このページが空白の新規ページである
 #         2. 直前のページが存在し、奇数ページである
-#         3. 【提案】が押された
+#         3. 直前のページにコマが1枚以上ある
+#         4. 【提案】が押された
 #   提案  このページの最初のコマとして、上部を横切る大きめの断ち切りコマ
 #
-# **条件3は、この道具が呼ばれたこと自体。** 判定の対象にならないので、下の checks には
+# **条件4は、この道具が呼ばれたこと自体。** 判定の対象にならないので、下の checks には
 # 現れない。**呼ばれていないのに提案を出さないことは、組み込む側の約束事**になる
 # （設計文書「実装への申し送り」）。
 #
-# **条件はこの2つだけ。** 「直前のページが埋め切られている」「最後のコマが左下にあり、
-# 小さい」も試したが、**どちらも置かない。ページを次へ進めたこと自体が、直前を
-# 描き終えた証拠**とみなす。条件を減らしたことで、実物のページに当たるようになった。
+# **「直前のページが埋め切られている」「最後のコマが左下にあり、小さい」は置かない。**
+# どちらも試したが、**ページを次へ進めたこと自体が、直前を描き終えた証拠**とみなす。
+# 条件を減らしたことで、実物のページに当たるようになった。
+#
+# **ただし、直前が白紙なら「進んだ」とは言えない**（条件3）。この定石は「前ページを
+# 描き終えて次を開く」場面のものなので、**白紙の扉ページを挟んだだけでは成り立たない。**
+# 以前はこの条件を「直前のページがある」の中に混ぜて書いており、白紙のページで
+# **「× 直前のページがある（ページ 1）」**という、根拠と答えが食い違う報告が出ていた
+# （存在するし奇数でもある。落としていたのは3つ目の条件）。**条件は名乗らせる**
+# （2026-09-05 修正）。
 
 # 断ち切りコマの高さ。**ページ全面ではない**（全面だと次のコマを置く余地が残らない）。
 # 実測した4ページの1段目の高さは 0.294〜0.378 で、**中央値 0.369。そこに合わせる。**
@@ -763,7 +771,7 @@ def match_spread_opening_bleed(boxes: Sequence[NBox],
     m.checks.append(Check("このページが空白", blank, f"コマ {len(boxes)}個"))
 
     prev = ctx.previous
-    has_prev = prev is not None and bool(prev.boxes)
+    has_prev = prev is not None
     m.checks.append(Check("直前のページがある", has_prev,
                           "ページ {}".format(prev.number if prev else "無し")))
 
@@ -771,7 +779,14 @@ def match_spread_opening_bleed(boxes: Sequence[NBox],
     m.checks.append(Check("直前が奇数ページ", odd,
                           "ページ {}".format(
                               prev.number if prev and prev.number is not None else "不明")))
-    if not (blank and has_prev and odd):
+
+    # **白紙のページを挟んだだけでは「次へ進んだ」と言えない。**
+    # 名前を出さずに「直前のページがある」へ混ぜると、報告と根拠が食い違う
+    drawn = has_prev and bool(prev.boxes)
+    m.checks.append(Check("直前のページが描かれている", drawn,
+                          f"コマ {len(prev.boxes) if prev else 0}個"))
+
+    if not (blank and has_prev and odd and drawn):
         return m
 
     m.matched = True

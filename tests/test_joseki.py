@@ -259,6 +259,35 @@ class TestSpreadOpening:
     def test_直前が偶数ページなら当たらない(self):
         assert hit([], "spread_opening_bleed", self.context(5)) is None
 
+    def test_直前が白紙なら当たらない(self):
+        """**白紙の扉ページを挟んだだけでは「次へ進んだ」と言えない。**
+
+        この定石は「前ページを描き終えて次を開く」場面のもの
+        （条件3・本人判断 2026-09-05）。
+        """
+        blank_before = PageContext(number=4, previous=PreviousPage(number=3, boxes=[]))
+        assert hit([], "spread_opening_bleed", blank_before) is None
+
+    def test_落とした条件が名前で分かる(self):
+        """**存在するし奇数でもある。落としているのは3つ目。**
+
+        以前は3つ目を「直前のページがある」に混ぜており、白紙のページで
+        「× 直前のページがある（ページ 1）」という、根拠と答えが食い違う報告が
+        出ていた（2026-09-05 修正）。
+        """
+        blank_before = PageContext(number=4, previous=PreviousPage(number=3, boxes=[]))
+        checks = {c.name: c for m in match_all([], blank_before)
+                  if m.joseki == "spread_opening_bleed" for c in m.checks}
+        assert checks["直前のページがある"].passed is True
+        assert checks["直前が奇数ページ"].passed is True
+        assert checks["直前のページが描かれている"].passed is False
+        assert checks["直前のページが描かれている"].measured == "コマ 0個"
+
+    def test_直前が描かれていれば当たる(self):
+        checks = {c.name: c for m in match_all([], self.context(4))
+                  if m.joseki == "spread_opening_bleed" for c in m.checks}
+        assert checks["直前のページが描かれている"].passed is True
+
     def test_コマがあるページには出さない(self):
         assert hit(TOP_BAND, "spread_opening_bleed", self.context(4)) is None
 

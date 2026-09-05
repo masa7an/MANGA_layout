@@ -326,6 +326,30 @@ class TestGuideFrame:
         assert rect.right == pytest.approx(PAGE_W + BLEED_OVERFLOW)
         assert 0.0 < rect.bottom < PAGE_H          # 下辺だけが紙の中
 
+    def test_直前が白紙なら見開きドンは出ない(self):
+        """**白紙の扉ページを挟んだだけでは出さない**（→ 要件定義 10.5 の条件3）。
+
+        `context_for` は白紙のページでも「直前のページ」を作るので、この状態は
+        自然に起きる（新規作品でページを足して、すぐ `N` を押した場合）。
+        """
+        settings = LayoutSettings()
+        project, _first = page_with()                  # 1ページ目は白紙のまま
+        page = project.add_page()
+        found = suggestions(project, page, margin=settings.margin,
+                            gutter=settings.gutter)
+        assert found                                   # 提案自体は出る
+        assert not any("見開き" in s.title for s in found)
+
+    def test_直前を描いてあれば見開きドンが出る(self):
+        settings = LayoutSettings()
+        project, _first = page_with(
+            Rect(640.0, 89.0, 511.0, 1576.0), Rect(89.0, 89.0, 511.0, 1576.0)
+        )
+        page = project.add_page()
+        found = suggestions(project, page, margin=settings.margin,
+                            gutter=settings.gutter)
+        assert any("見開き" in s.title for s in found)
+
     def test_紙に残るのはページの右半分(self):
         # 越えた分は切り落とされる。**残る側が半分**になるように左辺を取る
         margin = LayoutSettings().margin
