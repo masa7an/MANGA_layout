@@ -1359,7 +1359,18 @@ class EditorState(QObject):
         with self.edit(SUGGEST_LABEL, merge_key=SUGGEST_LABEL) as project:
             edited = project.pages[self._page_index]
             if replacing:
-                edited.panels[:] = [p for p in edited.panels if p.id not in ignore]
+                # **消すのは `remove_panel` を通す。** 一覧を直に書き替えると、
+                # 紐づいたフキダシ・セリフの紐づけ解除と、斜めの組の解消を
+                # 飛ばす。今は直前に自分が置いたコマしか消さないので、どちらも
+                # 持たない——**だから今は無害だが、削除の作法がここだけ違う**
+                # （2026-09-05 に揃えた）。
+                #
+                # 見つからないものは飛ばす。`remove_panel` は無いと例外を投げ、
+                # `edit()` が巻き戻して画面にエラーが出る。**提案の押し直しで
+                # 出してよいエラーではない。**
+                for panel_id in ignore:
+                    if any(p.id == panel_id for p in edited.panels):
+                        edited.remove_panel(panel_id)
             added = next_panel.add_suggestion(project, edited, found[index])
         self._suggested = tuple(p.id for p in added)
         self._suggest_index = index

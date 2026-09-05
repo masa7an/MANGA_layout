@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from manga_layout import Polygon, Rect, new_project
+from manga_layout.model import SLANT_RIGHT, BalloonObject, SlantPair
 from manga_layout.ui import EditorState, MainWindow
 
 PAGE_W, PAGE_H = 1240.0, 1754.0
@@ -65,6 +66,59 @@ class TestFirstPress:
         editor.suggest_next_panel()
         assert editor.history.depth == depth + 1
         assert editor.history.undo_label == "次のコマを提案"
+
+
+class TestReplacementRemoval:
+    """差し替えでコマを消すときの作法（→ `Page.remove_panel`）。
+
+    **一覧を直に書き替えない。** `remove_panel` は、紐づいたフキダシ・セリフの
+    紐づけを外し、斜めの組を解いてから消す。直に書き替えるとそこを飛ばす。
+
+    **今は振る舞いに出ない。** 消すのは直前に自分が置いたコマだけで、紐づけも
+    斜めの組も持たないため。**だから重要度は低い。それでも作法を1つにする**
+    ——ここだけ違う形が残っていると、次に条件が変わったとき静かに壊れる
+    （2026-09-05 に揃えた）。ここで見るのは「**差し替えがページの他の部分を
+    荒らさないこと**」。
+
+    差し替えたコマ自身に紐づけや斜めの組を持たせた材料は作れない。付けるには
+    編集が要り、編集を挟むとまとめ扱いが切れて差し替えが起きなくなるため。
+    """
+
+    def test_差し替えても他のコマの斜めの組は残る(self, qapp):
+        editor = editor_with(*band(0.06, 0.28))
+        with editor.edit("準備") as project:
+            page = project.pages[0]
+            page.slant_pairs.append(
+                SlantPair(left_id=page.panels[1].id, right_id=page.panels[0].id,
+                          ratio=0.5, angle=10.0, direction=SLANT_RIGHT)
+            )
+        before = [p.members() for p in editor.page.slant_pairs]
+        assert before
+        editor.suggest_next_panel()
+        editor.suggest_next_panel()          # 差し替え
+        assert [p.members() for p in editor.page.slant_pairs] == before
+
+    def test_差し替えても他のコマへの紐づけは残る(self, qapp):
+        editor = editor_with(*band(0.06, 0.28))
+        with editor.edit("準備") as project:
+            page = project.pages[0]
+            page.floating.append(
+                BalloonObject(id="balloon_x",
+                              rect=Rect(200.0, 200.0, 100.0, 80.0),
+                              attached_panel_id=page.panels[0].id)
+            )
+        target = editor.page.panels[0].id
+        editor.suggest_next_panel()
+        editor.suggest_next_panel()          # 差し替え
+        balloon = next(f for f in editor.page.floating if f.id == "balloon_x")
+        assert balloon.attached_panel_id == target
+
+    def test_何回押しても数は増えない(self, editor):
+        editor.suggest_next_panel()
+        count = len(editor.page.panels)
+        for _ in range(4):
+            editor.suggest_next_panel()
+        assert len(editor.page.panels) == count
 
 
 class TestRepeatedPress:
