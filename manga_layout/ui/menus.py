@@ -1199,22 +1199,18 @@ class TextMenu:
             add(label, lambda _=False, a=align: window.set_text_align(a))
         menu.addSeparator()
 
-        # **`Ctrl+>` / `Ctrl+<`**（2026-09-05 に `Ctrl+]` / `Ctrl+[` →
-        # `Ctrl+.` / `Ctrl+,` → 山括弧、と同じ日に2度動かしている）。
+        # **`Ctrl+.` / `Ctrl+,`**（2026-09-05 に `Ctrl+]` / `Ctrl+[` から変更）。
         #
-        # **1度目の理由は「記号が読めない」。** `[` `]` はキーの刻印を見ても
+        # **理由は位置ではなく、記号が読めないこと。** `[` `]` はキーの刻印を見ても
         # 何という記号か分からず、**探すのに時間がかかる**（本人談 2026-09-05）。
-        # **2度目の理由は「記号が見えない」。** 句読点は名前で呼べるが、
-        # **点が小さすぎて `,` と `.` を見分けられない**（本人談 2026-09-05）。
-        # 山括弧は名前で呼べて、なおかつ向きが形で分かる。
+        # 句読点は名前で呼べるので、キーの上を目で探さずに指が行く。
         #
-        # **押しやすさでは選んでいない。** 山括弧は Shift を押しながらになるので、
-        # 押す手数はむしろ増える。2度とも効いていたのは**キーを目で見つけられるか**
-        # のほうで、押す速さではなかった。
+        # **押しにくさで選ぶと外す。** 位置だけ見れば角括弧も遠くはない。
+        # 効いていたのは「その記号を知っているか」のほうだった。
         #
-        # 並びの約束（右が増える側）は保てる（→ 要件定義 6.27 のトーンと同じ向き）
-        add("大きく", lambda: window.step_text_size(1), "Ctrl+>")
-        add("小さく", lambda: window.step_text_size(-1), "Ctrl+<")
+        # 並びの約束（右が増える側）も保てる（→ 要件定義 6.27 のトーンと同じ向き）
+        add("大きく", lambda: window.step_text_size(1), "Ctrl+.")
+        add("小さく", lambda: window.step_text_size(-1), "Ctrl+,")
         self.bold_action = add("太字", window.toggle_bold, "Ctrl+B")
         self.bold_action.setCheckable(True)
         menu.addSeparator()

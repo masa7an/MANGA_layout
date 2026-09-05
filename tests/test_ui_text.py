@@ -1323,6 +1323,16 @@ class Test文字の大きさの看板:
 
         return SizeKeysHintItem
 
+    def 看板の記号(self, window, 名前: str) -> str:
+        """メニューの割り当てを、看板に出している字へ読み替える。
+
+        **対応表に無い綴りになれば `KeyError` で落ちる。** 割り当てだけを
+        変えて看板を直し忘れる、という食い違いはここで止まる。
+        """
+        from manga_layout.ui.canvas import KEY_FACE
+
+        return KEY_FACE[self.割り当て(window, 名前)]
+
     def 割り当て(self, window, 名前: str) -> str:
         for action in window.text_menu.actions:
             if action.text() == 名前:
@@ -1339,13 +1349,29 @@ class Test文字の大きさの看板:
 
         window_with_text.view.finish_text_edit(commit=False)
 
-    def test_看板のキーはメニューの割り当てと同じ(self, window_with_text):
+    def test_看板のキーはメニューの割り当てから引いている(self, window_with_text):
+        """**看板の字と割り当ての綴りは、わざと違う**（→ `canvas.KEY_FACE`）。
+
+        指しているキーは同じで、看板は Shift 側の刻印（`>` `<`）を借りて
+        いる。**句読点は点が小さすぎて `,` と `.` を見分けられない**ので、
+        そのまま出しても案内にならない（本人談 2026-09-05）。
+
+        突き合わせは対応表を通す。**割り当てを変えれば表に無い綴りになり、
+        `KeyError` で落ちる。**
+        """
         label = self.看板().LABEL
-        assert self.割り当て(window_with_text, "大きく") in label
-        assert self.割り当て(window_with_text, "小さく") in label
+        assert self.看板の記号(window_with_text, "大きく") in label
+        assert self.看板の記号(window_with_text, "小さく") in label
+
+    def test_割り当ては句読点のまま(self, window_with_text):
+        """**山括弧へは移していない。** 移すと Shift を押しながらになり、
+        押す手数が増える（2026-09-05 に一度移して、戻した）。
+        """
+        assert self.割り当て(window_with_text, "大きく") == "Ctrl+."
+        assert self.割り当て(window_with_text, "小さく") == "Ctrl+,"
 
     def test_拡大と縮小を取り違えていない(self, window_with_text):
-        """**`Ctrl+>` が大きく、`Ctrl+<` が小さく**（右が増える側）。
+        """**`.` のキーが大きく、`,` のキーが小さく**（右が増える側）。
 
         取り違えても看板の文字は正しく見えるので、目視では捕まらない。
         語とキーが交互に同じ順で並んでいることで確かめる。
@@ -1353,9 +1379,9 @@ class Test文字の大きさの看板:
         label = self.看板().LABEL
         並び = [
             label.index("拡大"),
-            label.index(self.割り当て(window_with_text, "大きく")),
+            label.index(self.看板の記号(window_with_text, "大きく")),
             label.index("縮小"),
-            label.index(self.割り当て(window_with_text, "小さく")),
+            label.index(self.看板の記号(window_with_text, "小さく")),
         ]
         assert 並び == sorted(並び)
 

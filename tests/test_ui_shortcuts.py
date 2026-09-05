@@ -139,8 +139,8 @@ class Test公開する文書:
         # 2026-09-05 に `Ctrl+]` / `Ctrl+[` から移した。**角括弧は刻印を見ても
         # 何という記号か分からず、探すのに時間がかかる**（本人談）
         keys = [row.keys for group in groups for row in group.rows]
-        assert "Ctrl+>" in keys
-        assert "Ctrl+<" in keys
+        assert "Ctrl+." in keys
+        assert "Ctrl+," in keys
         assert "Ctrl+]" not in keys
         assert "Ctrl+[" not in keys
 
