@@ -759,6 +759,21 @@ OPENING_GRID_COLUMNS = 2
 DEFAULT_MARGIN = 0.03
 
 
+def _add_if_room(m: Match, candidates: Sequence[Candidate], label: str) -> None:
+    """**どのコマも置ける大きさのときだけ、案として並べる。**
+
+    空白ページの案は、置いてよい範囲（基本枠）を割り算して作る。ページが小さくて
+    余白が幅・高さの半分に届くと、**範囲そのものが潰れて幅も高さも 0 のコマができる**
+    （178x178px・余白 89px で実際に起きた）。**面積の無いコマは何とも重ならない**ので、
+    重なりの判定では捕まらない。**作った側で落とすしかない。**
+
+    断ち切りの案は範囲を使わずページの外まで伸ばすので、範囲が潰れても生き残る。
+    **定石ごとではなく案ごとに見る**のは、そのため。
+    """
+    if all(c.box.w >= MIN_ROOM and c.box.h >= MIN_ROOM for c in candidates):
+        m.add_plan(candidates, label=label)
+
+
 def match_blank_page_opening(boxes: Sequence[NBox],
                              ctx: PageContext = NO_CONTEXT) -> Match:
     m = Match(joseki="blank_page_opening", title="空白ページの描き出し",
@@ -775,22 +790,28 @@ def match_blank_page_opening(boxes: Sequence[NBox],
         DEFAULT_MARGIN, DEFAULT_MARGIN, 1.0 - DEFAULT_MARGIN * 2, 1.0 - DEFAULT_MARGIN * 2
     )
     height = area.h * OPENING_PANEL_RATIO
-    m.matched = True
-    m.score = 1.0
     for num, den in OPENING_WIDTH_SHARES:
         width = area.w * num / den
-        m.add_plan(
+        _add_if_room(
+            m,
             [Candidate(
                 box=NBox(area.right - width, area.y, width, height),
                 order=1, joseki=m.joseki,
                 reason="三段構成の右上コマ（置いてよい範囲の右上に、高さは枠の 1/3）")],
-            label=_width_label(num, den),
+            _width_label(num, den),
         )
-    m.add_plan(_opening_bleed(area, height, ctx, m.joseki),
-               label="上と右を断ち切り（幅 1/2）")
-    m.add_plan(_opening_top_half(ctx, m.joseki), label="上半分を断ち切り")
+    _add_if_room(m, _opening_bleed(area, height, ctx, m.joseki),
+                 "上と右を断ち切り（幅 1/2）")
+    _add_if_room(m, _opening_top_half(ctx, m.joseki), "上半分を断ち切り")
     # **雛形は最後に置く。** 8コマまとめて敷く案なので、1コマずつの案を見てから
-    m.add_plan(_opening_grid(area, ctx, m.joseki), label="4コマ×2列")
+    _add_if_room(m, _opening_grid(area, ctx, m.joseki), "4コマ×2列")
+
+    # **置ける案が1つも無ければ不一致。** ページが小さすぎて範囲が潰れた場合など
+    m.checks.append(Check("置ける案がある", bool(m.plans),
+                          f"案 {len(m.plans)}件 / 置いてよい範囲 "
+                          f"{area.w:.3f}x{area.h:.3f}"))
+    m.matched = bool(m.plans)
+    m.score = 1.0 if m.matched else 0.0
     return m
 
 

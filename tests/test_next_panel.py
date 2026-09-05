@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from manga_layout import Polygon, Rect, new_project
+from manga_layout import Polygon, Rect, Size, new_project
 from manga_layout.layout import LayoutSettings
 from manga_layout.next_panel import (
     BLEED_OVERFLOW,
@@ -321,6 +321,27 @@ class TestGuideFrame:
         project, page = page_with()
         rect = suggestions(project, page)[0].rects[0]
         assert rect.y < LayoutSettings().margin
+
+    def test_どのページ寸法でも面積の無いコマを提案しない(self):
+        # 小さいページでは余白が幅・高さの半分に届き、**基本枠が潰れる。**
+        # 面積の無いコマは何とも重ならないので、重なりの判定では捕まらない
+        margin = LayoutSettings().margin
+        for w, h in ((1240.0, 1754.0), (1075.0, 1518.0), (400.0, 400.0),
+                     (178.0, 178.0), (180.0, 300.0)):
+            project, page = page_with()
+            page.size = Size(w, h)
+            for found in suggestions(project, page, margin=margin, gutter=35.0):
+                for rect in found.rects:
+                    assert rect.w > 0 and rect.h > 0, f"{w}x{h}: {found.text()}"
+
+    def test_枠が潰れるページでも断ち切りの案は残る(self):
+        # 断ち切りは枠を使わずページの外まで伸ばす。**潰れても作れる**
+        project, page = page_with()
+        page.size = Size(178.0, 178.0)
+        found = suggestions(project, page, margin=LayoutSettings().margin, gutter=35.0)
+        assert [s.label for s in found] == [
+            "上と右を断ち切り（幅 1/2）", "上半分を断ち切り",
+        ]
 
 
 class TestAddSuggestion:

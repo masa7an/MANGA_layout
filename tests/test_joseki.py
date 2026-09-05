@@ -237,6 +237,33 @@ class TestBlankPageOpening:
             "上と右を断ち切り（幅 1/2）", "上半分を断ち切り", "4コマ×2列",
         ]
 
+    def test_置いてよい範囲が潰れたら枠を使う案は出さない(self):
+        # 小さいページで余白が幅・高さの半分に届くと、範囲そのものが潰れる。
+        # **面積の無いコマは何とも重ならない**ので、重なりの判定では捕まらない
+        flat = PageContext(number=1, previous=None,
+                           frame=NBox(0.5, 0.5, 0.0, 0.0),
+                           gutter_x=0.2, gutter_y=0.2,
+                           bleed_x=0.056, bleed_y=0.056)
+        m = hit([], "blank_page_opening", flat)
+        assert [p.label for p in m.plans] == [
+            "上と右を断ち切り（幅 1/2）", "上半分を断ち切り",
+        ]
+
+    def test_どの案も面積を持つ(self):
+        # 枠がふつうのときも、潰れたときも
+        normal = PageContext(number=1, previous=None,
+                             frame=NBox(0.072, 0.051, 0.856, 0.898),
+                             gutter_x=0.028, gutter_y=0.020,
+                             bleed_x=0.008, bleed_y=0.006)
+        flat = PageContext(number=1, previous=None,
+                           frame=NBox(0.5, 0.5, 0.0, 0.0),
+                           gutter_x=0.2, gutter_y=0.2,
+                           bleed_x=0.056, bleed_y=0.056)
+        for ctx in (NO_CONTEXT, normal, flat):
+            for plan in hit([], "blank_page_opening", ctx).plans:
+                for c in plan.candidates:
+                    assert c.box.w > 0 and c.box.h > 0
+
     def test_断ち切りの案は左辺と下辺が他の案と揃う(self):
         # **外へ出るのは上と右だけ。** 左辺や下辺が動くと、他の案と見比べられない
         m = hit([], "blank_page_opening")
