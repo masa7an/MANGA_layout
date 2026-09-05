@@ -60,6 +60,13 @@ def image_of(window):
     return window.state.page.panels[0].children[0]
 
 
+def plain_png() -> bytes:
+    """一様な白だけの絵。**1回押すと全部が選ばれる**（漏れた疑いの側を通す）。"""
+    image = QImage(IMAGE_PX[0], IMAGE_PX[1], QImage.Format.Format_ARGB32)
+    image.fill(QColor("#FFFFFF"))
+    return to_png_bytes(image)
+
+
 def _mouse_event(window, kind, u: float, v: float, shift: bool) -> QMouseEvent:
     """絵の中の割合（0〜1）を、ページ座標を経由して canvas の座標へ直す。"""
     image = image_of(window)
@@ -150,6 +157,78 @@ class Test押した所が消える:
         assert window_with_image.state.history.undo_label == "押した所だけ残す"
         window_with_image.state.undo()
         assert window_with_image.state.history.undo_label == "押した所を消す"
+
+
+class Test案内の言い方:
+    """**履歴に積む名前と、案内の言い方を分ける**（2026-09-05 に直した）。
+
+    履歴は辞書形で並ぶ（→ Undo の一覧）ので、その名前に「ました」を足すと
+    **「押した所を消すました」**になる。押すたびに実際にそう出ていた。
+    """
+
+    def 拾う(self, window):
+        said = []
+        window.state.message.connect(said.append)
+        return said
+
+    def test_消したときの言い方(self, window_with_image):
+        said = self.拾う(window_with_image)
+        click(window_with_image, 0.5, 0.5)
+        assert said[-1].startswith("押した所を消しました"), said
+
+    def test_残したときの言い方(self, window_with_image):
+        said = self.拾う(window_with_image)
+        click(window_with_image, 0.5, 0.5, shift=True)
+        assert said[-1].startswith("押した所だけ残しました"), said
+
+    def test_漏れた疑いのときも同じ言い方(self, window_with_image):
+        """割合が高いと「線に隙間が」を足す。**言い方の作りは変わらない。**"""
+        state = window_with_image.state
+        state.place_image(state.page.panels[0].id, plain_png())  # 一様な白
+        said = self.拾う(window_with_image)
+        click(window_with_image, 0.5, 0.5)
+        assert said[-1].startswith("押した所を消しました"), said
+        assert "線に隙間" in said[-1]
+
+    def test_履歴の名前は辞書形のまま(self, window_with_image):
+        """案内を直したついでに、履歴の名前まで変えない。"""
+        click(window_with_image, 0.5, 0.5)
+        assert window_with_image.state.history.undo_label == "押した所を消す"
+
+
+class Test何も変わらなかったとき:
+    """**変わっていないなら、変わったとは言わない**（2026-09-05 に直した）。
+
+    既にそうなっている所を押すと、マスクの中身は押す前と同じになる。
+    履歴には積まれない（`History.commit` が変化の無い手を弾く）のに、
+    案内だけが「消しました」と出ていた。
+    """
+
+    def test_同じ所をもう一度残しても_変わったとは言わない(self, window_with_image):
+        state = window_with_image.state
+        click(window_with_image, 0.5, 0.5, shift=True)
+        said = []
+        state.message.connect(said.append)
+        click(window_with_image, 0.5, 0.5, shift=True)
+
+        assert said[-1] == "もう、そこだけが残っています", said
+        state.undo()
+        assert image_of(window_with_image).mask_asset == "", "積まれた1手は1つだけ"
+
+    def test_消す側も同じ判断をする(self, window_with_image):
+        """画面からは届きにくい（消えた所は下の絵へ抜ける → `Test重なった絵`）。
+
+        **道具の入口を変えても、この判断は state 側に残す。** 消えた所を
+        押す経路は、道具の作り次第でまた生まれる。
+        """
+        state = window_with_image.state
+        image_id = image_of(window_with_image).id
+        assert state.erase_region_at(image_id, (60, 60)) is True
+
+        said = []
+        state.message.connect(said.append)
+        assert state.erase_region_at(image_id, (60, 60)) is False
+        assert said[-1] == "そこはもう消えています", said
 
 
 class Test手の届く範囲:

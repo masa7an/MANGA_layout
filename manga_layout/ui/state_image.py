@@ -50,6 +50,24 @@ WAND_TOLERANCE_MIN = 0
 WAND_TOLERANCE_MAX = 64
 WAND_TOLERANCE_STEP = 4
 
+# 切り抜きを1回押したときの言い方3つ。
+# **（履歴に積む名前、済んだときの案内、何も変わらなかったときの案内）**
+#
+# **履歴の名前を案内に流用しない。** 履歴は辞書形で並べるもの（→ Undo の一覧）
+# なので、そのまま「ました」を足すと**「押した所を消すました」**になる。
+# 2026-09-05 まで、押すたびに実際にそう出ていた——`label` 1つで兼ねようとして
+# 無理が出た形なので、**兼ねるのをやめて3つ持つ**
+WAND_ERASE_WORDS = (
+    "押した所を消す",
+    "押した所を消しました",
+    "そこはもう消えています",
+)
+WAND_KEEP_WORDS = (
+    "押した所だけ残す",
+    "押した所だけ残しました",
+    "もう、そこだけが残っています",
+)
+
 
 class ImageMixin:
     """絵の読み込み・切り抜き・ラフの操作。**`EditorState` に混ぜて使う。**
@@ -255,7 +273,11 @@ class ImageMixin:
     def apply_image_mask(
         self, image_id: str, data: bytes, *, label: str = "切り抜きの適用"
     ) -> bool:
-        """表示中のページの画像に切り抜きを掛ける。掛けたら True。
+        """表示中のページの画像に切り抜きを掛ける。**作品が変わったら True。**
+
+        False は「作品は何も変わっていない」——画像が見つからないときと、
+        **既に同じ切り抜きが掛かっているとき**の2つ。呼ぶ側がすることは
+        どちらも同じ（作品には触らず、案内だけ出す）なので分けていない。
 
         `label` は履歴に積む名前。**押した所を消す操作（→ `erase_region_at`）は
         別の名前で積む**——Undo の一覧で「切り抜きの適用」が並ぶだけだと、
@@ -283,6 +305,13 @@ class ImageMixin:
 
         old_ref = image.mask_asset
         ref = self.import_mask_bytes(data)
+        if ref == old_ref:
+            # **同じ内容のマスクは同じ参照になる**（`assets/` は内容ハッシュが
+            # 名前 → `assets.ref_for`）。作品は1文字も変わらないので、履歴にも
+            # 積まないし、呼ぶ側には「変わらなかった」と答える。
+            # ここで True を返していた頃は、既に消えている所を押しても
+            # 「消しました」と出ていた（2026-09-05 発見）
+            return False
         with self.edit_page(label) as page:
             target = page.find(image_id)
             if isinstance(target, ImageObject):
@@ -370,17 +399,19 @@ class ImageMixin:
             else removed(current, chosen.mask)
         )
 
-        label = "押した所だけ残す" if keep_only else "押した所を消す"
+        label, done, unchanged = WAND_KEEP_WORDS if keep_only else WAND_ERASE_WORDS
         if not self.apply_image_mask(image_id, to_png_bytes(updated), label=label):
+            # **変わっていないなら、変わったとは言わない。** 既に消えている所を
+            # 押したときで、履歴にも積まれていない（→ `apply_image_mask`）
+            self.message.emit(unchanged)
             return False
 
         if chosen.leaked and not keep_only:
             self.message.emit(
-                f"{label}ました（絵の {chosen.ratio:.0%}）。"
-                "線に隙間があるかもしれません"
+                f"{done}（絵の {chosen.ratio:.0%}）。線に隙間があるかもしれません"
             )
         else:
-            self.message.emit(f"{label}ました（押した区画は絵の {chosen.ratio:.0%}）")
+            self.message.emit(f"{done}（押した区画は絵の {chosen.ratio:.0%}）")
         return True
 
     def mask_hides(self, image: ImageObject, seed: tuple[int, int]) -> bool:
