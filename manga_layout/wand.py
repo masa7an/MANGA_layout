@@ -232,17 +232,6 @@ def _image_like(raw: bytes, like: QImage) -> QImage:
     ).copy()
 
 
-def inverted(mask: QImage) -> QImage:
-    """選んだ所と選んでいない所を入れ替える。
-
-    **切り抜きの定石はこれ。** 背景を選んでから反転すると、線で囲まれた
-    中身（人物）が残る。線そのものは選ばれていないので、反転すると
-    **線が中身の側に付いてくる**——輪郭が痩せないのはこのため。
-    """
-    raw, gray = _raw_of(mask)
-    return _image_like(raw.translate(_INVERT), gray)
-
-
 def _pair(a: QImage, b: QImage) -> tuple[bytes, bytes, QImage]:
     if a.size() != b.size():
         raise MaskSizeError(
@@ -254,16 +243,13 @@ def _pair(a: QImage, b: QImage) -> tuple[bytes, bytes, QImage]:
     return a_raw, b_raw, a_gray
 
 
-def combined(a: QImage, b: QImage) -> QImage:
-    """どちらかに入っている所（足す）。"""
-    a_raw, b_raw, like = _pair(a, b)
-    n = len(a_raw)
-    merged = int.from_bytes(a_raw, "big") | int.from_bytes(b_raw, "big")
-    return _image_like(merged.to_bytes(n, "big"), like)
-
-
 def removed(a: QImage, b: QImage) -> QImage:
-    """`a` から `b` を取り除く（引く）。"""
+    """`a` から `b` を取り除く（引く）。
+
+    **切り抜きの定石はこれ。** 全面から背景を引くと、線で囲まれた中身
+    （人物）が残る。線そのものは背景と濃さが違って選ばれていないので、
+    引いても**線は中身の側に残る**——輪郭が痩せないのはこのため。
+    """
     a_raw, b_raw, like = _pair(a, b)
     n = len(a_raw)
     kept = int.from_bytes(a_raw, "big") & int.from_bytes(b_raw.translate(_INVERT), "big")

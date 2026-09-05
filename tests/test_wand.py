@@ -16,8 +16,7 @@ from manga_layout.images import size_px
 from manga_layout.wand import (
     DEFAULT_TOLERANCE,
     LEAK_RATIO,
-    combined,
-    inverted,
+    intersected,
     removed,
     select_at,
 )
@@ -134,39 +133,51 @@ class Test崩れ方を固定する:
         assert 広い.ratio > 0.4, "半分近くまで流れ出す"
 
 
-class Test組み合わせ:
-    def test_反転すると入れ替わる(self, qapp):
-        中 = select_at(boxed(), (60, 60)).mask
-        外 = inverted(中)
-        assert 外.pixelColor(60, 60).value() == 0
-        assert 外.pixelColor(5, 5).value() == 255
+def 全面(px=(W, H)) -> QImage:
+    """全部残っているマスク（→ `EditorState.image_mask_or_full`）。
 
-    def test_反転すると線が中身の側に付く(self, qapp):
-        """**輪郭が痩せないのはこのため**（→ `inverted` の注記）。"""
+    切り抜きは**ここから引いていく**ので、組み合わせの出発点はいつもこれ。
+    """
+    mask = QImage(px[0], px[1], QImage.Format.Format_Grayscale8)
+    mask.fill(255)
+    return mask
+
+
+class Test組み合わせ:
+    def test_引ける(self, qapp):
+        中 = select_at(boxed(), (60, 60)).mask
+        残り = removed(全面(), 中)
+        assert 残り.pixelColor(60, 60).value() == 0, "引いた所は消える"
+        assert 残り.pixelColor(5, 5).value() == 255, "それ以外は残る"
+
+    def test_背景を引くと線が中身の側に残る(self, qapp):
+        """**輪郭が痩せないのはこのため**（→ `removed` の注記）。"""
         背景 = select_at(boxed(), (5, 5)).mask
-        中身 = inverted(背景)
+        中身 = removed(全面(), 背景)
         assert 中身.pixelColor(30, 60).value() == 255, "枠線そのものが残る"
         assert 中身.pixelColor(60, 60).value() == 255, "囲まれた中も残る"
+        assert 中身.pixelColor(5, 5).value() == 0, "背景は消える"
 
-    def test_足せる(self, qapp):
+    def test_そこだけ残せる(self, qapp):
+        """Shift を押しながら押したときの側（→ `EditorState.erase_region_at`）。"""
         中 = select_at(boxed(), (60, 60)).mask
-        外 = select_at(boxed(), (5, 5)).mask
-        両方 = combined(中, 外)
-        assert 両方.pixelColor(60, 60).value() == 255
-        assert 両方.pixelColor(5, 5).value() == 255
+        残り = intersected(全面(), 中)
+        assert 残り.pixelColor(60, 60).value() == 255, "押した所が残る"
+        assert 残り.pixelColor(5, 5).value() == 0, "それ以外が消える"
 
-    def test_引ける(self, qapp):
-        全部 = inverted(select_at(canvas("#000000"), (0, 0)).mask)  # 何も無い
-        中 = select_at(boxed(), (60, 60)).mask
-        assert 全部.pixelColor(60, 60).value() == 0, "白紙を反転すれば空"
-        残り = removed(combined(全部, 中), 中)
-        assert 残り.pixelColor(60, 60).value() == 0, "足してから引けば元に戻る"
+    def test_続けて引ける(self, qapp):
+        """区画ごとに消していける（→ 要件定義 10.3「続けて押せば足せる」）。"""
+        残り = removed(全面(), select_at(boxed(), (60, 60)).mask)
+        残り = removed(残り, select_at(boxed(), (5, 5)).mask)
+        assert 残り.pixelColor(60, 60).value() == 0, "1回目のぶん"
+        assert 残り.pixelColor(5, 5).value() == 0, "2回目のぶん"
+        assert 残り.pixelColor(30, 60).value() == 255, "枠線は残ったまま"
 
     def test_大きさが違えば断る(self, qapp):
         小さい = select_at(boxed(), (60, 60)).mask
         大きい = select_at(QImage(200, 200, QImage.Format.Format_ARGB32), (5, 5)).mask
         with pytest.raises(MaskSizeError):
-            combined(小さい, 大きい)
+            removed(小さい, 大きい)
 
 
 def test_既定の許容差は白地の線画で通る(qapp):
