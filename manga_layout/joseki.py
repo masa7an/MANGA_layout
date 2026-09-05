@@ -925,6 +925,16 @@ def match_fill_band_left(boxes: Sequence[NBox],
     right_edge = min(b.x for b in band) - f.gutter
     available = right_edge - f.left
 
+    # **高さを幅より先に見る。** 最も下の段が置いてよい範囲より下にあると、
+    # 上下で挟んだ結果ここが**負になる**（枠の下端 − 段の上端）。
+    # **面積が負のコマは何とも重ならない**ので、下の `_overlapping` はすり抜ける。
+    # 幅だけ見ていたころ、細片のコマが「一致」として3案出た（2026-09-05 実測）。
+    tall = height >= MIN_ROOM
+    m.checks.append(Check("段に置ける高さがある", tall,
+                          f"高さ {height:.3f} / 下限 {MIN_ROOM:.3f}"))
+    if not tall:
+        return m
+
     narrowest = min(b.w for b in band)
     enough = available >= MIN_ROOM and available >= narrowest * MIN_BAND_SHARE
     m.checks.append(Check("最も下の段に左の空きがある", enough,

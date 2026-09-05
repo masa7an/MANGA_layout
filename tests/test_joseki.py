@@ -175,6 +175,26 @@ class TestFillBandLeft:
         sliver = [NBox(0.52, 0.06, 0.42, 0.28), NBox(0.10, 0.06, 0.38, 0.28)]
         assert hit(sliver, "fill_band_left") is None
 
+    def test_最も下の段が置いてよい範囲より下なら出さない(self):
+        # 上下を枠で挟むと**高さが負になる**。面積が負のコマは何とも重ならないので、
+        # 幅だけ見ていると重なり判定をすり抜け、細片のコマが「一致」で出る
+        frame = NBox(0.072, 0.051, 1.0 - 0.072 * 2, 1.0 - 0.051 * 2)
+        ctx = PageContext(number=1, previous=None, frame=frame,
+                          gutter_x=0.028, gutter_y=0.020, bleed_x=0.008, bleed_y=0.006)
+        below = [
+            *TOP_BAND,
+            NBox(0.52, 0.38, 0.42, 0.28), NBox(0.06, 0.38, 0.42, 0.28),
+            NBox(0.52, 0.70, 0.42, 0.20), NBox(0.06, 0.70, 0.42, 0.20),
+            NBox(0.52, 0.95, 0.42, 0.04),      # 枠の下端より下に置いた最後のコマ
+        ]
+        assert hit(below, "fill_band_left", ctx) is None
+
+    def test_提案の高さは必ず正(self):
+        # 当たったときは、どの案も面積を持つこと
+        for plan in hit(BAND_HALF_DRAWN, "fill_band_left").plans:
+            for c in plan.candidates:
+                assert c.box.h > 0 and c.box.w > 0
+
 
 class TestSpreadOpening:
     """見開きドン（空白ページの描き出し）。"""
