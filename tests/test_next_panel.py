@@ -22,7 +22,6 @@ from manga_layout.next_panel import (
     add_suggestion,
     context_for,
     guide_frame,
-    is_rectangular,
     reading_order,
     suggestions,
     supported,
@@ -155,19 +154,48 @@ class TestContext:
 
 
 class TestSupported:
+    """提案を出せるページか。**`split_panel` と同じ道具で判定する。**
+
+    以前はここに別の判定（4隅を整数に丸めて集合で比べる）を持っており、
+    「同じ線引き」と書いてありながら中身が違っていた（2026-09-05 に1本化）。
+    """
+
+    def shape_of(self, *points):
+        _project, page = page_with(*band(0.06, 0.28))
+        page.panels[0].shape = Polygon(tuple((float(x), float(y)) for x, y in points))
+        return page
+
     def test_矩形のコマは対象(self):
         _project, page = page_with(*band(0.06, 0.28))
         assert supported(page)
-        assert all(is_rectangular(p) for p in page.panels)
 
     def test_斜めのコマがあるページは対象外(self):
         # 定石は矩形を前提にしている。`split_panel` が斜めを断るのと同じ線引き
-        _project, page = page_with(*band(0.06, 0.28))
-        page.panels[0].shape = Polygon(
-            ((100.0, 100.0), (400.0, 140.0), (400.0, 500.0), (100.0, 460.0))
-        )
-        assert not is_rectangular(page.panels[0])
+        page = self.shape_of((100, 100), (400, 140), (400, 500), (100, 460))
         assert not supported(page)
+
+    def test_わずかに傾いたコマも対象外(self):
+        # **0.4px の傾き。** 以前は提案を出せたのに、置いたコマを割ると
+        # 「斜めのコマはまだ分割できません」と断られていた
+        page = self.shape_of((100, 100), (400, 100.4), (400, 300), (100, 300))
+        assert not supported(page)
+        assert page.panels[0].shape.as_rect() is None      # 割る側も断る
+
+    def test_頂点の順が崩れたコマも対象外(self):
+        # 4隅は揃っているが、たどると蝶ネクタイになる
+        page = self.shape_of((100, 100), (400, 300), (400, 100), (100, 300))
+        assert not supported(page)
+
+    def test_面積の無いコマも対象外(self):
+        for points in (((100, 100), (400, 100), (400, 100), (100, 100)),    # 高さ0
+                       ((100, 100), (100, 100), (100, 300), (100, 300))):   # 幅0
+            page = self.shape_of(*points)
+            assert not supported(page)
+
+    def test_割れるコマなら必ず提案の対象(self):
+        # **線引きが1本であること。** 片方だけ通る形を作れない
+        page = self.shape_of((100, 100), (400, 100), (400, 300), (100, 300))
+        assert (page.panels[0].shape.as_rect() is not None) is supported(page)
 
 
 class TestSuggestions:

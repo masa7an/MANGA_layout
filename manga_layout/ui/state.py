@@ -1329,7 +1329,9 @@ class EditorState(QObject):
         """
         page = self.page
         if not next_panel.supported(page):
-            self.message.emit("斜めのコマがあるページでは提案できません")
+            # **「斜め」だけではない。** 面積の無いコマや、頂点の順が崩れたコマも
+            # 断る（→ `next_panel.supported`）。文言はその全部を指す言い方にしてある
+            self.message.emit("四角でないコマがあるページでは提案できません")
             return False
 
         # 差し替えるかどうかは、**履歴がまとめている鍵**だけで決める。

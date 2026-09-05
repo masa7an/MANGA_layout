@@ -201,14 +201,27 @@ class TestAltHint:
 
 
 class TestRefusal:
-    def test_斜めのコマがあるページでは断る(self, editor):
+    def refuse(self, editor, *points):
         editor.page.panels[0].shape = Polygon(
-            ((100.0, 100.0), (400.0, 140.0), (400.0, 500.0), (100.0, 460.0))
+            tuple((float(x), float(y)) for x, y in points)
         )
         seen = []
         editor.message.connect(seen.append)
         assert not editor.suggest_next_panel()
-        assert "斜め" in seen[-1]
+        return seen[-1]
+
+    def test_斜めのコマがあるページでは断る(self, editor):
+        text = self.refuse(editor, (100, 100), (400, 140), (400, 500), (100, 460))
+        assert "四角" in text
+
+    def test_断る相手は斜めだけではない(self, editor):
+        """**文言に「斜め」と書かない。** 判定を `split_panel` と同じ道具に
+        1本化した結果、断る対象が広がった（2026-09-05）。面積の無いコマで
+        「斜めのコマがあります」と出すと、**探しても見つからない。**
+        """
+        text = self.refuse(editor, (100, 100), (400, 100), (400, 100), (100, 100))
+        assert "四角" in text
+        assert "斜め" not in text
 
     def test_埋まったページでは断る(self, qapp):
         editor = editor_with(

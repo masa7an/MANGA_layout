@@ -112,27 +112,19 @@ def reading_order(panels: list[Panel]) -> list[Panel]:
 # --------------------------------------------------------------------------
 
 
-def is_rectangular(panel: Panel) -> bool:
-    """そのコマが（傾いていない）矩形か。**斜めに割ったコマは False。**"""
-    points = panel.shape.points
-    if len(points) != 4:
-        return False
-    box = panel.bounds()
-    corners = {
-        (round(box.x), round(box.y)),
-        (round(box.right), round(box.y)),
-        (round(box.x), round(box.bottom)),
-        (round(box.right), round(box.bottom)),
-    }
-    return {(round(x), round(y)) for x, y in points} == corners
-
-
 def supported(page: Page) -> bool:
-    """そのページに提案を出せるか。**斜めのコマがあるページは対象外。**
+    """そのページに提案を出せるか。**矩形でないコマがあるページは対象外。**
 
-    定石は矩形を前提にしている。`layout.split_panel` が斜めのコマを断るのと同じ線引き。
+    定石は矩形を前提にしている。`layout.split_panel` が斜めのコマを断るのと
+    **同じ道具で同じように判定する**（`Polygon.as_rect()`）。
+
+    **以前はここに別の判定を持っていた**（4隅を整数に丸めて集合で比べる）。
+    「同じ線引き」と書いてありながら中身が違い、**4つの形で答えが割れていた**
+    ——0.4px 傾いたコマ・頂点が蝶ネクタイ順のコマ・高さ0のコマ・幅0のコマ。
+    どれも提案は出せるのに、置いたコマを割ろうとすると断られる。
+    **線引きは1本にして、書き写さない**（2026-09-05）。
     """
-    return all(is_rectangular(p) for p in page.panels)
+    return all(p.shape.as_rect() is not None for p in page.panels)
 
 
 def to_boxes(page: Page, ignore: Collection[str] = ()) -> list[NBox]:
