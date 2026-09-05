@@ -314,11 +314,24 @@ class ImageMixin:
 
         **原寸に対して選ぶ。** マスクは元画像と同じ寸法でなければ適用できない
         ので、画面用の縮小版（`image_cache`）は使えない。
+
+        **使えない絵では None を返す。** 実体が無い場合だけでなく、**実体は
+        あるが展開できない**場合も同じ（→ `has_asset`「無い」と「開けない」を
+        分けない）。ここで例外を素通しすると、押した瞬間の処理から漏れて
+        コンソールへ落ちる——**アプリは落ちないので**（PySide6 は traceback を
+        出して先へ進む）、`run.bat` から起動した利用者には**押したのに何も
+        起きない**だけが残る。描画側（`safe_masked_preview`）は同じ例外を
+        握って描き進めているので、こちらだけ素通しにする理由が無い
+        （2026-09-05 発見）。
         """
         data = self.read_asset(image.asset)
         if data is None:
             return None
-        return select_at(decode(data), seed, tolerance=self.wand_tolerance)
+        try:
+            full = decode(data)
+        except AssetError:
+            return None
+        return select_at(full, seed, tolerance=self.wand_tolerance)
 
     def erase_region_at(
         self, image_id: str, seed: tuple[int, int], *, keep_only: bool = False
@@ -341,7 +354,9 @@ class ImageMixin:
 
         chosen = self.region_mask_at(image, seed)
         if chosen is None:
-            self.message.emit("絵の実体が見つかりません")
+            # **「無い」と「壊れている」を分けない**（→ `has_asset`、
+            # 点検の「使えない画像」と同じ言い分け）。どちらでも切り抜けない
+            self.message.emit("この絵は使えません（実体が無いか、壊れています）")
             return False
         if chosen.empty:
             return False

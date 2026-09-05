@@ -14,6 +14,7 @@ from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter
 
 from manga_layout import Rect
+from manga_layout.assets import AssetStore
 from manga_layout.image_masks import decode_mask
 from manga_layout.images import size_px, to_png_bytes
 from manga_layout.ui import EditorState, MainWindow
@@ -170,6 +171,55 @@ class Test手の届く範囲:
         window_with_image.state.set_tool(TOOL_SELECT)
         click(window_with_image, 0.5, 0.5)
         assert image_of(window_with_image).mask_asset == ""
+
+
+class Test使えない絵:
+    """**使えない絵を押しても、黙って何も起きないままにしない**（2026-09-05 に直した）。
+
+    押した瞬間の処理から例外が漏れると、PySide6 は traceback を**コンソールへ
+    出して先へ進む**（アプリは落ちない）。`run.bat` から起動した利用者に
+    コンソールは見えないので、**押したのに何も起きない**だけが残る。
+
+    **「実体が無い」と「実体はあるが開けない」を分けない**
+    （→ `EditorState.has_asset`、点検の「使えない画像」と同じ言い分け）。
+    """
+
+    def 壊す(self, window, fixture_dir):
+        """実体を、署名だけ正しい壊れたファイルへ差し替える。"""
+        ref = image_of(window).asset
+        broken = (fixture_dir / "broken.png").read_bytes()
+        AssetStore(window.state.project_dir).resolve(ref).write_bytes(broken)
+        window.state.image_cache.forget(ref)
+        window.state.baked_cache.forget(ref)
+
+    def test_実体が壊れていても例外が漏れない(self, window_with_image, fixture_dir):
+        self.壊す(window_with_image, fixture_dir)
+        click(window_with_image, 0.5, 0.5)  # 例外が漏れればここで落ちる
+        assert image_of(window_with_image).mask_asset == "", "切り抜きは掛からない"
+
+    def test_実体が壊れていたら理由を言う(self, window_with_image, fixture_dir):
+        said = []
+        window_with_image.state.message.connect(said.append)
+        self.壊す(window_with_image, fixture_dir)
+        click(window_with_image, 0.5, 0.5)
+        assert said, "黙って終わらない"
+        assert "使えません" in said[-1], said
+
+    def test_実体が無いときと同じ案内(self, window_with_image, fixture_dir):
+        """**2つを分けない。** 分けると、同じ「切り抜けない」に2通りの言い方が並ぶ。"""
+        欠け = []
+        window_with_image.state.message.connect(欠け.append)
+        ref = image_of(window_with_image).asset
+        AssetStore(window_with_image.state.project_dir).resolve(ref).unlink()
+        window_with_image.state.image_cache.forget(ref)
+        click(window_with_image, 0.5, 0.5)
+
+        壊れ = []
+        window_with_image.state.message.connect(壊れ.append)
+        self.壊す(window_with_image, fixture_dir)
+        click(window_with_image, 0.5, 0.5)
+
+        assert 欠け[-1] == 壊れ[-1]
 
 
 class Test連打:
