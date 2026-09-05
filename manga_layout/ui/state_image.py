@@ -25,6 +25,7 @@ from ..images import (
     Preview,
     bake_key,
     decode,
+    file_px,
     preview_from_bytes,
     readable_file,
     size_px,
@@ -119,6 +120,27 @@ class ImageMixin:
             # 参照の形自体が壊れている（`assets/` の外を指すなど）
             return False
         return path.is_file() and readable_file(path)
+
+    def asset_px(self, ref: str) -> tuple[int, int] | None:
+        """その画像の画素寸法。使えない画像なら None。**展開はしない。**
+
+        `has_asset` と同じ1回の読みで分かることを、寸法まで返すだけ
+        （→ `images.file_px`）。点検（`check.inspect_project`）が、切り抜きの
+        マスクが絵と同じ寸法かを見るのに使う。
+        """
+        data = self.pending_assets.get(ref)
+        if data is not None:
+            # 預かり分はまだディスクに無い。取り込み時に展開済みなので、
+            # 縮小版の持っている原寸をそのまま答える（→ `import_bytes`）
+            preview = self.image_cache.get(ref, lambda: data)
+            return None if preview is None else preview.source_px
+        if self.project_dir is None:
+            return None
+        try:
+            path = AssetStore(self.project_dir).resolve(ref)
+        except AssetError:
+            return None
+        return file_px(path) if path.is_file() else None
 
     def preview(self, ref: str) -> Preview | None:
         """画面に描くための1枚。無い・壊れているときは None。

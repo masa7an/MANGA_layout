@@ -195,6 +195,48 @@ class Test点検:
         assert kinds.count(check.KIND_MISSING_ASSET) == 1
         assert check.KIND_MISSING_MASK not in kinds
 
+    def test_寸法の合わないマスクも知らせる(self, window_with_image):
+        """**「無い」と「効いていない」を分けない**（2026-09-05 に足した）。
+
+        寸法の合わないマスクは掛からずに素通りするので、画面にも書き出しにも
+        切り抜く前の絵が出る。利用者から見れば外れているのと同じで、しかも
+        **案内がどこにも出ない**——ここが数えないと、気づく手立てが1つも無い。
+        """
+        state = window_with_image.state
+        image_id = image_of(window_with_image).id
+        ずれたマスク = state.import_mask_bytes(mask_png(10, (60, 40)))
+        with state.edit_page("寸法の合わないマスクを差し込む") as page:
+            page.find(image_id).mask_asset = ずれたマスク
+
+        findings = check.inspect_project(
+            state.project, state.has_asset, state.asset_px
+        )
+        assert check.KIND_MISSING_MASK in [f.kind for f in findings]
+
+    def test_寸法が合っていれば知らせない(self, window_with_image):
+        state = window_with_image.state
+        state.apply_image_mask(image_of(window_with_image).id, mask_png(40))
+
+        findings = check.inspect_project(
+            state.project, state.has_asset, state.asset_px
+        )
+        assert check.KIND_MISSING_MASK not in [f.kind for f in findings]
+
+    def test_寸法を確かめる手立てが無ければ見ない(self, window_with_image):
+        """**数だけ勝手に 0 と答えない**（`has_asset` を省いたときと同じ流儀）。
+
+        寸法まで確かめられるのは画面の側だけ。渡されなければ、欠けている
+        ほうだけを見る。
+        """
+        state = window_with_image.state
+        image_id = image_of(window_with_image).id
+        ずれたマスク = state.import_mask_bytes(mask_png(10, (60, 40)))
+        with state.edit_page("寸法の合わないマスクを差し込む") as page:
+            page.find(image_id).mask_asset = ずれたマスク
+
+        findings = check.inspect_project(state.project, state.has_asset)
+        assert check.KIND_MISSING_MASK not in [f.kind for f in findings]
+
 
 class Test描画と書き出し:
     """**画面・サムネイル・PNG／JPG／PSD が同じ結果になる**（→ 計画 段階3）。

@@ -98,6 +98,18 @@ def readable_file(path: pathlib.Path) -> bool:
     return QImageReader(str(path)).size().isValid()
 
 
+def file_px(path: pathlib.Path) -> tuple[int, int] | None:
+    """そのファイルの画素寸法。開けない形なら None。**画素は展開しない。**
+
+    `readable_file` と**同じ1回の読み**で分かることを、寸法まで返すだけ
+    （→ そちらの注記）。点検（`check.inspect_project`）が、切り抜きの
+    マスクの寸法が絵と合っているかを見るのに使う。展開する `decode` を
+    呼ぶと、全ページ分を巡る処理が固まる（2026-08-09 の判断）。
+    """
+    size = QImageReader(str(path)).size()
+    return (size.width(), size.height()) if size.isValid() else None
+
+
 def to_png_bytes(image: QImage) -> bytes:
     """`QImage` を PNG のバイト列にする。
 

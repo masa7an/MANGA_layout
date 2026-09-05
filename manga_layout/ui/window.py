@@ -1445,7 +1445,9 @@ class MainWindow(QMainWindow):
         **作品には一切書かない。** 印は画面の状態（`state.check_marks`）
         だけに持つので、Undo にも保存形式にもサムネイルの指紋にも乗らない。
         """
-        findings = inspect_project(self.state.project, self.state.has_asset)
+        findings = inspect_project(
+            self.state.project, self.state.has_asset, self.state.asset_px
+        )
         self.state.set_check_marks(marked_page_ids(findings))
 
         if self._check_dialog is None:

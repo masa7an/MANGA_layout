@@ -42,7 +42,8 @@ KIND_LABELS = {
     # 場合も同じ扱いだから（→ `EditorState.has_asset`。2026-08-09）。
     # 書き出した結果はどちらも「そこが白く抜ける」で同じ
     KIND_MISSING_ASSET: "使えない画像",
-    # 切り抜き（→ 要件定義 10.3）のマスクだけが欠けている状態。**絵は出る。**
+    # 切り抜き（→ 要件定義 10.3）が効いていない状態。**絵は出る。**
+    # マスクの実体が欠けている場合と、寸法が絵と合っていない場合の両方。
     # 出るのは切り抜く前の絵なので、白く抜ける `KIND_MISSING_ASSET` とは
     # 見え方が違う。書き出し前の警告（`ui.export.missing_assets_in`）が
     # 数えないのもこのため——あちらの問いは「白く抜けるか」だけ
@@ -100,7 +101,9 @@ class Finding:
 
 
 def inspect_project(
-    project: Project, has_asset: Callable[[str], bool] | None = None
+    project: Project,
+    has_asset: Callable[[str], bool] | None = None,
+    asset_px: Callable[[str], tuple[int, int] | None] | None = None,
 ) -> list[Finding]:
     """作品を丸ごと見回す。**重い順 → ページ順**に並べて返す。
 
@@ -108,16 +111,23 @@ def inspect_project(
     開ける形か → `EditorState.has_asset`）。**省くと画像の欠けは見ない。**
     確かめられるのは画面の側だけなので、渡されなければその項目を
     飛ばす（数だけ勝手に 0 と答えると、無事だったのと区別が付かない）。
+
+    `asset_px` は「その参照の画素寸法」（→ `EditorState.asset_px`）。
+    切り抜きのマスクが絵と同じ寸法かを見るのに使う。**こちらも省ける**
+    ——省くと、寸法の食い違いだけを見ない（欠けているほうは見る）。
     """
     found: list[Finding] = []
     for index, page in enumerate(project.pages):
-        found.extend(inspect_page(page, index, has_asset))
+        found.extend(inspect_page(page, index, has_asset, asset_px))
     found.sort(key=lambda f: (KIND_ORDER.index(f.kind), f.page_index))
     return found
 
 
 def inspect_page(
-    page: Page, page_index: int, has_asset: Callable[[str], bool] | None = None
+    page: Page,
+    page_index: int,
+    has_asset: Callable[[str], bool] | None = None,
+    asset_px: Callable[[str], tuple[int, int] | None] | None = None,
 ) -> list[Finding]:
     """1ページぶん。並びは呼び出し側で整える。"""
 
@@ -144,7 +154,15 @@ def inspect_page(
                 continue
             # 切り抜きのマスク（→ 10.3）。マークは持たないので空になる
             mask = getattr(obj, "mask_asset", "")
-            if mask and not has_asset(mask):
+            if not mask:
+                continue
+            # **「無い」と「効いていない」を分けない。** 寸法の合わないマスクは
+            # 掛からずに素通りするので（→ `image_masks.safe_masked_preview`）、
+            # 画面にも書き出しにも**切り抜く前の絵**が出る。利用者から見れば
+            # 外れているのと同じで、しかも**案内がどこにも出ない**——ここが
+            # 数えないと、気づく手立てが1つも無かった（2026-09-05 発見）
+            size_differs = asset_px is not None and asset_px(mask) != obj.src_px
+            if not has_asset(mask) or size_differs:
                 found.append(hit(KIND_MISSING_MASK, obj.id))
 
     balloons = {f.id: f for f in page.floating if isinstance(f, BalloonObject)}
