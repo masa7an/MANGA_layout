@@ -468,12 +468,25 @@ class MainWindow(QMainWindow):
         **`ファイル(F)` の括弧が何なのかは、初めて見た人には分からない。**
         Alt と一緒に押す、という説明を、その括弧が並んでいる場所そのものに置く。
 
-        **押せない項目として置く**ので灰色になり、押しても何も起きない。
-        メニューを持たないので、「メニューを探す」窓には出ない（→ `menu_search._walk`）。
+        **項目ではなく、メニューバーの隅に置く部品にする**（`setCornerWidget`）。
+        以前は「押せない項目」として置いていたが、**押せない項目を飛ばすかどうかは
+        見た目（スタイル）任せ**で、`SH_Menu_AllowActiveAndDisabled` が 1 の
+        `windowsvista` と `windows` では **Alt → → と進んだときに反転表示で止まる**
+        （↓ を押しても何も開かない。抜けられはするが行き止まりに見える）。
+        このPCの既定 `windows11` と `fusion` では起きないので、**手元では見えない**
+        （2026-09-05 に4つのスタイルで実測して確認）。
+
+        部品にすれば**どのスタイルでも項目ではなくなる**ので、この違いごと無くなる。
+        「メニューを探す」窓にも、そもそも項目でないので出ない。
         """
-        hint = self.menuBar().addAction(ALT_HINT)
-        hint.setEnabled(False)
-        self._alt_hint_action = hint
+        hint = QLabel(ALT_HINT)
+        hint.setEnabled(False)                 # 灰色にするため（押せる部品ではない）
+        # **メニューの文字の大きさに揃える。** 既定のままだと本文の大きさになり、
+        # 隣の `ヘルプ(H)` より大きく見える（利用者の設定は大きめ）
+        hint.setFont(self.menuBar().font())
+        hint.setContentsMargins(0, 0, 8, 0)    # 右端に貼り付かないよう少しだけ空ける
+        self.menuBar().setCornerWidget(hint, Qt.Corner.TopRightCorner)
+        self._alt_hint_widget = hint
 
     def _build_toolbar(self) -> None:
         """道具箱。**一覧は `_tool_actions` から取る。**

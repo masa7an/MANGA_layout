@@ -232,13 +232,35 @@ class TestAltHint:
     """メニューバーの「＋ Alt キー」（→ `window._add_alt_hint`）。"""
 
     def test_ヘルプの右に灰色で出す(self, qapp):
+        from PySide6.QtCore import Qt
+
         from manga_layout.ui.window import ALT_HINT
 
         window = MainWindow()
         try:
-            texts = [a.text() for a in window.menuBar().actions()]
-            assert texts[-1] == ALT_HINT          # いちばん右（ヘルプの次）
-            assert not window._alt_hint_action.isEnabled()   # 押せない＝灰色
+            corner = window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
+            assert corner is not None
+            assert corner.text() == ALT_HINT
+            assert not corner.isEnabled()                    # 灰色
+            # **メニューの文字の大きさに揃える**（利用者の設定は大きめ）
+            assert corner.font().pointSizeF() == window.menuBar().font().pointSizeF()
+        finally:
+            window.close()
+
+    def test_メニューバーに押せない項目を置かない(self, qapp):
+        """**押せない項目を飛ばすかどうかは見た目（スタイル）任せ。**
+
+        `SH_Menu_AllowActiveAndDisabled` が 1 のスタイル（`windowsvista`・
+        `windows`）では、Alt → → と進んだときに反転表示で止まり、↓ を押しても
+        何も開かない。このPCの既定（`windows11`・`fusion`）では起きないので
+        **手元では見えない**。項目ではなく隅の部品にして、違いごと無くした
+        （2026-09-05 修正）。
+        """
+        window = MainWindow()
+        try:
+            bar = window.menuBar()
+            assert [a.text() for a in bar.actions() if not a.isEnabled()] == []
+            assert all(a.menu() is not None for a in bar.actions())
         finally:
             window.close()
 
