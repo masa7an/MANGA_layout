@@ -43,12 +43,20 @@ MIN_PER_COLUMN = 4
 
 
 def _bands(panels: list[Panel]) -> list[list[Panel]]:
-    """段に分ける。**同じ段のコマは必ず縦に重なる**ので、重なりだけで決まる。"""
+    """段に分ける。**同じ段のコマは必ず縦に重なる**ので、重なりだけで決まる。
+
+    **基準のコマは必ず自分の段に入れる**（`p is head`）。重なりの判定は
+    「上端が相手の下端より上」で見るので、**高さ 0 のコマは自分自身とすら重ならない。**
+    入れずに書くと段が空になり、`rest` が減らずにここで永久に回る（実際に固まった）。
+    """
     rest, bands = list(panels), []
     while rest:
         head = min(rest, key=lambda p: p.bounds().y)
         top, bottom = head.bounds().y, head.bounds().bottom
-        band = [p for p in rest if p.bounds().y < bottom and p.bounds().bottom > top]
+        band = [
+            p for p in rest
+            if p is head or (p.bounds().y < bottom and p.bounds().bottom > top)
+        ]
         bands.append(sorted(band, key=lambda p: -p.bounds().right))   # 右から左へ
         rest = [p for p in rest if p not in band]
     return bands

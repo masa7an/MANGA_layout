@@ -384,15 +384,18 @@ def top_band(boxes: Sequence[NBox]) -> list[NBox]:
     """最も上の段。**最初のコマと縦に重なるコマの集まり。**
 
     しきい値を持たない——同じ段のコマは必ず縦に重なるので、重なりだけで決まる。
+
+    **基準のコマは必ず入れる**（`b is first`）。**高さ 0 のコマは自分自身とすら
+    重ならない**ので、入れずに書くと段が空になり、呼ぶ側の `min()` が例外になる。
     """
     first = min(boxes, key=lambda b: b.y)
-    return [b for b in boxes if b.y < first.bottom and b.bottom > first.y]
+    return [b for b in boxes if b is first or (b.y < first.bottom and b.bottom > first.y)]
 
 
 def bottom_band(boxes: Sequence[NBox]) -> list[NBox]:
     """最も下の段。**最後のコマと縦に重なるコマの集まり。** `top_band` の裏返し。"""
     last = max(boxes, key=lambda b: b.y)
-    return [b for b in boxes if b.y < last.bottom and b.bottom > last.y]
+    return [b for b in boxes if b is last or (b.y < last.bottom and b.bottom > last.y)]
 
 
 def remaining_ratio(f: Frame, lowest: float) -> float:

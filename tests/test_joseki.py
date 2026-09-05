@@ -22,8 +22,10 @@ from manga_layout.joseki import (
     NBox,
     PageContext,
     PreviousPage,
+    bottom_band,
     match_all,
     proposals,
+    top_band,
 )
 
 # --- 材料（すべて読み順） -----------------------------------------------------
@@ -296,3 +298,23 @@ class TestProposalOrder:
         assert len(proposals(matches)) == sum(
             len(m.plans) for m in matches if m.matched
         )
+
+
+class TestDegenerateBox:
+    """面積の無いコマが混ざっても、段の判定が崩れないこと。
+
+    **高さ 0 のコマは、重なりの判定では自分自身とすら重ならない。** 段から
+    こぼすと空の段ができ、呼ぶ側の `min()` が例外になる。
+    """
+
+    def test_高さ0のコマは自分の段に入る(self):
+        flat = NBox(0.1, 0.5, 0.3, 0.0)
+        assert top_band([flat]) == [flat]
+        assert bottom_band([flat]) == [flat]
+
+    def test_高さ0のコマが混じっても定石を通せる(self):
+        # 例外を出さずに端まで通ること。**何が当たるかは問わない**
+        offered([NBox(0.52, 0.06, 0.42, 0.28), NBox(0.06, 0.06, 0.42, 0.0)])
+
+    def test_面積0のコマだけでも定石を通せる(self):
+        offered([NBox(0.5, 0.5, 0.0, 0.0)])

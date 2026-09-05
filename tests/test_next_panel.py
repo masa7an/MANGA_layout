@@ -106,6 +106,20 @@ class TestReadingOrder:
         _project, page = page_with()
         assert reading_order(page.panels) == []
 
+    def test_高さが0のコマがあっても数え落とさない(self):
+        # **高さ 0 のコマは、重なりの判定では自分自身とすら重ならない。**
+        # 段に入れ損ねると数が減らず、**ここは落ちるのではなく永久に回る**
+        _project, page = page_with(
+            Rect(0.06 * PAGE_W, 0.06 * PAGE_H, 0.88 * PAGE_W, 0.0),
+            Rect(0.06 * PAGE_W, 0.40 * PAGE_H, 0.88 * PAGE_W, 0.30 * PAGE_H),
+        )
+        assert len(reading_order(page.panels)) == 2
+
+    def test_面積が0のコマだけのページも並べ替えられる(self):
+        # 空白ページへの提案が置きうる形（幅も高さも 0）
+        _project, page = page_with(Rect(0.5 * PAGE_W, 0.5 * PAGE_H, 0.0, 0.0))
+        assert len(reading_order(page.panels)) == 1
+
 
 class TestCoordinates:
     def test_往復しても値が変わらない(self):
