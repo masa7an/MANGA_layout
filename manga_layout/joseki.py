@@ -602,9 +602,13 @@ def match_bleed_top_bottom_right(boxes: Sequence[NBox], ctx: PageContext = NO_CO
                           f"断ち切り {len(bleeding)}個"))
 
     lowest = max(b.bottom for b in boxes)
-    m.checks.append(Check("下に空きがある", True,
-                          f"残り {remaining_ratio(borrow_frame(boxes, ctx), lowest):.1%}"))
-    if not bleeding:
+    # **測った値で判定する。** ここに True を直接書くと、下が埋まったページでも
+    # 報告に「✓ 下に空きがある」と出る（定石3は同じ形を `remaining > 0` で書いている）。
+    # 提案が出るかどうかは `_propose_bottom_right` の高さの検査で決まるので**振る舞いは
+    # 変わらない**が、**なぜ当たったかを読む側が信じられなくなる。**
+    remaining = remaining_ratio(borrow_frame(boxes, ctx), lowest)
+    m.checks.append(Check("下に空きがある", remaining > 0, f"残り {remaining:.1%}"))
+    if not bleeding or remaining <= 0:
         return m
 
     _propose_bottom_right(m, boxes, lowest, ctx)
@@ -896,9 +900,10 @@ def match_two_tier_bottom_right(boxes: Sequence[NBox],
                           f"断ち切り {len(bleeding)}個"))
 
     lowest = max(b.bottom for b in boxes)
-    m.checks.append(Check("下に空きがある", True,
-                          f"残り {remaining_ratio(borrow_frame(boxes, ctx), lowest):.1%}"))
-    if bleeding:
+    # **測った値で判定する**（→ 定石4に同じ理由を書いてある）
+    remaining = remaining_ratio(borrow_frame(boxes, ctx), lowest)
+    m.checks.append(Check("下に空きがある", remaining > 0, f"残り {remaining:.1%}"))
+    if bleeding or remaining <= 0:
         return m
 
     _propose_bottom_right(m, boxes, lowest, ctx)

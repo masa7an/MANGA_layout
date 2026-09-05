@@ -143,6 +143,24 @@ class TestBandRight:
         assert boxes["幅 いっぱい"].x < boxes["幅 2/3"].x
         assert boxes["幅 いっぱい"].x == pytest.approx(min(b.x for b in TOP_BAND))
 
+    def test_下が空いていれば報告も空いていると言う(self):
+        for joseki_id, boxes in (("two_tier_bottom_right", TOP_BAND),
+                                 ("bleed_top_bottom_right", TOP_BAND_BLEED)):
+            assert check_of(boxes, joseki_id, "下に空きがある").passed is True
+
+    def test_下が埋まっていれば報告も埋まっていると言う(self):
+        # **測った値で判定する。** True を直接書くと、埋まったページでも
+        # 「✓ 下に空きがある」と出て、なぜ当たったかを読む側が信じられなくなる
+        for joseki_id in ("two_tier_bottom_right", "bleed_top_bottom_right"):
+            c = check_of(FULL_PAGE, joseki_id, "下に空きがある")
+            assert c.passed is False
+            assert c.measured == "残り 0.0%"
+
+    def test_下が埋まっていれば提案も出さない(self):
+        # 報告を直す前から提案は出ていなかった。**振る舞いは変えていない**
+        assert hit(FULL_PAGE, "two_tier_bottom_right") is None
+        assert hit(FULL_PAGE, "bleed_top_bottom_right") is None
+
 
 class TestNarrowTop:
     """細い右上コマの左隣。"""
