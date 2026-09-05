@@ -172,6 +172,33 @@ class TestNarrowTop:
         wide = [NBox(0.52, 0.06, 0.42, 0.28)]
         assert hit(wide, "narrow_top_beside_left") is None
 
+    def test_断ち切りの右上コマからは上端と高さを写さない(self):
+        # **断ち切りが続くページは多くない。** そのまま写すと左隣まで紙の外へ出る
+        frame = NBox(0.072, 0.051, 1.0 - 0.072 * 2, 1.0 - 0.051 * 2)
+        ctx = PageContext(number=1, previous=None, frame=frame,
+                          gutter_x=0.028, gutter_y=0.020, bleed_x=0.008, bleed_y=0.006)
+        bleeding = [NBox(0.742, -0.006, 0.266, 0.542)]      # 上と右がページの外
+        box = hit(bleeding, "narrow_top_beside_left", ctx).plans[0].candidates[0].box
+        assert box.y == pytest.approx(frame.y)
+        assert box.bottom == pytest.approx(bleeding[0].bottom)
+        assert box.w == pytest.approx(bleeding[0].w)        # 幅はそのまま写す
+
+    def test_断ち切りでなければ上端と高さをそのまま写す(self):
+        frame = NBox(0.072, 0.051, 1.0 - 0.072 * 2, 1.0 - 0.051 * 2)
+        ctx = PageContext(number=1, previous=None, frame=frame,
+                          gutter_x=0.028, gutter_y=0.020, bleed_x=0.008, bleed_y=0.006)
+        box = hit(NARROW_TOP, "narrow_top_beside_left", ctx).plans[0].candidates[0].box
+        assert box.y == pytest.approx(NARROW_TOP[0].y)
+        assert box.h == pytest.approx(NARROW_TOP[0].h)
+
+    def test_挟んで高さが足りなくなったら出さない(self):
+        # 面積が負のコマは何とも重ならないので、重なり判定ではすり抜ける
+        frame = NBox(0.072, 0.051, 1.0 - 0.072 * 2, 1.0 - 0.051 * 2)
+        ctx = PageContext(number=1, previous=None, frame=frame,
+                          gutter_x=0.028, gutter_y=0.020, bleed_x=0.008, bleed_y=0.006)
+        sliver = [NBox(0.742, -0.006, 0.266, 0.10)]         # 挟むと高さ 0.043
+        assert hit(sliver, "narrow_top_beside_left", ctx) is None
+
 
 class TestFillBandLeft:
     """同じ段の左を埋める。"""

@@ -339,6 +339,25 @@ class TestGuideFrame:
                 assert rect.x >= margin - 0.5
                 assert rect.right <= PAGE_W - margin + 0.5
 
+    def test_細い断ち切りコマの次の提案も枠の中に収める(self):
+        """幅 1/3 以下の断ち切りコマがあるページ。**どの案も紙の外へ出さない。**
+
+        `test_断ち切りコマの次の提案は枠の中に収める` は幅 0.508 のコマで試して
+        おり、**幅 1/3 以下でしか当たらない「細い右上コマの左隣」を通らない。**
+        その定石だけ上端と高さを写したままで、y=-10px の案が最初に出ていた
+        （2026-09-05 修正）。
+        """
+        margin = LayoutSettings().margin
+        project, page = page_with(Rect(920.0, -10.0, 330.0, 950.0))
+        found = suggestions(project, page, margin=margin, gutter=LayoutSettings().gutter)
+        assert any("細い右上" in s.title for s in found)
+        for suggestion in found:
+            for rect in suggestion.rects:
+                assert rect.x >= margin - 0.5
+                assert rect.y >= margin - 0.5
+                assert rect.right <= PAGE_W - margin + 0.5
+                assert rect.bottom <= PAGE_H - margin + 0.5
+
     def test_雛形は最後に出す(self):
         margin = LayoutSettings().margin
         project, page = page_with()

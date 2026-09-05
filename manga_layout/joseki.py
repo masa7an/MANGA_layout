@@ -659,11 +659,24 @@ def match_narrow_top_beside_left(boxes: Sequence[NBox],
 
     f = borrow_frame(boxes, ctx)
     x = top_right.x - f.gutter - top_right.w
-    proposed = [NBox(x, top_right.y, top_right.w, top_right.h)]
+
+    # **上下は置いてよい範囲で挟む。** 右上コマが断ち切りだと、上端と高さを
+    # そのまま写した左隣まで紙の外へ出る（**断ち切りが続くページは多くない**）。
+    # 定石9が段の上下を挟むのと同じ扱い。ここだけ抜けていた（2026-09-05 実測。
+    # 優先度3で最初に出る案が y=-10px で置かれていた）。
+    top = max(top_right.y, f.top)
+    height = min(top_right.bottom, f.bottom) - top
+    proposed = [NBox(x, top, top_right.w, height)]
+
     fits = x >= f.left - 1e-6
     m.checks.append(Check("左に同じ幅が入る", fits,
                           f"左端 {x:.3f} / ページ左余白 {f.left:.3f}"))
-    if not (narrow and below_ok and fits):
+    # **挟んだあとの高さを見る。** 面積が負のコマは何とも重ならないので、
+    # 下の重なり判定はすり抜ける（→ 定石9に同じ理由を書いてある）
+    tall = height >= MIN_ROOM
+    m.checks.append(Check("挟んだあとも置ける高さがある", tall,
+                          f"高さ {height:.3f} / 下限 {MIN_ROOM:.3f}"))
+    if not (narrow and below_ok and fits and tall):
         return m
 
     overlapping = _overlapping(proposed, boxes)
@@ -675,7 +688,8 @@ def match_narrow_top_beside_left(boxes: Sequence[NBox],
     m.matched = True
     m.score = _soft(top_right.w, NARROW_TOP_RATIO)
     m.add_plan([Candidate(box=proposed[0], order=len(boxes) + 1, joseki=m.joseki,
-                          reason="細い右上コマと同じ幅・高さで、その左隣")])
+                          reason="細い右上コマと同じ幅で、その左隣"
+                                 "（上下は置いてよい範囲で挟む）")])
     return m
 
 
