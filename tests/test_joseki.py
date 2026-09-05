@@ -18,10 +18,12 @@ from __future__ import annotations
 import pytest
 
 from manga_layout.joseki import (
+    DEFAULT_GUTTER,
     NO_CONTEXT,
     NBox,
     PageContext,
     PreviousPage,
+    borrow_frame,
     bottom_band,
     match_all,
     proposals,
@@ -410,3 +412,55 @@ class TestDegenerateBox:
 
     def test_面積0のコマだけでも定石を通せる(self):
         offered([NBox(0.5, 0.5, 0.0, 0.0)])
+
+
+class TestGutter:
+    """隙間は縦と横で別の値（→ `joseki.Frame`）。
+
+    正規化座標では、同じ px でも縦横で違う数になる。1本にまとめると、
+    **横に置くコマの隙間に縦で測った値を使う**ことになる。
+    """
+
+    def context(self, gutter_x=0.028, gutter_y=0.020):
+        return PageContext(number=1, previous=None, frame=None,
+                           gutter_x=gutter_x, gutter_y=gutter_y,
+                           bleed_x=0.008, bleed_y=0.006)
+
+    def test_縦は縦の間隔から測る(self):
+        # 上下に離れた2コマ。**横の隙間は測れない**
+        stacked = [NBox(0.06, 0.06, 0.88, 0.28), NBox(0.06, 0.38, 0.88, 0.28)]
+        f = borrow_frame(stacked, self.context())
+        assert f.gutter_y == pytest.approx(0.04)
+        assert f.gutter_x == pytest.approx(0.028)      # 渡された値へ落ちる
+
+    def test_横は横の間隔から測る(self):
+        # 左右に並んだ2コマ。**縦の隙間は測れない**
+        side = [NBox(0.52, 0.06, 0.42, 0.28), NBox(0.06, 0.06, 0.42, 0.28)]
+        f = borrow_frame(side, self.context())
+        assert f.gutter_x == pytest.approx(0.04)
+        assert f.gutter_y == pytest.approx(0.020)      # 渡された値へ落ちる
+
+    def test_測れなければ渡された値を使う(self):
+        # コマが1枚だと、縦も横も測れない。**既定値ではなく設定の値へ落ちる**
+        f = borrow_frame([NBox(0.52, 0.06, 0.42, 0.28)], self.context())
+        assert (f.gutter_x, f.gutter_y) == pytest.approx((0.028, 0.020))
+
+    def test_渡されなければ既定値(self):
+        f = borrow_frame([NBox(0.52, 0.06, 0.42, 0.28)], NO_CONTEXT)
+        assert (f.gutter_x, f.gutter_y) == pytest.approx((DEFAULT_GUTTER, DEFAULT_GUTTER))
+
+    def test_間にコマを挟んだ組は隙間に数えない(self):
+        # 3コマの段。**隣どうしだけを見る**（右端と左端の距離が入ってはいけない）
+        three = [NBox(0.66, 0.06, 0.28, 0.28), NBox(0.34, 0.06, 0.28, 0.28),
+                 NBox(0.02, 0.06, 0.28, 0.28)]
+        f = borrow_frame(three, NO_CONTEXT)
+        assert f.gutter_x == pytest.approx(0.04)
+
+    def test_左隣の案は横の隙間で空ける(self):
+        # 横 0.04・縦 0.10 と大きく違う材料。**混ざれば必ず露見する**
+        page = [NBox(0.52, 0.06, 0.42, 0.28), NBox(0.06, 0.06, 0.42, 0.28),
+                NBox(0.52, 0.44, 0.42, 0.28)]
+        m = hit(page, "fill_band_left")
+        box = m.plans[0].candidates[0].box
+        assert box.right == pytest.approx(0.52 - 0.04)
+

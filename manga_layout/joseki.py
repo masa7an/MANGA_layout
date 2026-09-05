@@ -353,16 +353,38 @@ class Frame:
     right: float
     top: float
     bottom: float
-    gutter: float
+    # **隙間は縦と横で別の値。** 正規化座標では、同じ px でも縦横で違う数になる
+    # （A4 の 35px は横 0.028・縦 0.020）。1本にまとめると、**横に置くコマの隙間に
+    # 縦で測った値を使う**ことになり、実測で 22.3px と 31.6px に割れた（2026-09-05）。
+    gutter_x: float
+    gutter_y: float
+
+
+def _gaps(starts_ends: Sequence[tuple[float, float]]) -> list[float]:
+    """並べた順の**隣どうしの隙間**。重なっている組（負）は数えない。
+
+    **隣どうしだけを見る。** 総当たりにすると、間にコマを挟んだ組まで「隙間」に
+    数えてしまう（3コマの段で、右端と左端の距離が真ん中のコマごと入る）。
+    """
+    ordered = sorted(starts_ends)
+    return [g for g in (ordered[i + 1][0] - ordered[i][1]
+                        for i in range(len(ordered) - 1)) if g > 0]
 
 
 def borrow_frame(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEXT) -> Frame:
-    column = sorted(boxes, key=lambda b: b.y)
-    # **横に並んだコマ同士の「縦の間隔」は負になる。** 上下に離れている組だけを数える
-    # （数えないと、横並びの2コマから -0.368 のような余白が出る）。
-    gaps = [g for g in (column[i + 1].y - column[i].bottom
-                        for i in range(len(column) - 1)) if g > 0]
-    gutter = _median(gaps) if gaps else DEFAULT_GUTTER
+    # **縦の間隔は縦に、横の間隔は横に測る。**
+    # 横に並んだコマ同士の「縦の間隔」は負になるので数えない（数えないと、
+    # 横並びの2コマから -0.368 のような余白が出る）。横も同じで、縦に並んだ
+    # コマ同士の「横の間隔」は負になる。
+    #
+    # **測れないときだけ、渡された px の値へ落ちる**（→ `PageContext.gutter_x/y`）。
+    # 既存コマから借りるのが先で、設定の値はその次。どちらも無ければ既定値。
+    # 以前はここで `ctx` を一度も読まず、コマが1枚のページでは既定値 0.018 が
+    # そのまま出ていた（設定が 35px でも横 22.3px・縦 31.6px になる）。
+    gaps_y = _gaps([(b.y, b.bottom) for b in boxes])
+    gaps_x = _gaps([(b.x, b.right) for b in boxes])
+    gutter_y = _median(gaps_y) if gaps_y else _or_default(ctx.gutter_y)
+    gutter_x = _median(gaps_x) if gaps_x else _or_default(ctx.gutter_x)
     right = max(b.right for b in boxes)
     top = min(b.y for b in boxes)
 
@@ -387,7 +409,12 @@ def borrow_frame(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEXT) -> Frame:
             top = ctx.frame.y
 
     left, bottom = max(0.0, 1.0 - right), min(1.0, 1.0 - top)
-    return Frame(left=left, right=right, top=top, bottom=bottom, gutter=gutter)
+    return Frame(left=left, right=right, top=top, bottom=bottom,
+                 gutter_x=gutter_x, gutter_y=gutter_y)
+
+
+def _or_default(value: float | None) -> float:
+    return DEFAULT_GUTTER if value is None else value
 
 
 def top_band(boxes: Sequence[NBox]) -> list[NBox]:
@@ -438,19 +465,20 @@ def match_left_half_two_even(boxes: Sequence[NBox], ctx: PageContext = NO_CONTEX
     #   下の余白  = 上の余白と同じとみなす
     #   コマ間    = 既存の縦の間隔の中央値。測れないときだけ既定値
     f = borrow_frame(boxes, ctx)
-    gutter, top = f.gutter, f.top
+    top = f.top
     x = f.left
-    width = (min(b.x for b in boxes) - gutter) - x
-    height = (f.bottom - top - gutter) / 2.0
+    width = (min(b.x for b in boxes) - f.gutter_x) - x     # 右隣との隙間は横
+    height = (f.bottom - top - f.gutter_y) / 2.0          # 上下2つに割る隙間は縦
 
     room = width >= MIN_ROOM and height >= MIN_ROOM
     m.checks.append(Check("2コマ分の幅と高さが取れる", room,
-                          f"幅 {width:.3f} 高さ {height:.3f} / 余白 {gutter:.3f}"))
+                          f"幅 {width:.3f} 高さ {height:.3f} / "
+                          f"余白 横 {f.gutter_x:.3f} 縦 {f.gutter_y:.3f}"))
     if not room:
         return m
 
     proposed = [NBox(x, top, width, height),
-                NBox(x, top + height + gutter, width, height)]
+                NBox(x, top + height + f.gutter_y, width, height)]
     overlapping = _overlapping(proposed, boxes)
     m.checks.append(Check("既存コマと重ならない", not overlapping,
                           f"重なり {len(overlapping)}個"))
@@ -509,7 +537,7 @@ def _right_panel(f: Frame, num: int, den: int) -> tuple[float, float]:
     """
     if num == den:
         return f.left, f.right - f.left
-    width = (f.right - f.left - f.gutter) * num / den
+    width = (f.right - f.left - f.gutter_x) * num / den
     return f.right - width, width
 
 
@@ -540,12 +568,12 @@ def _propose_bottom_right(m: Match, boxes: Sequence[NBox], lowest: float,
     別々に書くと、片方だけ直して食い違う。
     """
     f = borrow_frame(boxes, ctx)
-    top = lowest + f.gutter
+    top = lowest + f.gutter_y
     height = f.bottom - top
     _propose_band_right(m, boxes, f, top, height, "下の帯のコマ（右端に寄せる）")
 
     m.checks.append(Check("下の帯に置ける案がある", bool(m.plans),
-                          f"高さ {height:.3f} / 案 {len(m.plans)}件 / 余白 {f.gutter:.3f}"))
+                          f"高さ {height:.3f} / 案 {len(m.plans)}件 / 余白 縦 {f.gutter_y:.3f}"))
     m.matched = bool(m.plans)
     m.score = remaining_ratio(f, lowest) if m.matched else 0.0
 
@@ -575,13 +603,13 @@ def match_three_band_middle_right(boxes: Sequence[NBox], ctx: PageContext = NO_C
     if bleeding or not only_one_band or remaining <= 0:
         return m
 
-    band_top = lowest + f.gutter
-    height = (f.bottom - band_top - f.gutter) / 2.0   # 中段と下段で2等分
+    band_top = lowest + f.gutter_y
+    height = (f.bottom - band_top - f.gutter_y) / 2.0   # 中段と下段で2等分
     _propose_band_right(m, boxes, f, band_top, height,
                         "上・中・下の三段と予想した中段の右コマ")
 
     m.checks.append(Check("中段に置ける案がある", bool(m.plans),
-                          f"高さ {height:.3f} / 案 {len(m.plans)}件 / 余白 {f.gutter:.3f}"))
+                          f"高さ {height:.3f} / 案 {len(m.plans)}件 / 余白 縦 {f.gutter_y:.3f}"))
     m.matched = bool(m.plans)
     m.score = remaining if m.matched else 0.0
     return m
@@ -658,7 +686,7 @@ def match_narrow_top_beside_left(boxes: Sequence[NBox],
     m.checks.append(Check("下に空きがある", below_ok, f"空き {empty_below:.1%}"))
 
     f = borrow_frame(boxes, ctx)
-    x = top_right.x - f.gutter - top_right.w
+    x = top_right.x - f.gutter_x - top_right.w
 
     # **上下は置いてよい範囲で挟む。** 右上コマが断ち切りだと、上端と高さを
     # そのまま写した左隣まで紙の外へ出る（**断ち切りが続くページは多くない**）。
@@ -972,7 +1000,7 @@ def match_fill_band_left(boxes: Sequence[NBox],
     # 合わせただけで左隣まで紙の外へ出る（断ち切りが続くページは多くない）
     top = max(min(b.y for b in band), f.top)
     height = min(max(b.bottom for b in band), f.bottom) - top
-    right_edge = min(b.x for b in band) - f.gutter
+    right_edge = min(b.x for b in band) - f.gutter_x
     available = right_edge - f.left
 
     # **高さを幅より先に見る。** 最も下の段が置いてよい範囲より下にあると、

@@ -375,6 +375,31 @@ class TestGuideFrame:
                 assert rect.right <= PAGE_W - margin + 0.5
                 assert rect.bottom <= PAGE_H - margin + 0.5
 
+    def test_隙間は縦も横も設定どおりのpxになる(self):
+        """**px の隙間は、正規化すると縦横で違う数になる。**
+
+        A4 の 35px は横 0.028・縦 0.020。1本にまとめると、横に置くコマの隙間に
+        縦で測った値を使うことになり、**横 22.3px・縦 31.6px に割れていた**
+        （2026-09-05 修正。どちらも設定の 35px ではない）。
+        """
+        settings = LayoutSettings()
+        project, page = page_with(Rect(640.0, 89.0, 511.0, 460.0))
+        source = page.panels[0].bounds()
+        found = suggestions(project, page, margin=settings.margin,
+                            gutter=settings.gutter)
+        # **既存コマと向かい合う案だけを見る。** 「左半分を上下2等分」の下側の
+        # コマは既存コマの真下ではないので、そこに縦の隙間は現れない
+        rects = [r for s in found for r in s.rects]
+        left_side = [r for r in rects
+                     if r.right <= source.x + 0.6 and r.y < source.bottom - 0.6]
+        below = [r for r in rects
+                 if r.y >= source.bottom - 0.6 and r.right > source.x + 0.6]
+        assert left_side and below
+        for rect in left_side:
+            assert source.x - rect.right == pytest.approx(settings.gutter)
+        for rect in below:
+            assert rect.y - source.bottom == pytest.approx(settings.gutter)
+
     def test_雛形は最後に出す(self):
         margin = LayoutSettings().margin
         project, page = page_with()
