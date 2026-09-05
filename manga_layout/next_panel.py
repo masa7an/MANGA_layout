@@ -258,10 +258,17 @@ def suggestions(
 def add_suggestion(project: Project, page: Page, suggestion: Suggestion) -> list[Panel]:
     """提案どおりにコマを足す。足したコマを返す。
 
-    枠線は**既にあるコマから写す**（`layout.split_panel` が分割で写すのと同じ）。
-    ページに1枚も無ければ、`Panel` の既定のまま。
+    枠線は**読む順で直前のコマから写す**。提案は「次に置くコマ」なので、
+    **直前のコマがいちばん近い手本**になる（`layout.split_panel` が、割られた
+    そのコマから写すのと同じ考え方）。ページに1枚も無ければ `Panel` の既定のまま。
+
+    **`page.panels[0]` から写してはいけない。** あれは**重なり順の先頭**であって、
+    読む順の先頭でも直前でもない。作った順と読む順が食い違うページ——1段目の右を
+    先に作り、2段目の左をあとで作ったページなど——では、**隣のコマではなく無関係な
+    コマの枠線が付く**（2026-09-05 修正。実測で 9.0 のところ 1.0 が付いていた）。
     """
-    source = page.panels[0].border if page.panels else None
+    ordered = reading_order(page.panels)
+    source = ordered[-1].border if ordered else None
     added = []
     for rect in suggestion.rects:
         panel = project.add_panel(page, rect)

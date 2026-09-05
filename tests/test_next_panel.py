@@ -555,12 +555,36 @@ class TestAddSuggestion:
 
     def test_枠線は既にあるコマから写す(self):
         project, page = page_with(*band(0.06, 0.28))
-        page.panels[0].border.width = 7.5
+        for panel in page.panels:
+            panel.border.width = 7.5
         added = add_suggestion(project, page, suggestions(project, page)[0])
         assert added[0].border.width == 7.5
         # 写しであって共有ではない。あとから片方を変えても、もう片方は動かない
         added[0].border.width = 1.0
-        assert page.panels[0].border.width == 7.5
+        assert all(p.border.width == 7.5 for p in page.panels if p not in added)
+
+    def test_枠線は読む順で直前のコマから写す(self):
+        """**`page.panels[0]` は重なり順の先頭で、読む順の直前ではない。**
+
+        作った順と読む順が食い違うページで、無関係なコマの枠線が付いていた
+        （2026-09-05 修正）。提案は「次に置くコマ」なので、直前のコマが手本。
+        """
+        project, page = page_with()
+        first = project.add_panel(page, Rect(640.0, 89.0, 511.0, 460.0))   # 1段目右
+        last = project.add_panel(page, Rect(89.0, 584.0, 511.0, 460.0))    # 2段目左
+        project.add_panel(page, Rect(89.0, 89.0, 511.0, 460.0))            # 1段目左
+        project.add_panel(page, Rect(640.0, 584.0, 511.0, 460.0))          # 2段目右
+        first.border.width = 1.0
+        last.border.width = 9.0
+
+        assert page.panels[0] is first                 # 重なり順の先頭は「1段目右」
+        assert reading_order(page.panels)[-1] is last  # 読む順の最後は「2段目左」
+
+        settings = LayoutSettings()
+        found = suggestions(project, page, margin=settings.margin,
+                            gutter=settings.gutter)
+        added = add_suggestion(project, page, found[0])
+        assert [p.border.width for p in added] == [9.0] * len(added)
 
     def test_足したコマは手前に来る(self):
         project, page = page_with(*band(0.06, 0.28))
