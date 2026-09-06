@@ -1213,6 +1213,28 @@ class TextMenu:
         self.bold_action = add("太字", window.toggle_bold, "Ctrl+B")
         self.bold_action.setCheckable(True)
         menu.addSeparator()
+        # **よく使う書体**（→ 要件定義 6.5）。項目そのものは窓が作っており、
+        # ここは並べるだけ（道具の項目と同じ作り → `_build_font_actions`）。
+        #
+        # **キーは `F3` の1つだけで、押すたびに次の書体へ回る。**
+        # 3つに1つずつ割り当てると `F4` `F5` まで要るが、あの2つは
+        # 他のアプリでの用途が決まっており（更新・名前の変更）、
+        # **同じ指の癖で別のことが起きる**（本人の指摘 2026-09-06）。
+        # 数字キーも避けている——セリフを打っている最中に押す可能性がある。
+        #
+        # 巡回そのものは書体が1つも登録されていなくても押せる（`always`）。
+        # グレーにすると、**何のための機能なのかが画面から消える**
+        for action in window._font_actions:
+            menu.addAction(action)
+        add(
+            "次のよく使う書体",
+            window.cycle_favorite_font,
+            "F3",
+            tip="よく使う書体を順に切り替えます（登録は settings.bat から）",
+            always=True,
+        )
+        menu.addSeparator()
+
         # **セリフを選んでいなくても押せる項目。** 選んでいなければ
         # 「次に作るセリフ」の書式を決める（→ `MainWindow.choose_font`）。
         # グレーにすると、次の書式を決めるためだけに要らないセリフを

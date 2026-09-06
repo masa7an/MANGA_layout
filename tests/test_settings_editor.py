@@ -137,6 +137,55 @@ class Test採用されなかった値を知らせる:
         assert dropped_fields(読む(path), load_settings(path)) == []
 
 
+class Testよく使う書体:
+    """3枠（→ 要件定義 6.5）。**打ち間違いを塞ぐのがこの道具の役目。**"""
+
+    def test_設定を読んで出す(self, path, qapp):
+        save_settings(AppSettings(favorite_fonts=["メイリオ", "", "游明朝"]), path)
+
+        editor = SettingsEditor(path)
+
+        assert [slot.family for slot in editor.fonts] == ["メイリオ", "", "游明朝"]
+
+    def test_打ち込めない(self, path, qapp):
+        """書体名は1文字違うと**黙って別の書体で描かれる**（`model` の実測）。
+        打てるようにすると、この道具が塞ぐはずの詰まりどころがそのまま入る。
+        """
+        editor = SettingsEditor(path)
+
+        assert all(slot.field.isReadOnly() for slot in editor.fonts)
+
+    def test_保存すると書き戻る(self, path, qapp):
+        editor = SettingsEditor(path)
+        editor.fonts[1].field.setText("メイリオ")
+
+        editor.save()
+
+        assert load_settings(path).favorite_fonts[1] == "メイリオ"
+
+    def test_空にできる(self, path, qapp):
+        save_settings(AppSettings(favorite_fonts=["A", "B", "C"]), path)
+        editor = SettingsEditor(path)
+
+        editor.fonts[1].field.clear()
+        editor.save()
+
+        assert load_settings(path).favorite_fonts == ["A", "", "C"]
+
+    def test_多く書いたら知らせる(self, path):
+        書く(path, '{"favorite_fonts": ["A", "B", "C", "D"]}')
+        assert dropped_fields(読む(path), load_settings(path)) == ["よく使う書体"]
+
+    def test_書体名でない値も知らせる(self, path):
+        書く(path, '{"favorite_fonts": ["A", 3, "C"]}')
+        assert dropped_fields(読む(path), load_settings(path)) == ["よく使う書体"]
+
+    def test_3つ未満は知らせない(self, path):
+        """空の枠を埋めたぶんは「落ちた」ではない（→ `favorite_kept`）。"""
+        書く(path, '{"favorite_fonts": ["A"]}')
+        assert dropped_fields(読む(path), load_settings(path)) == []
+
+
 class Test窓:
     def test_設定を読んで出す(self, path, qapp):
         save_settings(AppSettings(jpg_quality=70, autosave_interval_sec=30), path)

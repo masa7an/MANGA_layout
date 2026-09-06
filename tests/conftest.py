@@ -72,6 +72,32 @@ def 前回開いた作品の記録を逃がす(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture
+def settings_file(tmp_path_factory) -> pathlib.Path:
+    """テスト用の設定ファイルの置き場所（→ `設定を逃がす`）。
+
+    **窓を作る前に書くこと。** `MainWindow` は組み立てのあいだに設定を読み、
+    読んだ内容で道具箱を組む（→ よく使う書体）。あとから書いても間に合わない。
+    """
+    return tmp_path_factory.mktemp("settings") / "settings.json"
+
+
+@pytest.fixture(autouse=True)
+def 設定を逃がす(settings_file, monkeypatch):
+    """本物の `data/settings.json` を読み書きさせない。
+
+    `MainWindow` は起動のたびに雛形を置き（`ensure_settings_file`）、
+    設定を読む。**テストが本物を読むと、動く／落ちるがそのPCの設定で
+    変わる**——よく使う書体（→ 要件定義 6.5）は道具箱に並ぶボタンの数
+    そのものなので、ここを逃がさないと本人の設定に結果が引きずられる。
+
+    **差し替えるのは `ui/window` が持ち込んだ名前だけ。** `settings` の側を
+    差し替えると、置き場所そのものを確かめているテスト（`test_settings`）が
+    自分の見ている場所を見失う。
+    """
+    monkeypatch.setattr("manga_layout.ui.window.settings_path", lambda: settings_file)
+
+
+@pytest.fixture
 def png_bytes() -> bytes:
     """透明度ありの基準画像。"""
     return (FIXTURE_DIR / "rgba_transparent.png").read_bytes()

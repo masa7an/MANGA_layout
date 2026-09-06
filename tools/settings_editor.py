@@ -1,6 +1,6 @@
 """設定（`data/settings.json`）を窓から書き換える道具（→ 要件定義 6.28）。
 
-設定は**手で書き換える前提**のファイルだが、手書きだと次の5つで詰まる。
+設定は**手で書き換える前提**のファイルだが、手書きだと次の6つで詰まる。
 
 - フォルダの場所は `\\` を2つ重ねて書く決まり（JSON の書き方）で、間違えると
   ファイルごと読めなくなる
@@ -9,8 +9,10 @@
 - どの項目に何を書けるかを README で確かめる必要がある
 - 効くタイミングが項目ごとに違う（間隔だけはアプリを開き直す）
 - 実在しないフォルダ（外付けが繋がっていない）を書いても分からない
+- 書体名は1文字違うと**黙って別の書体で描かれる**（→ 要件定義 6.5）。打ち間違いが
+  エラーにならないので、アプリを使い始めるまで気づけない
 
-この道具はその5つだけを引き受ける。**設定の項目そのものは増やさない**し、
+この道具はその6つだけを引き受ける。**設定の項目そのものは増やさない**し、
 手で書き換える道もそのまま残る（この道具は必須ではない）。
 
 使い方
@@ -28,6 +30,7 @@ import sys
 # tools/ から実行しても manga_layout を見つけられるようにする
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
+from PySide6.QtGui import QFont  # noqa: E402
 from PySide6.QtWidgets import (  # noqa: E402
     QApplication,
     QDialog,
@@ -45,8 +48,11 @@ from PySide6.QtWidgets import (  # noqa: E402
     QWidget,
 )
 
+from manga_layout.ui.font_dialog import FONT_DIALOG_SIZE, FontChooser  # noqa: E402
+
 from manga_layout.settings import (  # noqa: E402
     AUTOSAVE_INTERVAL_DEFAULT_SEC,
+    FAVORITE_FONT_SLOTS,
     AUTOSAVE_INTERVAL_MAX_SEC,
     AUTOSAVE_INTERVAL_MIN_SEC,
     JPG_QUALITY_DEFAULT,
@@ -69,7 +75,25 @@ FIELD_LABELS = {
     "autosave_interval_sec": "自動バックアップの間隔",
     "jpg_quality": "JPG の品質",
     "rough_opacity": "ラフの濃さ",
+    "favorite_fonts": "よく使う書体",
 }
+
+
+def favorite_kept(written: object) -> bool:
+    """よく使う書体が、書いたとおりに採用されたか。
+
+    **足りない枠を空で埋めたぶんは「落ちた」に数えない。** 3枠に満たない
+    書き方は正しく、採用もされている。落ちているのは、文字列でない値が
+    混ざっているか、枠の数より多く書かれているときだけ。
+
+    ここだけ値の一致で見ないのは、埋めたぶんで必ず食い違うため
+    （→ `dropped_fields`）。
+    """
+    return (
+        isinstance(written, list)
+        and len(written) <= FAVORITE_FONT_SLOTS
+        and all(isinstance(item, str) for item in written)
+    )
 
 # ラフの濃さの刻み。0.05 は「1段変えて違いが分かる」下限として選んだ
 ROUGH_OPACITY_STEP = 0.05
@@ -116,11 +140,57 @@ def dropped_fields(raw: dict | None, settings: AppSettings) -> list[str]:
         # 「指定なし」を意図して書いた `null` / `""` は打ち間違いではない
         if key == "default_parent_dir" and written in (None, ""):
             continue
+        if key == "favorite_fonts":
+            if not favorite_kept(written):
+                names.append(label)
+            continue
         # `True` は Python では `1` として通ってしまうので、値が一致していても
         # 採用されていない（設定側で弾いている）
         if isinstance(written, bool) or written != adopted[key]:
             names.append(label)
     return names
+
+
+class _FontSlot:
+    """よく使う書体の1枠ぶん（欄1つとボタン2つ）。
+
+    **欄は読み取り専用。** 打ち込めるようにすると、この道具が塞ごうとして
+    いる打ち間違いがそのまま入る（→ `SettingsEditor._form`）。
+    """
+
+    def __init__(self, editor: QWidget, index: int, family: str) -> None:
+        self.field = QLineEdit(family, editor)
+        self.field.setReadOnly(True)
+        self.field.setPlaceholderText("（未登録）")
+
+        choose = QPushButton("選ぶ…", editor)
+        choose.clicked.connect(self._choose)
+        clear = QPushButton("空にする", editor)
+        clear.clicked.connect(self.field.clear)
+
+        self.row = QHBoxLayout()
+        self.row.addWidget(self.field)
+        self.row.addWidget(choose)
+        self.row.addWidget(clear)
+        self._editor = editor
+        self._index = index
+
+    @property
+    def family(self) -> str:
+        return self.field.text().strip()
+
+    def _choose(self) -> None:
+        """書体を選ぶ窓を出す（アプリ本体と同じ窓 → `ui.font_dialog`）。
+
+        **絞り込みの欄が付いた窓を使い回す。** 書体は 199 件並ぶので、
+        送って探す作りだと、登録するときだけ別の苦労をすることになる。
+        """
+        current = QFont(self.family) if self.family else QFont()
+        dialog = FontChooser(current, self._editor)
+        dialog.setWindowTitle(f"よく使う書体{self._index + 1} を選ぶ")
+        dialog.resize(*FONT_DIALOG_SIZE)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.field.setText(dialog.selectedFont().family())
 
 
 class SettingsEditor(QDialog):
@@ -216,6 +286,17 @@ class SettingsEditor(QDialog):
         self.opacity.setSingleStep(ROUGH_OPACITY_STEP)
         self.opacity.setValue(settings.rough_opacity)
 
+        # よく使う書体（→ 要件定義 6.5）。**打ち込ませず、窓から選ばせる。**
+        # 書体名は1文字違うと**黙って別の書体で描かれる**（Qt の falldown。
+        # 「UD デジタル 教科書体 N」を詰めて書くと Tahoma に化ける実測が
+        # `model.DEFAULT_FONT_FAMILY` にある）。エラーにならないので、
+        # 打ち間違いはアプリを使い始めるまで分からない——この道具が
+        # 引き受けている5つの詰まりどころと同じ形なので、ここで塞ぐ
+        self.fonts = [
+            _FontSlot(self, index, name)
+            for index, name in enumerate(settings.favorite_fonts)
+        ]
+
         self.form = QFormLayout()
         form = self.form
         # **項目と項目の間を1行ぶん空ける。** 説明が入力欄の真下に数行続くので、
@@ -249,6 +330,16 @@ class SettingsEditor(QDialog):
                 "90 と 100 は見分けがつかず、容量だけが倍ほど増えます",
             ),
         )
+        for index, slot in enumerate(self.fonts):
+            form.addRow(
+                f"よく使う書体{index + 1}",
+                self._field(
+                    slot.row,
+                    "セリフのメニューと道具箱に並び、`F3` で順に切り替わります"
+                    if index == 0
+                    else "",
+                ),
+            )
         form.addRow(
             "ラフの濃さ",
             self._field(
@@ -319,6 +410,7 @@ class SettingsEditor(QDialog):
             autosave_interval_sec=self.interval.value(),
             jpg_quality=self.quality.value(),
             rough_opacity=round(self.opacity.value(), 2),
+            favorite_fonts=[slot.family for slot in self.fonts],
         )
 
     def save(self) -> None:

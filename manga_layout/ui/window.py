@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+from functools import partial
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QActionGroup, QFont, QGuiApplication, QKeySequence
@@ -35,7 +36,7 @@ from ..storage import prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView, font_size_label
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
-from .font_dialog import FontChooser
+from .font_dialog import FONT_DIALOG_SIZE, FontChooser
 from .menu_search import (
     HIGHLIGHT_SECONDS,
     MENU_SEARCH_HINT,
@@ -128,6 +129,31 @@ def align_label(align: str, direction: str) -> str:
 # **行き過ぎを止める範囲（`TEXT_SIZE_MIN_PX` / `TEXT_SIZE_MAX_PX`）は
 # `model.py` にある。** 四隅のドラッグ（`canvas.TextScaleDrag`）も同じ
 # 範囲を見るが、あちらはここを読めない（循環参照になる）
+# 道具箱のボタンに出す書体名の長さ（文字数）。**超えたぶんは「…」にする。**
+#
+# 書体名は「UD デジタル 教科書体 N」のように長い。3つ並べると道具箱の幅を
+# 押し出し、**入り切らないボタンは送りのボタン（»）の中へ隠れる。**
+# 1回押しのための機能が、押すまでに2手かかることになる。
+#
+# **形は名前より速く見分けられる**ので、詰めたぶんは書体そのもので描いて
+# 補う（→ `MainWindow._build_font_actions`）。全部の名前はホバー中の
+# 状態表示に出る
+FONT_BUTTON_MAX_CHARS = 8
+
+# よく使う書体が1つも登録されていないときの案内。**どこで登録するかまで言う。**
+# 「登録されていません」だけだと、設定の窓に辿り着けない
+FAVORITE_FONT_EMPTY_HINT = (
+    "よく使う書体が登録されていません（settings.bat の「よく使う書体」で登録できます）"
+)
+
+
+def _font_button_label(family: str) -> str:
+    """道具箱とメニューに出す書体名。長ければ末尾を「…」で詰める。"""
+    if len(family) <= FONT_BUTTON_MAX_CHARS:
+        return family
+    return family[:FONT_BUTTON_MAX_CHARS] + "…"
+
+
 TEXT_SIZE_STEP_PT = 2.0
 TEXT_SIZE_STEP_PX = TEXT_SIZE_STEP_PT * PT_TO_PX
 
@@ -144,13 +170,6 @@ BOTTOM_GAP_PX = 20
 # これが無いと、画面いっぱいの高さにしたときタイトルバーが画面外に出て
 # ウィンドウを掴めなくなる
 FRAME_ALLOWANCE_PX = 48
-
-# フォントを選ぶ窓の、開いたときの大きさ（px）。
-# **Qt の既定は書体の一覧が数行しか見えない高さ**で、目当ての書体まで
-# 延々と送ることになる。窓の隅を引けば広がるが、**広げられること自体に
-# 気づけない**（本人の指摘 2026-08-07）。
-# 画面に入らなければ作業領域に合わせて縮める（`WINDOW_SIZE` と同じ扱い）
-FONT_DIALOG_SIZE = (820, 620)
 
 
 
@@ -197,6 +216,8 @@ class MainWindow(QMainWindow):
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
         self._build_tool_actions()  # 各メニューが道具の項目を参照するので先に作る
+        # よく使う書体も、セリフのメニューと道具箱の両方が参照する（→ 6.5）
+        self._build_font_actions()
 
         # メニューバー。**生成順＝画面での並び順。** 各部品は生成時に自分の
         # QAction を作り切るので、作り忘れ・順序の入れ替えはここで露見する
@@ -492,6 +513,35 @@ class MainWindow(QMainWindow):
         self.menuBar().setCornerWidget(hint, Qt.Corner.TopRightCorner)
         self._alt_hint_widget = hint
 
+    def _build_font_actions(self) -> None:
+        """よく使う書体の項目（→ 要件定義 6.5）。
+
+        **セリフのメニューと道具箱が同じものを使う**（`_tool_actions` と
+        同じ作り → `_build_toolbar`）。並べ直すと2か所を直すことになり、
+        片方だけ直し忘れると道具箱にだけ出ない項目ができる。
+
+        **登録されている書体のぶんだけ作る。** 空の枠にボタンを出すと、
+        押しても何も起きない当たりが道具箱に並ぶ。
+
+        **書体名をその書体で描く**（`setFont`）。名前は詰めて出すので
+        （→ `_font_button_label`）、形が見えないと見分けが付かない。
+        """
+        self._font_actions: list[QAction] = []
+        for family in self.settings.favorite_fonts:
+            if not family:
+                continue
+            action = self._act(
+                _font_button_label(family),
+                partial(self.apply_font_family, family),
+                tip=f"セリフの書体を「{family}」にします（F3 で順に切り替え）",
+            )
+            action.setCheckable(True)
+            action.setFont(QFont(family))
+            # 詰めた名前ではなく、書体名そのものを持たせる。
+            # 今どれが効いているかの照合に使う（→ `_sync_font_actions`）
+            action.setData(family)
+            self._font_actions.append(action)
+
     def _build_toolbar(self) -> None:
         """道具箱。**一覧は `_tool_actions` から取る。**
 
@@ -507,6 +557,31 @@ class MainWindow(QMainWindow):
         bar.addSeparator()
         bar.addAction(self._act("← 前ページ", self.prev_page))
         bar.addAction(self._act("次ページ →", self.next_page))
+        self._build_font_toolbar()
+
+    def _build_font_toolbar(self) -> None:
+        """よく使う書体のボタン（→ 要件定義 6.5）。**道具箱とは別の段に置く。**
+
+        **道具の隣には置けない。** 道具箱は既に入り切っておらず、はみ出した
+        ぶんは送りのボタン（»）の中へ隠れる。**既定の窓（1100px）では20項目
+        のうち7つしか見えていない**（2026-09-06 実測。offscreen で数えた
+        ので実機の字幅とは違うが、道具だけで17項目ある以上、桁は変わらない）。
+        末尾に足した書体のボタンは、**必ずその隠れる側に入る。**
+
+        段を増やすぶん用紙は狭くなるが、**押せないボタンを置くことに意味は
+        無い。** 1回押しで切り替えるための機能なので、送りのボタンを開いて
+        から押す形になった時点で、キー（`F3`）だけあれば足りることになる。
+
+        **1つも登録されていなければ、段そのものを作らない**（→ 6.5）。
+        """
+        if not self._font_actions:
+            return
+        self.addToolBarBreak()
+        self.font_bar = QToolBar("書体", self)
+        self.font_bar.setMovable(False)
+        self.addToolBar(self.font_bar)
+        for action in self._font_actions:
+            self.font_bar.addAction(action)
 
     def _build_status_bar(self) -> None:
         self.page_label = QLabel()
@@ -536,6 +611,10 @@ class MainWindow(QMainWindow):
         )
 
         self.hint_label.setText(self._hint())
+
+        # よく使う書体の押し込み（→ `_sync_font_actions`）。選び直すたびに
+        # 変わるので、道具の印（`_sync_tool_actions`）と同じくここでも回す
+        self._sync_font_actions()
 
         # メニューの有効・無効と文言は、各部品が自分のぶんを面倒見る
         # （→ `menus.py`。どの部品が回るかは `_menus` で決まる）
@@ -1221,6 +1300,70 @@ class MainWindow(QMainWindow):
         bold = not text.font.bold
         self.state.set_text_font(text.id, bold=bold)
         self.state.message.emit("太字にしました" if bold else "太字をやめました")
+
+    def current_font_family(self) -> str:
+        """いま効いている書体。**選んでいなければ「次に作るセリフ」のもの。**
+
+        書体を変える操作がどちらへ効くかと同じ分け方（→ `choose_font`）。
+        道具箱のどのボタンを押し込むかも、`F3` がどこから数え始めるかも、
+        ここ1か所で決まる。
+        """
+        text = self.state.selected_text
+        return (text.font if text is not None else self.state.next_text_font).family
+
+    def apply_font_family(self, family: str) -> None:
+        """書体だけを変える。大きさと太さはそのまま。
+
+        **既にその書体なら何もしない。** `set_text_font` は毎回1手を積むので、
+        同じボタンを2回押しただけで、見た目の変わらない手が履歴に増える。
+
+        セリフを選んでいなければ「次に作るセリフ」の書体を決める
+        （→ `choose_font` と同じ。選んでいるときしか変えられないと、
+        次の書式を決めるためだけに要らないセリフを1つ置くことになる）。
+        """
+        if family == self.current_font_family():
+            self.state.message.emit(f"書体は既に「{family}」です")
+            self._sync_font_actions()
+            return
+
+        text = self.state.selected_text
+        if text is None:
+            self.state.set_next_text_font(family=family)
+            # 作品は変わらないので `changed` は飛ばない。自分で出し直す
+            self._refresh_hint()
+            self.state.message.emit(f"次に作るセリフの書体: {family}")
+        else:
+            self.state.set_text_font(text.id, family=family)
+            self.state.message.emit(f"書体: {family}")
+        self._sync_font_actions()
+
+    def cycle_favorite_font(self) -> None:
+        """よく使う書体を順に切り替える（`F3`。→ 要件定義 6.5）。
+
+        **キーは1つで、押すたびに次の書体へ回る。** 3枠あるので、3つ登録
+        してあれば最大2回で目的の書体に届く。
+
+        **今の書体が登録されていなければ、1つめから始める。** フォントを
+        選ぶ窓で登録外の書体にしたあと `F3` を押したときに、押した回数で
+        行き先が変わらない。
+        """
+        families = self.settings.registered_fonts
+        if not families:
+            self.state.message.emit(FAVORITE_FONT_EMPTY_HINT)
+            return
+        current = self.current_font_family()
+        index = families.index(current) if current in families else -1
+        self.apply_font_family(families[(index + 1) % len(families)])
+
+    def _sync_font_actions(self) -> None:
+        """いま効いている書体のボタンを押し込む（`_sync_tool_actions` と同じ役）。
+
+        **1つも当たらないことがある。** 登録していない書体を選んでいる
+        ときで、そのときはどれも押し込まない（嘘の表示を出さない）。
+        """
+        current = self.current_font_family()
+        for action in self._font_actions:
+            action.setChecked(action.data() == current)
 
     def choose_font(self) -> None:
         """種類・大きさ・太さをまとめて選ぶ。

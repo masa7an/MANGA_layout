@@ -28,8 +28,9 @@ from __future__ import annotations
 
 import json
 import pathlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
+from .model import DEFAULT_FONT_FAMILY
 from .storage import atomic_write_text
 
 # 利用者のデータを入れるフォルダ。git 管理外（`.gitignore` の `/data/`）
@@ -127,6 +128,43 @@ def _rough_opacity(value: object) -> float:
     return opacity
 
 
+# よく使う書体を覚えておける数（→ 要件定義 6.5）。
+#
+# **3つで足りる。** 実際に使うのは3〜4種類で、書体を選ぶ窓には 199 件が
+# 並ぶ（このPCでの実測 → `ui/font_dialog`）。増やすほど押す前に迷うので、
+# 「見ずに押せる数」で切る。
+FAVORITE_FONT_SLOTS = 3
+
+# 1枠目の既定。**空で始めない。**
+#
+# 3枠とも空だと、道具箱にボタンが1つも出ず、**機能があること自体が
+# 画面に出ない。** 既定の書体を1つ入れておけば、ボタンが1つ見えて、
+# 「ここに並ぶものは設定で増やせる」と分かる
+DEFAULT_FAVORITE_FONTS = [DEFAULT_FONT_FAMILY, "", ""]
+
+
+def _favorite_fonts(value: object) -> list[str]:
+    """設定から読んだ「よく使う書体」を返す。**受け付けられない値は捨てる。**
+
+    書体名は文字列でしか書けないので、数や真偽値が混ざっていたらその枠だけ
+    空にする。**枠ごと詰めない**——2番目を消したときに3番目が繰り上がると、
+    覚えた並び順が黙って変わる。
+
+    **多い分は切り、足りない分は空で埋める。** 常に `FAVORITE_FONT_SLOTS`
+    個の並びとして扱えるので、読む側が長さを確かめずに済む。
+
+    **入っている書体かどうかはここでは見ない。** 設定を読むのはアプリの
+    どの層でも起こりうるが、書体の一覧を引けるのは画面のある所だけ
+    （`QFontDatabase`）。ここで見に行くと、設定の読み込みが Qt に依存する
+    （→ 「中核は Qt を知らない」ではないが、settings.py は今のところ知らない）
+    """
+    if not isinstance(value, list):
+        return list(DEFAULT_FAVORITE_FONTS)
+    names = [item if isinstance(item, str) else "" for item in value]
+    names = names[:FAVORITE_FONT_SLOTS]
+    return names + [""] * (FAVORITE_FONT_SLOTS - len(names))
+
+
 @dataclass
 class AppSettings:
     """`settings.json` の中身。
@@ -147,12 +185,27 @@ class AppSettings:
 
     `rough_opacity` は**ラフ（下敷き）の濃さ**（→ 6.23）。0.05〜1.0 で
     既定は 0.4。元のラフの濃さに合わせて手で書き換える。
+
+    `favorite_fonts` は**よく使う書体**（→ 6.5）。3枠あり、`F3` と道具箱の
+    ボタンから押して切り替える。空の枠は「未登録」で、押す先にも出ない。
     """
 
     default_parent_dir: str | None = None
     autosave_interval_sec: int = AUTOSAVE_INTERVAL_DEFAULT_SEC
     jpg_quality: int = JPG_QUALITY_DEFAULT
     rough_opacity: float = ROUGH_OPACITY_DEFAULT
+    favorite_fonts: list[str] = field(
+        default_factory=lambda: list(DEFAULT_FAVORITE_FONTS)
+    )
+
+    @property
+    def registered_fonts(self) -> list[str]:
+        """登録されている書体だけを、枠の並び順で返す。
+
+        **空の枠は落とす。** 押す先（キーとボタン）はどちらもここを見るので、
+        「未登録の枠を押したら何も起きない」という当たりが生まれない。
+        """
+        return [name for name in self.favorite_fonts if name]
 
     def to_dict(self) -> dict:
         return {
@@ -161,6 +214,7 @@ class AppSettings:
             "autosave_interval_sec": self.autosave_interval_sec,
             "jpg_quality": self.jpg_quality,
             "rough_opacity": self.rough_opacity,
+            "favorite_fonts": list(self.favorite_fonts),
         }
 
     @classmethod
@@ -176,6 +230,7 @@ class AppSettings:
             autosave_interval_sec=_autosave_interval(data.get("autosave_interval_sec")),
             jpg_quality=_jpg_quality(data.get("jpg_quality")),
             rough_opacity=_rough_opacity(data.get("rough_opacity")),
+            favorite_fonts=_favorite_fonts(data.get("favorite_fonts")),
         )
 
 

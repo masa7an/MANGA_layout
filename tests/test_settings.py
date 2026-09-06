@@ -13,6 +13,7 @@ import pathlib
 import pytest
 
 import manga_layout
+from manga_layout.model import DEFAULT_FONT_FAMILY
 from manga_layout.settings import (
     JPG_QUALITY_DEFAULT,
     SETTINGS_FILENAME,
@@ -51,6 +52,49 @@ class Test読み書き:
         save_settings(AppSettings(), path)
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["format_version"] == SETTINGS_VERSION
+
+
+class Testよく使う書体:
+    """3枠の並び（→ 要件定義 6.5）。**枠の番号は覚えるものなので、詰めない。**"""
+
+    def test_既定は1枠目だけ埋まる(self):
+        """空で始めると、道具箱にボタンが1つも出ず機能が見えない。"""
+        assert AppSettings().favorite_fonts == [DEFAULT_FONT_FAMILY, "", ""]
+
+    def test_書いたものが読める(self, path):
+        save_settings(AppSettings(favorite_fonts=["メイリオ", "游明朝", ""]), path)
+        assert load_settings(path).favorite_fonts == ["メイリオ", "游明朝", ""]
+
+    def test_文字列でない値はその枠だけ空になる(self, path):
+        """**繰り上げない。** 2枠目が消えたときに3枠目が繰り上がると、
+        覚えた番号と押した結果が黙ってずれる。
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"favorite_fonts": ["A", 3, "C"]}), encoding="utf-8")
+        assert load_settings(path).favorite_fonts == ["A", "", "C"]
+
+    def test_多い分は切る(self, path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"favorite_fonts": ["A", "B", "C", "D"]}), encoding="utf-8"
+        )
+        assert load_settings(path).favorite_fonts == ["A", "B", "C"]
+
+    def test_足りない分は空で埋める(self, path):
+        """読む側が長さを確かめずに済むよう、常に3つの並びにする。"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"favorite_fonts": ["A"]}), encoding="utf-8")
+        assert load_settings(path).favorite_fonts == ["A", "", ""]
+
+    def test_全部消したときは空のまま(self, path):
+        """空の配列は打ち間違いではなく「1つも要らない」という指定。"""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"favorite_fonts": []}), encoding="utf-8")
+        assert load_settings(path).registered_fonts == []
+
+    def test_登録されたものだけを並べる(self):
+        settings = AppSettings(favorite_fonts=["A", "", "C"])
+        assert settings.registered_fonts == ["A", "C"]
 
 
 class Test壊れた設定:

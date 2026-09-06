@@ -14,6 +14,7 @@ import dataclasses
 import pytest
 from mouse import click, double_click, drag, move_to, press, release
 from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QApplication
 
 from manga_layout import Rect
 from manga_layout.layout import text_frame
@@ -23,9 +24,15 @@ from manga_layout.model import (
     TEXT_SIZE_MIN_PX,
     TextObject,
 )
+from manga_layout.settings import AppSettings, save_settings
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.canvas import TextScaleDrag
 from manga_layout.ui.render import NO_PREVIEW
+from manga_layout.ui.window import (
+    FONT_BUTTON_MAX_CHARS,
+    WINDOW_SIZE,
+    _font_button_label,
+)
 from manga_layout.ui.state import TOOL_SELECT, TOOL_TEXT
 
 # 座標は px（要件定義 3章）。既定のセリフ 201×106 が中に収まる大きさにしてある
@@ -644,6 +651,177 @@ class TestCornerScalesFont:
             assert scale.rect.w == pytest.approx(
                 text.rect.w * expected / text.font.size_px
             )
+
+
+class Testよく使う書体:
+    """`F3` と道具箱のボタンで、書体を1回押しで切り替える（要件定義 6.5）。
+
+    **書体は「入っているか」を確かめない。** offscreen には1本も無いので
+    （このファイルの冒頭）、入っている書体だけで試すと1件も試せない。
+    ここで押さえるのは**どの書体名が入るか**で、その名前で本当に描けるかは
+    登録するとき（設定の窓）に見る。
+    """
+
+    FAMILIES = ["メイリオ", "游ゴシック", "ＭＳ ゴシック"]
+
+    @pytest.fixture
+    def window3(self, qapp, settings_file):
+        """よく使う書体を3つ登録した状態で立ち上げた窓。
+
+        **設定は窓を作る前に書く。** 道具箱は組み立てのあいだに作られる。
+        """
+        save_settings(AppSettings(favorite_fonts=list(self.FAMILIES)), settings_file)
+        win = MainWindow(EditorState())
+        yield win
+        win.view.finish_text_edit(commit=False)
+        win.state.history.mark_saved()
+        win.close()
+
+    @pytest.fixture
+    def window0(self, qapp, settings_file):
+        """1つも登録していない状態。"""
+        save_settings(AppSettings(favorite_fonts=["", "", ""]), settings_file)
+        win = MainWindow(EditorState())
+        yield win
+        win.state.history.mark_saved()
+        win.close()
+
+    @staticmethod
+    def with_text(window):
+        """セリフを1つ置いて選んだ状態にする。"""
+        with window.state.edit("コマの追加") as project:
+            project.add_panel(project.pages[0], PANEL)
+        window.state.select(None)
+        window.state.add_text(Rect(300.0, 300.0, 240.0, 120.0), "セリフ")
+        return window
+
+    def test_F3で次の書体へ回る(self, window3):
+        state = self.with_text(window3).state
+        state.set_text_font(state.selected_text.id, family=self.FAMILIES[0])
+
+        window3.cycle_favorite_font()
+
+        assert only_text(state.page).font.family == self.FAMILIES[1]
+
+    def test_最後まで行ったら1つめへ戻る(self, window3):
+        state = self.with_text(window3).state
+        state.set_text_font(state.selected_text.id, family=self.FAMILIES[-1])
+
+        window3.cycle_favorite_font()
+
+        assert only_text(state.page).font.family == self.FAMILIES[0]
+
+    def test_登録外の書体からは1つめへ(self, window3):
+        """フォントを選ぶ窓で登録外にしたあとでも、行き先が押した回数で
+        変わらない（→ `MainWindow.cycle_favorite_font`）。
+        """
+        state = self.with_text(window3).state
+        state.set_text_font(state.selected_text.id, family="どこにも無い書体")
+
+        window3.cycle_favorite_font()
+
+        assert only_text(state.page).font.family == self.FAMILIES[0]
+
+    def test_大きさと太さは変わらない(self, window3):
+        """変えるのは書体だけ。まとめて変えたいときはフォントを選ぶ窓へ。"""
+        state = self.with_text(window3).state
+        state.set_text_font(state.selected_text.id, size_px=64.0, bold=True)
+        before = state.selected_text.font
+
+        window3.cycle_favorite_font()
+
+        after = only_text(state.page).font
+        assert (after.size_px, after.bold) == (before.size_px, before.bold)
+
+    def test_選んでいなければ次に作るセリフへ効く(self, window3):
+        """選んでいるときしか変えられないと、書体を決めるためだけに
+        要らないセリフを1つ置くことになる（→ `choose_font` と同じ扱い）。
+        """
+        state = window3.state
+        assert state.selected_text is None
+
+        window3.cycle_favorite_font()
+
+        assert state.next_text_font.family == self.FAMILIES[0]
+
+    def test_同じ書体を押しても履歴は増えない(self, window3):
+        """`set_text_font` は毎回1手積むので、素通しだと見た目の変わらない
+        手が増える（→ `MainWindow.apply_font_family`）。
+        """
+        state = self.with_text(window3).state
+        window3.apply_font_family(self.FAMILIES[0])
+        depth = state.history.depth
+
+        window3.apply_font_family(self.FAMILIES[0])
+
+        assert state.history.depth == depth
+
+    def test_1つも登録が無ければ登録の場所を知らせる(self, window0):
+        """「登録されていません」だけだと、設定の窓に辿り着けない。"""
+        messages = []
+        window0.state.message.connect(messages.append)
+
+        window0.cycle_favorite_font()
+
+        assert messages and "settings.bat" in messages[-1]
+
+    def test_登録が無ければ道具箱にボタンを出さない(self, window0):
+        """押しても何も起きないボタンを道具箱に並べない。"""
+        assert window0._font_actions == []
+
+    def test_道具箱とメニューは同じ項目を使う(self, window3):
+        """並べ直したときに片方だけ直し忘れることが起きない
+        （道具の項目と同じ作り → `MainWindow._build_toolbar`）。
+        """
+        in_bar = [a for a in window3.font_bar.actions() if a in window3._font_actions]
+        in_menu = [
+            a for a in window3.text_menu.copy_items if a in window3._font_actions
+        ]
+        assert in_bar == window3._font_actions
+        assert in_menu == window3._font_actions
+
+    def test_ボタンは送りの中に隠れない(self, window3):
+        """**道具の段には置けない。** 道具箱は既に入り切っておらず、末尾に
+        足したものは送りのボタン（»）の中へ入る（→ `_build_font_toolbar`）。
+
+        既定の窓の大きさで、3つとも見えていることを確かめる。
+        """
+        window3.resize(*WINDOW_SIZE)
+        window3.show()
+        QApplication.processEvents()
+
+        hidden = [
+            action.text()
+            for action in window3._font_actions
+            if not window3.font_bar.widgetForAction(action).isVisible()
+        ]
+        assert hidden == []
+
+    def test_登録が無ければ段そのものを作らない(self, window0):
+        """空の段で用紙を狭めない。"""
+        assert not hasattr(window0, "font_bar")
+
+    def test_今の書体のボタンが押し込まれる(self, window3):
+        state = self.with_text(window3).state
+        state.set_text_font(state.selected_text.id, family=self.FAMILIES[1])
+
+        checked = [a.data() for a in window3._font_actions if a.isChecked()]
+        assert checked == [self.FAMILIES[1]]
+
+    def test_登録外の書体ならどれも押し込まない(self, window3):
+        """嘘の押し込みを出さない（→ `MainWindow._sync_font_actions`）。"""
+        state = self.with_text(window3).state
+        state.set_text_font(state.selected_text.id, family="どこにも無い書体")
+
+        assert [a for a in window3._font_actions if a.isChecked()] == []
+
+    def test_長い書体名は詰めて出す(self):
+        """道具箱の幅を押し出すと、入り切らないボタンが送りの中へ隠れる。"""
+        assert _font_button_label("メイリオ") == "メイリオ"
+        assert _font_button_label("UD デジタル 教科書体 N").endswith("…")
+        assert len(_font_button_label("UD デジタル 教科書体 N")) <= (
+            FONT_BUTTON_MAX_CHARS + 1
+        )
 
 
 class TestFormat:
