@@ -235,7 +235,6 @@ class MainWindow(QMainWindow):
         self.balloon_menu = BalloonMenu(self)
         self.sticker_menu = StickerMenu(self)
         self.text_menu = TextMenu(self)
-        self._build_tool_menu()
         self.page_menu = PageMenu(self)
         self._build_view_menu()
         # ヘルプは一番右。**最後に組む**（生成順＝並び順）
@@ -363,8 +362,13 @@ class MainWindow(QMainWindow):
     def _build_tool_actions(self) -> None:
         """道具の切り替え。メニューより先に作る。
 
-        道具メニューと吹き出しメニューの両方から同じ項目を出すため。
-        別々の項目にすると、選ばれている印がどちらか片方にしか付かない。
+        **1つの項目を、担当のメニューと道具箱と右クリックが共有する。**
+        別々の項目にすると、選ばれている印がどれか1つにしか付かない。
+
+        **道具だけを集めたメニューは持たない**（2026-09-06 に畳んだ → 6.33）。
+        道具は「コマ」「フキダシ」「マーク」「セリフ」「画像」「ファイル」の
+        担当のメニューに1つずつ出る。選択の道具だけは担当が無いので編集へ
+        置いた（→ `menus.EditMenu`）。
         """
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -428,6 +432,13 @@ class MainWindow(QMainWindow):
             self.addAction(action)
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
+        # **選択にだけ説明を添える。** 他の道具は「〜を追加」「〜を調整」と
+        # 名前で何が起きるか分かるが、選択は**戻る先**であることが名前に
+        # 出ない。編集メニューでは取り消しの隣に並ぶので、なおさら
+        # （→ `menus.EditMenu`）。ホバー中の状態表示で名乗らせる
+        self._tool_actions[TOOL_SELECT].setStatusTip(
+            "選ぶ・動かす道具に戻る。作る道具を持ったまま気が変わったときに押す"
+        )
 
     def _pick_tool(self, tool: str) -> None:
         """道具の項目が押された。
@@ -444,11 +455,6 @@ class MainWindow(QMainWindow):
             self.state.set_tool(TOOL_SELECT)
             return
         self.state.set_tool(tool)
-
-    def _build_tool_menu(self) -> None:
-        tool_menu = self.menuBar().addMenu("道具(&T)")
-        for action in self._tool_actions.values():
-            tool_menu.addAction(action)
 
     def _build_view_menu(self) -> None:
         view_menu = self.menuBar().addMenu("表示(&V)")
@@ -550,9 +556,9 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         """道具箱。**一覧は `_tool_actions` から取る。**
 
-        道具の名前を並べ直すと、道具メニュー（`_build_menus` の
-        `tool_menu`）と2か所を直すことになる。道具を増やしたときに
-        片方だけ直し忘れると、道具箱にだけ出ない項目ができてしまう。
+        道具の名前をここへ書き写すと、担当のメニュー（`menus.py`）と
+        2か所を直すことになる。道具を増やしたときに片方だけ直し忘れると、
+        道具箱にだけ出ない項目ができてしまう。
 
         **ボタンに出るのは短い名前**（→ `TOOL_SHORT_LABELS`、6.33）。
         メニューの名前をそのまま出すと 20項目のうち8つしか入らない。

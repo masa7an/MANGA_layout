@@ -13,6 +13,7 @@ import json
 
 import pytest
 from mouse import double_click, event_at, move_to, press, release
+from PySide6.QtWidgets import QMenu
 
 from manga_layout import Rect
 from manga_layout.layout import default_panel_rect, full_page_rect
@@ -97,6 +98,68 @@ class TestToolbar:
         ]
         assert [a.iconText() for a in pages] == ["←", "→"]
         assert [a.text() for a in pages] == ["← 前ページ", "次ページ →"]
+
+
+def menubar_entries(window) -> dict[int, list[str]]:
+    """メニューバーを辿って「どの項目が、どの道順に出ているか」を集める。
+
+    **同じ `QAction` を2か所に出しているかどうかを見るので、名前ではなく
+    実体（`id`）で数える。** 名前で数えると、たまたま同じ文言の別項目まで
+    重複に見える。
+
+    **`QAction.menu()` を使わない**（→ `PySide6の落とし穴.md` の 1、
+    `menu_search._submenus_by_action` と同じ作り）。あれは呼んだ時点で
+    メニューを呼び出し側の持ち物にしてしまい、**壊れるのは読んだ側ではなく、
+    アプリが持っている別のメニュー**。メニュー側から `menuAction()` で引く
+    逆向きだけを使い、対応表を先に作る。
+    """
+    submenus = {menu.menuAction(): menu for menu in window.findChildren(QMenu)}
+    found: dict[int, list[str]] = {}
+
+    def walk(actions, trail):
+        for action in actions:
+            if action.isSeparator():
+                continue
+            submenu = submenus.get(action)
+            if submenu is not None:  # 畳んだメニューは中へ降りる
+                walk(submenu.actions(), [*trail, action.text()])
+                continue
+            found.setdefault(id(action), []).append(" > ".join([*trail, action.text()]))
+
+    walk(window.menuBar().actions(), [])
+    return found
+
+
+class TestMenuBar:
+    """**メニューバーに同じ項目を2度出さない**（→ 6.33）。
+
+    出る数がそのまま読む量になる。かつては道具の17項目のうち16項目が
+    「道具メニュー ＋ 担当のメニュー」の2か所に出ており、120項目のうち
+    16項目が重複していた（2026-09-06 に道具メニューを畳んで解消）。
+    """
+
+    def test_同じ項目が2か所に出ない(self, window):
+        dupes = {
+            places[0]: places
+            for places in menubar_entries(window).values()
+            if len(places) > 1
+        }
+        assert not dupes, dupes
+
+    def test_道具はどれもメニューバーから届く(self, window):
+        """道具メニューを畳んだので、**担当のメニューが唯一の入口**になった。"""
+        seen = menubar_entries(window)
+        missing = [
+            TOOL_LABELS[tool]
+            for tool, action in window._tool_actions.items()
+            if id(action) not in seen
+        ]
+        assert not missing, missing
+
+    def test_選択の道具は編集メニューの先頭(self, window):
+        """どこにも属さない唯一の道具（→ 6.33）。"""
+        places = menubar_entries(window)[id(window._tool_actions[TOOL_SELECT])]
+        assert places == ["編集(&E) > 選択の道具 (V)"]
 
 
 class TestPanelEditing:

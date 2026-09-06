@@ -43,6 +43,7 @@ from .state import (
     STICKER_TOOLS,
     TOOL_PANEL,
     TOOL_ROUGH,
+    TOOL_SELECT,
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
@@ -340,12 +341,21 @@ class FileMenu:
 
 
 class EditMenu:
-    """編集のメニュー。元に戻す・やり直す・複製・削除・全面コマ。"""
+    """編集のメニュー。選択の道具・元に戻す・やり直す・複製・削除・全面コマ。"""
 
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window.state
         menu = window.menuBar().addMenu("編集(&E)")
+        # **道具メニューを畳んだ跡の行き先**（→ 6.33）。道具は担当のメニュー
+        # （コマ・フキダシ・マーク・セリフ・画像・ファイル）に1つずつ出ており、
+        # **どこにも属さないのはこれだけ**だった。
+        #
+        # ここに置くのは、これが「作る」の反対側だから。作る道具は置いた
+        # 瞬間に選択へ戻るので（→ 6.9）、押す場面は**持ち替えたまま気が
+        # 変わったとき**に限られる。取り消しの隣が近い
+        menu.addAction(window._tool_actions[TOOL_SELECT])
+        menu.addSeparator()
         self.undo_action = window._act("元に戻す", window.state.undo, "Ctrl+Z")
         self.redo_action = window._act("やり直す", window.state.redo, "Ctrl+Y")
         # Ctrl+Shift+Z も「やり直す」に割り当てる。ソフトによって Ctrl+Y と

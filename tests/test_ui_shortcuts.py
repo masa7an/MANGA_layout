@@ -71,7 +71,7 @@ class Test一覧を作る:
         assert ("F1 / Ctrl+F", "メニューを探す...") in pairs(groups)
 
     def test_同じキーが二度出ない(self, window):
-        """道具の項目は道具メニューと各メニューの両方に置いてある。"""
+        """道具メニューを畳むまでは、同じ道具が2か所に出ていた（→ 6.33）。"""
         found = pairs(menu_groups(window))
         assert len(found) == len(set(found))
 
