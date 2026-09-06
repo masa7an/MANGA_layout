@@ -28,12 +28,12 @@ from manga_layout.settings import AppSettings, save_settings
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.canvas import TextScaleDrag
 from manga_layout.ui.render import NO_PREVIEW
+from manga_layout.ui.state import TOOL_SELECT, TOOL_TEXT
 from manga_layout.ui.window import (
     FONT_BUTTON_MAX_CHARS,
     WINDOW_SIZE,
     _font_button_label,
 )
-from manga_layout.ui.state import TOOL_SELECT, TOOL_TEXT
 
 # 座標は px（要件定義 3章）。既定のセリフ 201×106 が中に収まる大きさにしてある
 PANEL = Rect(120.0, 120.0, 840.0, 660.0)
