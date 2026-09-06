@@ -18,6 +18,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
 from ..layout import image_at
+from ..stickers import STICKER_KINDS
 from .menus import BALLOON_STYLE_MENU_LABEL, TONE_MENU_LABEL, fold_label
 from .state import (
     BALLOON_STYLE_LABELS,
@@ -301,13 +302,22 @@ class ContextMenu:
             ("panel", "コマ", lambda: view.add_panel_at(x, y)),
             # `slot` が None ＝ 種類を畳んで下に出す印（→ 下の分岐）
             ("balloon", BALLOON_PLACE_HERE_NAME, None),
+            # **置ける種類は素材棚（`STICKER_KINDS`）から引く。呼び名の表を
+            # 回さない。** 表には実体のある素材以外も載る——焼いたセリフの
+            # 「文字画像」（→ 6.34）は `kind` に呼び名が要るだけで、対応する
+            # PNG が無い。表を回すと、押した瞬間に `read_sticker` が
+            # 「知らないマークの種類です」で断る項目が並ぶ（2026-09-06 に
+            # テストが数の食い違いとして捕まえた）。
+            #
+            # **呼び名の表と、置ける素材の一覧は別物**。真は素材棚のほうで、
+            # 呼び名は引けなければ「マーク」に落ちればよい
             *(
                 (
                     "sticker",
-                    name,
+                    STICKER_KIND_LABELS.get(kind, "マーク"),
                     lambda _=False, k=kind: view.add_sticker_at(x, y, k),
                 )
-                for kind, name in STICKER_KIND_LABELS.items()
+                for kind in STICKER_KINDS
             ),
             ("text", "セリフ", lambda: view.add_text_at(x, y)),
         )

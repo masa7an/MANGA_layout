@@ -1491,6 +1491,22 @@ class MainWindow(QMainWindow):
         """
         return font_size_label(size_px)
 
+    def rasterize_text(self) -> None:
+        """選んでいるセリフを1枚の画像に焼く（→ 要件定義 6.34）。
+
+        **押し戻せる範囲を、その場で1回だけ知らせる。** 確認の窓は出さない
+        （Undo で戻るため。マークの削除と同じ → 6.14）が、閉じたあとは
+        戻らないので、何が起きたのかは伝える。
+        """
+        text = self.state.selected_text
+        if not self.state.can_rasterize_text(text):
+            return
+        sticker = self.state.rasterize_text(text.id)
+        if sticker is None:
+            self.state.message.emit("字が見つからず、画像にできませんでした")
+            return
+        self.state.message.emit("画像にしました。文字の打ち直しはできません")
+
     def delete_text(self) -> None:
         text = self.state.selected_text
         if text is None:

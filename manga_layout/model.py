@@ -113,6 +113,21 @@ BALLOON_STYLES_WITH_BUBBLE_TAIL = ("cloud",)
 TEXT_ALIGNS = ("left", "center", "right")
 TEXT_DIRECTIONS = ("horizontal", "vertical")
 
+# **セリフを焼いて作ったマークの `kind`**（ラスタライズ → 要件定義 6.34）。
+#
+# `kind` は元々「どの組み込み素材から作ったか」の控えだったが、焼いた文字は
+# 素材棚（`manga_layout/stickers/`）を通らないので書くものが無い。**意味を
+# 「由来」へ1つ広げて、この値を入れる。**
+#
+# 組み込み素材の種類（`STICKER_EXCLAIM` など）と**同じ場所には置かない。**
+# あちらは `read_sticker` が読む実体のある素材の一覧で、この値には対応する
+# PNG が無い。混ぜると「素材が見つからない」で断られる側へ紛れ込む。
+#
+# 呼び名（画面に出る「文字画像」）は `ui.state_text.STICKER_KIND_LABELS`。
+# **知らない `kind` は「マーク」と呼ぶ**作りなので、この値を知らない古い版の
+# アプリで開いても、傾いたマークとして正しく描かれる（→ 5章）
+STICKER_KIND_TEXT = "text"
+
 # **新しく作るセリフの向き。** マンガのセリフは縦書きが普通なので、
 # 横書きのほうを選ぶ形にする（要件定義 6.11）。
 #

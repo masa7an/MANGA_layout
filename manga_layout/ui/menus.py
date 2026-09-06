@@ -1263,6 +1263,22 @@ class TextMenu:
             tip="セリフを選んでいなければ、次に作るセリフの書式を決めます",
             always=True,
         )
+        menu.addSeparator()
+
+        # **セリフの世界から出る操作**なので、いちばん下に置く（→ 6.34）。
+        #
+        # 項目名は短くし、何が起きるかはホバー中の状態表示へ逃がす。
+        # 名前で説明しようとすると、メニューを読む字数だけが増える（→ 6.33）。
+        #
+        # **`always` で登録して、有効・無効は下で決める。** 他の項目は
+        # 「セリフを選んでいるか」だけで決まるが、これは**字が入っているか**
+        # まで見る（空のセリフは焼かせない → `can_rasterize_text`）
+        self.rasterize_action = add(
+            "画像にする",
+            window.rasterize_text,
+            tip="セリフを1枚の画像に焼きます。文字の打ち直しはできなくなります",
+            always=True,
+        )
 
         # 右クリックのメニューが写して使う（→ `items_to_copy`）
         self.copy_items = items_to_copy(menu, window._tool_actions.values())
@@ -1271,6 +1287,7 @@ class TextMenu:
         text = self._state.selected_text
         for action in self.actions:
             action.setEnabled(text is not None)
+        self.rasterize_action.setEnabled(self._state.can_rasterize_text(text))
         self.bold_action.setChecked(text is not None and text.font.bold)
         self.vertical_action.setChecked(
             text is not None and text.direction == "vertical"

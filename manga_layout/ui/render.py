@@ -581,6 +581,16 @@ class PageRenderer:
             elif isinstance(obj, TextObject):
                 self._draw_text(painter, obj, preview)
 
+    def draw_text_alone(self, painter: QPainter, obj: TextObject) -> None:
+        """セリフを1つだけ、確定後の姿で描く（ラスタライズ → 6.34）。
+
+        **焼くときも画面と同じ経路を通す**ための入口。別に書くと、縦書きの
+        組み方や寄せが画面と食い違ったときに、焼いたあとで初めて気づく
+        ことになる（`render.py` を画面・PNG・PSD の3つで共有しているのと
+        同じ理由 → 2章）。
+        """
+        self._draw_text(painter, obj, NO_PREVIEW)
+
     def _draw_text(
         self, painter: QPainter, obj: TextObject, preview: DragPreview
     ) -> None:

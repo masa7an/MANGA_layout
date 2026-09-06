@@ -22,6 +22,7 @@ from ..layout import (
 from ..model import (
     BALLOON_STYLES_WITH_BUBBLE_TAIL,
     BALLOON_STYLES_WITHOUT_TAIL,
+    STICKER_KIND_TEXT,
     TAIL_SHAPE_BUBBLES,
     TAIL_SHAPE_TRIANGLE,
     BalloonObject,
@@ -34,6 +35,7 @@ from ..stickers import (
     STICKER_EXCLAIM_QUESTION,
     read_sticker,
 )
+from .text_raster import rasterize
 
 # マークの種類の呼び名。**フキダシと同じ形**（→ `BALLOON_STYLE_LABELS`）。
 # 左側は保存形式に書かれる `kind` なので変えない。
@@ -44,6 +46,11 @@ from ..stickers import (
 STICKER_KIND_LABELS = {
     STICKER_EXCLAIM: "ビックリマーク",
     STICKER_EXCLAIM_QUESTION: "ビックリはてなマーク",
+    # 焼いたセリフ（→ 6.34）。**素材から置いたものではない**が、
+    # 置き場所も操作もマークと同じなので同じ表で呼び名を引く。
+    # 名前を分けているのは、本物のマークと同じページに並ぶため——
+    # どちらを選んでいるか、削除や状態表示で見分けが付かなくなる
+    STICKER_KIND_TEXT: "文字画像",
 }
 
 
@@ -180,6 +187,61 @@ class TextMixin:
             text.attached_balloon_id = balloon.id if balloon is not None else None
         self.select(text.id)
         return text
+
+    def can_rasterize_text(self, text: TextObject | None) -> bool:
+        """そのセリフを画像に焼けるか（→ 要件定義 6.34）。
+
+        **字が1つも無いものは焼かせない。** 焼くと完全に透明な画像ができて、
+        見えない・掴めない・消せないものがページに残る。控えを持たないので
+        中身から作り直すこともできない。空白だけの場合も同じ。
+
+        **押せるが何も起きない、にしない。** 押せないことが見た目で先に
+        分かるほうがよい（コマのロックでつまみを出さないのと同じ → 6.17）。
+        """
+        return text is not None and bool(text.content.strip())
+
+    def rasterize_text(self, text_id: str) -> StickerObject | None:
+        """セリフを画像に焼き、マークとして置き直す（→ 要件定義 6.34）。
+
+        **元のセリフは消える。文字としての打ち直しはできない。** 控えも
+        持たないので、戻せるのは同じセッション中の Undo だけ（→ 6.8）。
+        フキダシの外に置く小さめの文字を回したい、という要求のためのもので、
+        回転はマークとして持つ（→ 6.14 の書き換え）。
+
+        **1手の編集にまとめる。** 消すのと置くのが別々の手だと、Undo を
+        1回押したときに「セリフが消えたまま、画像も無い」状態が現れる。
+
+        焼けなければ `None`（字が無い・描画に失敗した）。
+        """
+        text = self.page.find(text_id)
+        if not isinstance(text, TextObject) or not self.can_rasterize_text(text):
+            return None
+
+        baked = rasterize(self, text)
+        if baked is None:
+            return None
+        data, src_px, rect = baked
+        # **`assets/` へ入れるのは編集の外。** 追加と同じ順序にしてある
+        # （→ `add_sticker`）。同じ字を2回焼いても、内容ハッシュが同じなので
+        # 実体は1つにまとまる
+        ref, _ = self.import_bytes(data)
+
+        with self.edit("セリフを画像にする") as project:
+            page = project.pages[self._page_index]
+            page.remove_floating(text_id)
+            # 紐づけ先は焼いたあとの位置で決め直す。**元のセリフが吹き出しに
+            # 紐づいていても引き継がない**——マークは吹き出しに紐づけられず、
+            # 追随は焼いた時点で失われる（→ 6.34）
+            sticker = project.add_sticker(
+                page,
+                STICKER_KIND_TEXT,
+                ref,
+                rect,
+                src_px,
+                attach_target(page, rect),
+            )
+        self.select(sticker.id)
+        return sticker
 
     def _edit_text(
         self, text_id: str, label: str
