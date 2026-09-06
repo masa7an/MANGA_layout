@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from .geometry import Rect
 from .joseki import NBox, PageContext, PreviousPage, match_all, proposals
 from .model import Page, Panel, Project
+from .reading import column_first
 
 # 断ち切りでページの端を越える量（px）。**線が出ない分だけあればよい。**
 # 多く出しても仕上がりは変わらず、画面では紙からはみ出して見えるだけになる
@@ -30,24 +31,15 @@ BLEED_OVERFLOW = 10.0
 # 読み順
 # --------------------------------------------------------------------------
 #
-# **`ui/psd_export.py` の `reading_order()` とは別物。** あちらは PSD のフォルダに
-# 振る番号を決めるためのもので、行優先で固定されている。こちらは提案のための順で、
-# **縦4コマ列のページを列優先で読む**必要がある（4コマ2列の8コマページは、右列を
-# 上から下、続いて左列を上から下に読む。慣習で決まっており、迷う余地は無い）。
+# **`ui/psd_export.py` の `reading_order()` とは半分だけ同じ。** 4コマ2列のページを
+# 列優先で読む判定は `reading.column_first()` に置いて共有しており、**この形の
+# ページでは両方が同じ順を返す**（2026-09-06。それまでは必ず食い違っていた）。
 #
-# あちらを直さないのは、**PSD の出力が変わるから。** 目的が違うものを1つにしない。
-#
-# **答えも食い違う。段の切り方が違うため。** こちらは「縦に重なるコマは同じ段」、
-# あちらは「上端の差が隙間より小さいコマは同じ段」。段の高さが揃わないページで
-# 別の答えになる（コマ割りを機械的に 400通り作って照合したところ 125通りで不一致。
-# 4コマ2列のページは必ず不一致。2026-09-05 実測）。
-#
-# **利用者向けの周知は 要件定義 10.5 と README にある。** 揃えると PSD の出力が
-# 約3割のページで変わるので、周知にとどめると決めた（本人判断・2026-09-05）。
-
-# 「縦に並ぶ列」とみなす最小のコマ数。**4コマ用の特殊な読み方なので、3段には広げない。**
-# 3段で左右の列がぴったり揃ったページは、ふつうの漫画のページとして行優先で読む。
-MIN_PER_COLUMN = 4
+# **段の切り方は共有していない。** こちらは「縦に重なるコマは同じ段」、あちらは
+# 「上端の差が隙間より小さいコマは同じ段」。段の高さが揃わないページでは今も別の
+# 答えになる（コマ割りを機械的に 400通り作って照合したところ 125通りで不一致。
+# 2026-09-05 実測）。揃えると既に書き出した作品のフォルダ名の順が動くので、
+# **そこは揃えないと決めている**（→ 要件定義 10.5）。
 
 
 def _bands(panels: list[Panel]) -> list[list[Panel]]:
@@ -70,39 +62,17 @@ def _bands(panels: list[Panel]) -> list[list[Panel]]:
     return bands
 
 
-def _columns(panels: list[Panel]) -> list[list[Panel]]:
-    """**ページを縦に切れる位置**で分ける。切れ目が1つも無ければ1つのまま。
-
-    「横に重なるコマを集める」ではなく、**ページを貫く縦の切れ目**で分ける。
-    集める側にすると、段ごとに幅が違うだけのふつうのページまで列に見えてしまう。
-    """
-    ordered = sorted(panels, key=lambda p: p.bounds().x)
-    groups: list[list[Panel]] = [[ordered[0]]]
-    edge = ordered[0].bounds().right
-    for panel in ordered[1:]:
-        box = panel.bounds()
-        if box.x > edge:            # ここで縦に切れる
-            groups.append([panel])
-            edge = box.right
-        else:
-            groups[-1].append(panel)
-            edge = max(edge, box.right)
-    return [sorted(g, key=lambda p: p.bounds().y) for g in groups]   # 上から下へ
-
-
 def reading_order(panels: list[Panel]) -> list[Panel]:
     """読み順に並べた一覧。
 
-    **ページが縦に切れて、どの列も4個以上**なら列優先（右列を上から下、続いて左列）。
-    それ以外は行優先（上から下・右から左）。**列優先は4コマのページだけの読み方。**
+    **ページが縦に切れて、どの列も4個以上**なら列優先（右列を上から下、続いて
+    左列。→ `reading.column_first`）。それ以外は行優先（上から下・右から左）。
+    **列優先は4コマのページだけの読み方。**
     """
     if not panels:
         return []
-    columns = _columns(panels)
-    if len(columns) >= 2 and all(len(c) >= MIN_PER_COLUMN for c in columns):
-        ordered: list[Panel] = []
-        for column in sorted(columns, key=lambda c: -c[0].bounds().right):
-            ordered.extend(column)
+    ordered = column_first(panels)
+    if ordered is not None:
         return ordered
     return [panel for band in _bands(panels) for panel in band]
 
