@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import math
 import pathlib
+from collections.abc import Callable
 from functools import partial
 
 from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, Qt, Signal
@@ -851,6 +852,237 @@ class ToneAreaDrag(Drag):
 
     def commit(self, view: PageView) -> None:
         view._apply_tone_area(self.image_id, self.image_rect, self.origin, self.preview)
+
+
+# -- 押した1点をどう捌くか（表） -------------------------------------------
+#
+# **並び順そのものが仕様。** 上から順に見て、最初に当たった1行で打ち切る
+# （→ `PageView._apply_press_rules`）。表は2つに分かれていて、先に
+# 「道具で決まるもの」、次に「押した場所で決まるもの」を見る。
+#
+# **新しいつまみを足すときに決めることは、どこへ挿すかだけ。** 各行の上の
+# コメントは「なぜその位置なのか」で、並びを動かす人はそこだけ読めばよい。
+#
+# **順序を1つ動かすと操作感が壊れる。** 症状は覆い隠し——広い判定を先に
+# 見ると、細い判定が押し出されて掴めなくなる。テストは通るのに人には
+# 「掴みにくくなった」としか見えないので、動かしたら地図で確かめる
+# （`tools/grab_map.py`。層1は `tests/test_press_reach.py`）。
+
+
+@dataclasses.dataclass(frozen=True)
+class PressPoint:
+    """押した1点と、判定に要る調べ物。
+
+    **`panel_at` のたぐいはページ全体を舐める**ので、行ごとに呼ぶと同じ
+    調べ物を繰り返す。1度だけ調べてここに載せ、表の側は見るだけにする。
+
+    調べ物は**道具で決まる判定を抜けてから** `looked_at` で埋める。分割や
+    切り抜きは押した時点で作品を書き換えるので、その手前でページを調べても
+    捨てることになる。
+    """
+
+    x: float
+    y: float
+    tool: str
+    event: object
+
+    # ↓ ここから下は `looked_at` が埋める（それまでは空のまま）
+    handle: str | None = None
+    rotating: bool = False
+    text: TextObject | None = None
+    sticker: StickerObject | None = None
+    balloon: BalloonObject | None = None
+    panel: Panel | None = None
+    selected_bounds: Rect | None = None
+
+    def looked_at(self, view: PageView) -> PressPoint:
+        """場所の調べ物を埋めた、新しい1点。"""
+        page = view.state.page
+        return dataclasses.replace(
+            self,
+            handle=view._handle_at_point(self.x, self.y),
+            rotating=view._rotate_handle_at(self.x, self.y),
+            text=text_at(page, self.x, self.y),
+            sticker=sticker_at(page, self.x, self.y),
+            balloon=balloon_pick_at(page, self.x, self.y, view.state.balloon_settings),
+            panel=panel_at(page, self.x, self.y),
+            selected_bounds=view.state.selected_bounds,
+        )
+
+    @property
+    def nothing_here(self) -> bool:
+        """押した所に、掴めるものが1つも無い。"""
+        return (
+            self.handle is None
+            and not self.rotating
+            and self.panel is None
+            and self.balloon is None
+            and self.sticker is None
+            and self.text is None
+        )
+
+
+@dataclasses.dataclass(frozen=True)
+class PressRule:
+    """表の1行。**判定・作るドラッグ・出すメッセージ**の3つで書く。
+
+    `when` が真なら `begin` を呼び、`message` があれば出して打ち切る。
+    `begin` が返したドラッグは `view._drag` に入る。**None を返す行もある**
+    ——分割や切り抜きは掴まずにその場で作品を書き換え、ラフとトーンは
+    自分の中で `_drag` を入れる。どちらも返り値では受け取らない。
+    """
+
+    name: str
+    when: Callable[[PageView, PressPoint], bool]
+    begin: Callable[[PageView, PressPoint], Drag | None]
+    message: str = ""
+
+
+def _begin_resize(view: PageView, point: PressPoint) -> Drag:
+    """8方向のつまみ。**掴んだ時点で縦横比の案内を出す。**
+
+    動かし始めてからでは遅い。表の他の行と違って2手あるので、関数にしてある。
+    """
+    drag = ResizeDrag.begin(view, point.handle, point.selected_bounds)
+    view._update_aspect_hint(point.handle, view._shift_held(point.event))
+    return drag
+
+
+# 道具で決まるもの。**押した場所を調べる前に見る**（→ `PressPoint`）
+TOOL_PRESS_RULES: tuple[PressRule, ...] = (
+    # 分割は押した位置で1回きり切る。掴まないので None を返す
+    PressRule(
+        name="分割",
+        when=lambda view, point: point.tool in SPLIT_TOOLS,
+        begin=lambda view, point: view._apply_split(point.x, point.y),
+    ),
+    # ラフの調整（→ 要件定義 6.23）。**他の判定より先に打ち切る。**
+    # 一番下に敷いてあるものなので、コマや吹き出しの判定を通すと、
+    # ラフを掴むつもりが必ず上のものに取られる
+    PressRule(
+        name="ラフ",
+        when=lambda view, point: point.tool == TOOL_ROUGH,
+        begin=lambda view, point: view._begin_rough_drag(point.x, point.y),
+    ),
+    # トーンの範囲（→ 要件定義 10.1）。ここも他の判定より先に打ち切る。
+    # 範囲はコマや画像の上に重なるので、下の判定を通すと必ず取られる
+    PressRule(
+        name="トーンの範囲",
+        when=lambda view, point: point.tool == TOOL_TONE_AREA,
+        begin=lambda view, point: view._begin_tone_drag(point.x, point.y),
+    ),
+    # 切り抜き（→ 10.3）。**押した所を消すだけで、選択も掴みも起こさない。**
+    # 下の判定を通すと、絵を選ぶ・動かすが先に効いてしまう
+    PressRule(
+        name="切り抜き",
+        when=lambda view, point: point.tool == TOOL_WAND,
+        begin=lambda view, point: view._wand_click(
+            point.x, point.y, point.event.modifiers()
+        ),
+    ),
+    # 吹き出し・マーク・セリフはコマの上に置くものなので、下に何があっても
+    # 作れる。コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で
+    # 作れない
+    PressRule(
+        name="吹き出し・マーク・セリフを作る",
+        when=lambda view, point: (
+            point.tool in BALLOON_TOOLS
+            or point.tool in STICKER_TOOLS
+            or point.tool == TOOL_TEXT
+        ),
+        begin=lambda view, point: CreateFloatingDrag.begin(
+            view, point.x, point.y, point.tool
+        ),
+    ),
+)
+
+# 押した場所で決まるもの。**この並びが操作感そのもの**
+PICK_PRESS_RULES: tuple[PressRule, ...] = (
+    # コマ追加の道具でも、既にあるコマやそのつまみの上なら編集を優先する。
+    # 何も無いところを押したときだけ新しいコマを作る
+    PressRule(
+        name="コマを作る",
+        when=lambda view, point: point.tool == TOOL_PANEL and point.nothing_here,
+        begin=lambda view, point: CreatePanelDrag.begin(view, point.x, point.y),
+    ),
+    # しっぽの先端と付け根。つまみより先に見る。小さな吹き出しでは
+    # これらと角のつまみが近づくため、狙って掴んだほうを優先する
+    PressRule(
+        name="しっぽの先端",
+        when=lambda view, point: view._tail_tip_at(point.x, point.y),
+        begin=lambda view, point: TailDrag.begin(view, point.x, point.y),
+    ),
+    PressRule(
+        name="しっぽの付け根",
+        when=lambda view, point: view._tail_root_at(point.x, point.y),
+        begin=lambda view, point: TailRootDrag.begin(view, point.x, point.y),
+        message="上下にドラッグすると、しっぽの付け根が動きます",
+    ),
+    # しっぽの三角形の内側。先端・付け根のつまみより後に見る
+    # （ひし形は三角形の付け根と重なるため、先に見ると付け根を
+    # 動かせなくなる）
+    PressRule(
+        name="しっぽの胴",
+        when=lambda view, point: view._tail_body_at(point.x, point.y),
+        begin=lambda view, point: TailDrag.begin(view, point.x, point.y),
+        message="ドラッグすると、しっぽの向きが変わります",
+    ),
+    # 8方向のつまみ。**選んでいるものが無ければ出ない**ので、掴む先も無い
+    PressRule(
+        name="大きさのつまみ",
+        when=lambda view, point: (
+            point.handle is not None and point.selected_bounds is not None
+        ),
+        begin=_begin_resize,
+    ),
+    # 回転つまみ。8方向のつまみより後に見る。上辺から離して置いてあるので
+    # 普段は重ならないが、重なったときは大きさを変えるほうを優先する
+    # （回転はやり直しやすく、意図せず回っても気づける）
+    PressRule(
+        name="回転つまみ",
+        when=lambda view, point: point.rotating,
+        begin=lambda view, point: RotateDrag.begin(view, point.x, point.y),
+        message=ROTATE_HINT,
+    ),
+    # 斜めの境界のつまみ。**角と辺のつまみより後に見る。**
+    # こちらは掴む範囲が広いので、先に見ると縮小したときや細いコマで
+    # 左右のつまみを覆い隠し、大きさを変えられなくなる
+    PressRule(
+        name="斜めの境界",
+        when=lambda view, point: view._slant_handle_at(point.x, point.y),
+        begin=lambda view, point: SlantDrag.begin(view),
+        message="左右にドラッグすると、斜めの境界が動きます",
+    ),
+    # 集中線のつまみ。**角と辺のつまみより後、コマ本体より先。**
+    #
+    # 角・辺より後にするのは、中心がコマの隅に寄っているときに
+    # それらを覆い隠さないため（斜めの境界と同じ）。本体より先に
+    # するのは、中心のつまみがコマの真ん中あたりに出るためで、
+    # 後にすると掴んだつもりがコマの移動になる（→ 要件定義 6.16）
+    PressRule(
+        name="集中線の内側の空き",
+        when=lambda view, point: view._focus_hole_at(point.x, point.y),
+        begin=lambda view, point: FocusDrag.begin(view, "focus_hole"),
+        message="左右にドラッグすると、集中線の内側の空きが変わります",
+    ),
+    PressRule(
+        name="集中線の中心",
+        when=lambda view, point: view._focus_center_at(point.x, point.y),
+        begin=lambda view, point: FocusDrag.begin(view, "focus_center"),
+        message="ドラッグすると、集中線の中心が動きます",
+    ),
+    # 流線のつまみ。**集中線のつまみより後、コマ本体より先。**
+    #
+    # 集中線より後にするのは、あちらの中心が**動かせる＝どこにでも
+    # 来る**ため。流線の丸は決まった場所にしか出ないので、重なった
+    # ときに逃げられるのは集中線の側だけ（→ 要件定義 6.26）
+    PressRule(
+        name="流線の向き",
+        when=lambda view, point: view._flow_angle_at(point.x, point.y),
+        begin=lambda view, point: FlowDrag.begin(view),
+        message="ドラッグすると、流線の向きが変わります（Shift で15度ずつ）",
+    ),
+)
 
 
 class PageScene(QGraphicsScene):
@@ -2064,147 +2296,24 @@ class PageView(QGraphicsView):
         self._selected_before_press = self.state.selected_id
 
         x, y = self._scene_px(event)
-        tool = self.state.tool
+        # **道具は文字の確定より先に控える。** 確定は押した所とは別の場所で
+        # 起きるので、その中で道具が変わっても、押したときの道具で捌く
+        point = PressPoint(x=x, y=y, tool=self.state.tool, event=event)
 
         # 入力中に画面を触ったら、そこで確定してから次の操作へ移る
         self.finish_text_edit(commit=True)
 
-        if tool in SPLIT_TOOLS:
-            self._apply_split(x, y)
+        if self._apply_press_rules(TOOL_PRESS_RULES, point):
             event.accept()
             return
 
-        # ラフの調整（→ 要件定義 6.23）。**他の判定より先に、ここで打ち切る。**
-        # 一番下に敷いてあるものなので、コマや吹き出しの判定を通すと、
-        # ラフを掴むつもりが必ず上のものに取られる
-        if tool == TOOL_ROUGH:
-            self._begin_rough_drag(x, y)
+        # ここから先は押した場所で決まる。**調べ物はここで1度だけ**
+        point = point.looked_at(self)
+        if self._apply_press_rules(PICK_PRESS_RULES, point):
             event.accept()
             return
 
-        # トーンの範囲（→ 要件定義 10.1）。ここも他の判定より先に打ち切る。
-        # 範囲はコマや画像の上に重なるので、下の判定を通すと必ず取られる
-        if tool == TOOL_TONE_AREA:
-            self._begin_tone_drag(x, y)
-            event.accept()
-            return
-
-        # 切り抜き（→ 10.3）。**押した所を消すだけで、選択も掴みも起こさない。**
-        # 下の判定を通すと、絵を選ぶ・動かすが先に効いてしまう
-        if tool == TOOL_WAND:
-            self._wand_click(x, y, event.modifiers())
-            event.accept()
-            return
-
-        # 吹き出し・マーク・セリフはコマの上に置くものなので、下に何があっても
-        # 作れる。コマ追加と違って「空白のときだけ」にすると、ほとんどの場所で
-        # 作れない
-        if tool in BALLOON_TOOLS or tool in STICKER_TOOLS or tool == TOOL_TEXT:
-            self._drag = CreateFloatingDrag.begin(self, x, y, tool)
-            event.accept()
-            return
-
-        handle = self._handle_at_point(x, y)
-        rotating = self._rotate_handle_at(x, y)
-        text = text_at(self.state.page, x, y)
-        sticker = sticker_at(self.state.page, x, y)
-        balloon = balloon_pick_at(self.state.page, x, y, self.state.balloon_settings)
-        hit = panel_at(self.state.page, x, y)
-
-        # コマ追加の道具でも、既にあるコマやそのつまみの上なら編集を優先する。
-        # 何も無いところを押したときだけ新しいコマを作る
-        if (
-            tool == TOOL_PANEL
-            and handle is None
-            and not rotating
-            and hit is None
-            and balloon is None
-            and sticker is None
-            and text is None
-        ):
-            self._drag = CreatePanelDrag.begin(self, x, y)
-            event.accept()
-            return
-
-        # しっぽの先端と付け根。つまみより先に見る。小さな吹き出しでは
-        # これらと角のつまみが近づくため、狙って掴んだほうを優先する
-        if self._tail_tip_at(x, y):
-            self._drag = TailDrag.begin(self, x, y)
-            event.accept()
-            return
-
-        if self._tail_root_at(x, y):
-            self._drag = TailRootDrag.begin(self, x, y)
-            self.state.message.emit("上下にドラッグすると、しっぽの付け根が動きます")
-            event.accept()
-            return
-
-        # しっぽの三角形の内側。先端・付け根のつまみより後に見る
-        # （ひし形は三角形の付け根と重なるため、先に見ると付け根を
-        # 動かせなくなる）
-        if self._tail_body_at(x, y):
-            self._drag = TailDrag.begin(self, x, y)
-            self.state.message.emit("ドラッグすると、しっぽの向きが変わります")
-            event.accept()
-            return
-
-        selected_bounds = self.state.selected_bounds
-        if handle is not None and selected_bounds is not None:
-            self._drag = ResizeDrag.begin(self, handle, selected_bounds)
-            # 掴んだ時点で出す。動かし始めてからでは遅い
-            self._update_aspect_hint(handle, self._shift_held(event))
-            event.accept()
-            return
-
-        # 回転つまみ。8方向のつまみより後に見る。上辺から離して置いてあるので
-        # 普段は重ならないが、重なったときは大きさを変えるほうを優先する
-        # （回転はやり直しやすく、意図せず回っても気づける）
-        if rotating:
-            self._drag = RotateDrag.begin(self, x, y)
-            self.state.message.emit(ROTATE_HINT)
-            event.accept()
-            return
-
-        # 斜めの境界のつまみ。**角と辺のつまみより後に見る。**
-        # こちらは掴む範囲が広いので、先に見ると縮小したときや細いコマで
-        # 左右のつまみを覆い隠し、大きさを変えられなくなる
-        if self._slant_handle_at(x, y):
-            self._drag = SlantDrag.begin(self)
-            self.state.message.emit("左右にドラッグすると、斜めの境界が動きます")
-            event.accept()
-            return
-
-        # 集中線のつまみ。**角と辺のつまみより後、コマ本体より先。**
-        #
-        # 角・辺より後にするのは、中心がコマの隅に寄っているときに
-        # それらを覆い隠さないため（斜めの境界と同じ）。本体より先に
-        # するのは、中心のつまみがコマの真ん中あたりに出るためで、
-        # 後にすると掴んだつもりがコマの移動になる（→ 要件定義 6.16）
-        if self._focus_hole_at(x, y):
-            self._drag = FocusDrag.begin(self, "focus_hole")
-            self.state.message.emit("左右にドラッグすると、集中線の内側の空きが変わります")
-            event.accept()
-            return
-
-        if self._focus_center_at(x, y):
-            self._drag = FocusDrag.begin(self, "focus_center")
-            self.state.message.emit("ドラッグすると、集中線の中心が動きます")
-            event.accept()
-            return
-
-        # 流線のつまみ。**集中線のつまみより後、コマ本体より先。**
-        #
-        # 集中線より後にするのは、あちらの中心が**動かせる＝どこにでも
-        # 来る**ため。流線の丸は決まった場所にしか出ないので、重なった
-        # ときに逃げられるのは集中線の側だけ（→ 要件定義 6.26）
-        if self._flow_angle_at(x, y):
-            self._drag = FlowDrag.begin(self)
-            self.state.message.emit(
-                "ドラッグすると、流線の向きが変わります（Shift で15度ずつ）"
-            )
-            event.accept()
-            return
-
+        # どの行にも当たらなかった。**押した所にあるものを選ぶ**のが最後の一手
         self.state.select(self._pick_at(x, y))
         if self.state.selected_id is not None and self.state.is_locked_selection:
             # ロックしたコマは選べるが動かせない（→ 要件定義 6.17）。
@@ -2217,6 +2326,27 @@ class PageView(QGraphicsView):
             if self.state.selected_slant_pair is not None:
                 self.state.message.emit("斜めに割った2枚は、まとめて動きます")
         event.accept()
+
+    def _apply_press_rules(
+        self, rules: tuple[PressRule, ...], point: PressPoint
+    ) -> bool:
+        """表を上から見て、**最初に当たった1行だけ**を実行する。当たれば True。
+
+        **返ってきたドラッグが None なら、今のドラッグに触らない。** 分割や
+        切り抜きは掴まずにその場で作品を書き換え、ラフとトーンは自分の中で
+        `_drag` を入れる。ここで None を入れ直すと、入ったばかりのドラッグを
+        取り上げてしまう。
+        """
+        for rule in rules:
+            if not rule.when(self, point):
+                continue
+            drag = rule.begin(self, point)
+            if drag is not None:
+                self._drag = drag
+            if rule.message:
+                self.state.message.emit(rule.message)
+            return True
+        return False
 
     def _rough_handle_at(self, x: float, y: float) -> str | None:
         """その位置にあるラフのつまみ。無ければ None。
