@@ -71,8 +71,13 @@ class Test保存形式:
             f"{ID_PREFIX_STICKER}_"
         )
 
-    def test_回転は常に0(self, project):
-        """傾きは素材の PNG に焼き込む。アプリでは回さない。"""
+    def test_置いた直後の回転は0(self, project):
+        """置くだけでは傾かない。
+
+        **「マークは回らない」ではない**（2026-09-06 に回せるようにした
+        → 要件定義 6.14）。組み込み素材は傾きを PNG に焼き込んであるので、
+        置いた時点では 0 のまま、が正しい。
+        """
         assert put(project, Rect(0.0, 0.0, 10.0, 10.0)).rotation == 0.0
 
     def test_知らないkindでも開ける(self):
@@ -239,6 +244,48 @@ class Test当たり判定:
         """ページの大きさを変えたあとに知らせる対象（→ 6.1）。"""
         sticker = put(project, Rect(-50.0, 10.0, 100.0, 100.0))
         assert sticker in outside_page(project.pages[0])
+
+
+class Test傾けたマーク:
+    """2026-09-06 に回せるようにした（→ 要件定義 6.14 の書き換え）。
+
+    画像でやったこと（→ 6.3）と同じで、**`rect` は傾けない。** 判定の側で
+    回すので、傾き 0 のマークはこれまでと同じ経路を通る。
+    """
+
+    def test_当たり判定も一緒に回る(self, project):
+        # 横長の帯。90 度回すと縦長になる
+        sticker = put(project, Rect(100.0, 100.0, 200.0, 50.0))
+        page = project.pages[0]
+        # 帯の上 55px。傾き 0 では届かない位置
+        above = (200.0, 45.0)
+
+        assert sticker_at(page, *above) is None
+        sticker.rotation = 90.0
+        assert sticker_at(page, *above) is sticker
+
+    def test_回した先から外れた所は譲る(self, project):
+        """**回すと当たらなくなる側**も見る。片側だけだと、
+        「常に当たる」実装でもテストが通ってしまう。"""
+        sticker = put(project, Rect(100.0, 100.0, 200.0, 50.0))
+        page = project.pages[0]
+        left_end = (110.0, 120.0)  # 帯の左端。傾き 0 なら中
+
+        assert sticker_at(page, *left_end) is sticker
+        sticker.rotation = 90.0
+        assert sticker_at(page, *left_end) is None
+
+    def test_傾けて紙から出たら数える(self, project):
+        """回した結果の外接矩形で見る（コマの中の画像と同じ → 6.3）。
+
+        矩形のまま見ると、**傾けて紙の外へ出した角**を数え落とす。
+        """
+        page = project.pages[0]
+        sticker = put(project, Rect(0.0, 100.0, 50.0, 200.0))
+        assert outside_page(page) == []
+
+        sticker.rotation = 90.0
+        assert outside_page(page) == [sticker]
 
 
 class Test組み込み素材:

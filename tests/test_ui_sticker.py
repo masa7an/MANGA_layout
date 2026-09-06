@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import pytest
-from mouse import click, drag
+from mouse import click, drag, send
 
 from manga_layout import Rect
 from manga_layout.model import StickerObject
@@ -357,3 +357,92 @@ class Test状態表示:
         sticker = window_with_sticker.state.selected_sticker
         sticker.kind = "まだ無い種類"
         assert "マークを選択中" in window_with_sticker._hint()
+
+
+class Testマークの回転:
+    """2026-09-06 に、画像だけだった回転をマークへ広げた（→ 6.14 の書き換え）。
+
+    焼いたセリフをマークとして置き、それを回すために要る（→ 6.34）。
+    仕組みは画像と共通なので（`EditorState.selected_rotatable`）、ここで見るのは
+    **マークでも配線がつながっているか**であって、角度の計算そのものではない
+    （そちらは tests/test_rotation.py）。
+    """
+
+    def test_選ぶと回転つまみが出る(self, window_with_sticker):
+        view = window_with_sticker.view
+        rect = window_with_sticker.state.selected_sticker.rect
+        point = view._rotate_handle_point()
+
+        assert point is not None
+        assert point[0] == pytest.approx(rect.center[0])
+        assert point[1] < rect.y  # 上辺の外
+
+    def test_つまみを掴むと回転が始まる(self, window_with_sticker):
+        from manga_layout.ui.canvas import RotateDrag
+
+        view = window_with_sticker.view
+        send(view, "press", *view._rotate_handle_point())
+
+        assert isinstance(view._drag, RotateDrag)
+        assert view._scene.rotate_preview is not None
+
+    def test_回した角度がモデルに残る(self, window_with_sticker):
+        state = window_with_sticker.state
+        window_with_sticker.view._apply_rotate(state.selected_sticker.id, 30.0)
+
+        assert state.selected_sticker.rotation == pytest.approx(30.0)
+
+    def test_回転はUndoで戻る(self, window_with_sticker):
+        state = window_with_sticker.state
+        window_with_sticker.view._apply_rotate(state.selected_sticker.id, 30.0)
+        state.undo()
+
+        assert state.page.floating[0].rotation == 0.0
+
+    def test_選択枠も一緒に回る(self, window_with_sticker):
+        """枠だけ水平のまま残ると、掴む場所と絵の角がズレる（→ 6.3）。"""
+        state = window_with_sticker.state
+        window_with_sticker.view._apply_rotate(state.selected_sticker.id, 30.0)
+
+        assert window_with_sticker.view._scene.selection_rotation() == pytest.approx(
+            30.0
+        )
+
+    def test_傾けると掴める場所も回る(self, window_with_sticker):
+        """当たり判定が回っていないと、見えている絵の外で掴めてしまう。"""
+        state = window_with_sticker.state
+        sticker = state.selected_sticker
+        # 横長にしてから 90 度回す。回す前は届かない、上に離れた点を押す
+        with state.edit_page("整形") as page:
+            page.find(sticker.id).rect = Rect(300.0, 300.0, 300.0, 60.0)
+        above = (450.0, 250.0)
+
+        state.select(None)
+        click(window_with_sticker.view, *above)
+        assert state.selected_sticker is None
+
+        state.select(sticker.id)
+        window_with_sticker.view._apply_rotate(sticker.id, 90.0)
+        state.select(None)
+        click(window_with_sticker.view, *above)
+        assert state.selected_sticker is not None
+
+    def test_傾いていれば右クリックに戻す項目が出る(self, window_with_sticker):
+        state = window_with_sticker.state
+        reset = window_with_sticker.image_menu.reset_rotation_action
+
+        menu = window_with_sticker.context_menu.build(*CENTER)
+        assert reset not in menu.actions()  # 傾いていないうちは出さない
+        menu.deleteLater()
+
+        window_with_sticker.view._apply_rotate(state.selected_sticker.id, 30.0)
+        menu = window_with_sticker.context_menu.build(*CENTER)
+        assert reset in menu.actions()
+        menu.deleteLater()
+
+    def test_戻す項目で0に戻る(self, window_with_sticker):
+        state = window_with_sticker.state
+        window_with_sticker.view._apply_rotate(state.selected_sticker.id, 30.0)
+        window_with_sticker.reset_image_rotation()
+
+        assert state.selected_sticker.rotation == 0.0

@@ -421,6 +421,21 @@ class EditorState(EffectsMixin, FileMixin, ImageMixin, PanelMixin, TextMixin, QO
         return obj if isinstance(obj, TextObject) else None
 
     @property
+    def selected_rotatable(self) -> ImageObject | StickerObject | None:
+        """選択中の、傾けられるもの。傾けられないものを選んでいれば None。
+
+        **回転を扱う場所は、必ずここから取る。** 描く角度・つまみの位置・
+        リサイズ・吸着・「回転をリセット」が同じ集合を見ることになるので、
+        対象を1つ増やしたときに片方だけ古いまま、が起きない。
+
+        画像だけだったものを 2026-09-06 にマークへ広げた。焼いたセリフを
+        マークとして置き、それを回すため（→ 要件定義 6.14 の書き換え）。
+        フキダシ・セリフ・コマは持たない（`rotation` の項目自体が無い）。
+        """
+        obj = self.selected_object
+        return obj if isinstance(obj, (ImageObject, StickerObject)) else None
+
+    @property
     def selected_slant_pair(self) -> SlantPair | None:
         """選択中のコマが属する斜めの組。属していなければ None。"""
         panel = self.selected_panel

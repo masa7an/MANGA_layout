@@ -574,8 +574,10 @@ class PageRenderer:
             if isinstance(obj, BalloonObject):
                 self._draw_balloon(painter, obj, preview)
             elif isinstance(obj, StickerObject):
-                # 切り抜かない。コマからはみ出して置くためのもの
-                self._draw_image(painter, obj)
+                # 切り抜かない。コマからはみ出して置くためのもの。
+                # **下見を渡す。** 渡さないと、回している最中だけ絵が
+                # 元の角度のまま止まり、選択枠だけが回って見える
+                self._draw_image(painter, obj, preview)
             elif isinstance(obj, TextObject):
                 self._draw_text(painter, obj, preview)
 

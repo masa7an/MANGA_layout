@@ -1500,10 +1500,14 @@ def sticker_at(page: Page, x: float, y: float) -> StickerObject | None:
     **矩形で判定する。** 素材は透明な余白を削ってあるので、記号と矩形の
     ずれは傾いた記号の四隅くらいしか残らない。透明度を見る判定は、
     掴みにくさが実際に出てから入れる（要件定義 6.14）。
+
+    **傾いていれば、その矩形を回して判定する**（→ 画像と同じ形。要件定義 6.3）。
+    傾き 0 なら `rotated_rect_contains` は今までの矩形の判定に落ちるので、
+    回していないマークはこれまでと同じ経路を通る。
     """
     stickers = [f for f in page.floating if isinstance(f, StickerObject)]
     for sticker in reversed(sorted(stickers, key=lambda s: s.z)):
-        if sticker.rect.contains(x, y):
+        if rotated_rect_contains(sticker.rect, x, y, sticker.rotation):
             return sticker
     return None
 
@@ -1637,8 +1641,17 @@ def outside_page(page: Page) -> list[SceneObject]:
             or r.bottom > paper.bottom + EPS
         )
 
+    def floating_bounds(obj: SceneObject) -> Rect:
+        """傾いているマークは、回したあとの外接矩形で見る。
+
+        矩形のまま見ると、**傾けて紙の外へ出した角**を数え落とす
+        （コマの中の画像で `image_orphaned_in` が既にこうしている）。
+        """
+        rotation = getattr(obj, "rotation", 0.0)
+        return obj.rect if rotation == 0.0 else rotated_bounds(obj.rect, rotation)
+
     found: list[SceneObject] = [p for p in page.panels if sticks_out(p.shape.bounds())]
-    found.extend(f for f in page.floating if sticks_out(f.rect))
+    found.extend(f for f in page.floating if sticks_out(floating_bounds(f)))
     return found
 
 

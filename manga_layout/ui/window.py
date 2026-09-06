@@ -30,6 +30,7 @@ from ..model import (
     TEXT_SIZE_MIN_PX,
     ImageObject,
     Panel,
+    StickerObject,
 )
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import prune_unused_assets
@@ -1171,18 +1172,18 @@ class MainWindow(QMainWindow):
         self.state.message.emit(f"コマを埋めました（{rect.w:.0f} × {rect.h:.0f} px）")
 
     def reset_image_rotation(self) -> None:
-        """選択中の画像の傾きを 0 に戻す。
+        """選択中のもの（画像・マーク）の傾きを 0 に戻す。
 
         回しすぎて戻せなくなる状態を作らないための逃げ道。つまみで 0 ちょうどに
         合わせるのは難しく、Undo は回した直後にしか使えない。
         """
-        image = self.state.selected_image
-        if image is None or image.rotation == 0.0:
+        obj = self.state.selected_rotatable
+        if obj is None or obj.rotation == 0.0:
             return
-        image_id = image.id
+        object_id = obj.id
         with self.state.edit_page("回転をリセット") as page:
-            target = page.find(image_id)
-            if isinstance(target, ImageObject):
+            target = page.find(object_id)
+            if isinstance(target, (ImageObject, StickerObject)):
                 target.rotation = 0.0
         self.state.message.emit("傾きを戻しました")
 

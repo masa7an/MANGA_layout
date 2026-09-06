@@ -153,6 +153,10 @@ class ContextMenu:
 
         elif state.selected_sticker is not None:
             self._copy_actions(menu, window.sticker_menu.copy_items)
+            # 傾いていないときは出さない（画像と同じ扱い → 下）。
+            # マークのメニューには置いていないので、**戻す動線はここだけ**
+            if state.selected_sticker.rotation != 0.0:
+                menu.addAction(window.image_menu.reset_rotation_action)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("text",))
 

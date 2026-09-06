@@ -140,6 +140,7 @@ from .state import (
     TOOL_TONE_AREA,
     TOOL_WAND,
     EditorState,
+    object_label,
 )
 
 # 分割の道具。押した位置で1回きり切る、という扱いが共通している
@@ -683,33 +684,36 @@ class TextScaleDrag(Drag):
 
 
 class RotateDrag(Drag):
-    """画像の回転つまみ。Shift を押している間は15度刻み。"""
+    """回転つまみ。Shift を押している間は15度刻み。
+
+    対象は画像とマーク（→ `EditorState.selected_rotatable`）。
+    """
 
     def __init__(
-        self, image_id: str, origin_rect: Rect, angle_offset: float, rotation: float
+        self, object_id: str, origin_rect: Rect, angle_offset: float, rotation: float
     ):
-        self.image_id = image_id
+        self.object_id = object_id
         self.origin_rect = origin_rect
         # 掴んだ向きと今の傾きのずれ。つまみのどこを掴んでも押した瞬間に
         # 絵が飛ばないよう、動かすときはここを引く
         self.angle_offset = angle_offset
-        self.rotate_preview = (image_id, rotation)
+        self.rotate_preview = (object_id, rotation)
 
     @classmethod
     def begin(cls, view: PageView, x: float, y: float) -> RotateDrag:
-        image = view.state.selected_image
-        offset = view._angle_at(image.rect, x, y) - image.rotation
-        return cls(image.id, image.rect, offset, image.rotation)
+        target = view.state.selected_rotatable
+        offset = view._angle_at(target.rect, x, y) - target.rotation
+        return cls(target.id, target.rect, offset, target.rotation)
 
     def update(self, view: PageView, x: float, y: float, event) -> None:
         angle = view._angle_at(self.origin_rect, x, y) - self.angle_offset
         if view._shift_held(event):
             angle = round(angle / ROTATE_STEP_DEG) * ROTATE_STEP_DEG
-        self.rotate_preview = (self.image_id, normalize_angle(angle))
+        self.rotate_preview = (self.object_id, normalize_angle(angle))
 
     def commit(self, view: PageView) -> None:
         _, angle = self.rotate_preview
-        view._apply_rotate(self.image_id, angle)
+        view._apply_rotate(self.object_id, angle)
 
 
 class TailDrag(Drag):
@@ -1348,17 +1352,17 @@ class PageScene(QGraphicsScene):
         )
 
     def selection_rotation(self) -> float:
-        """選択枠を描く角度。画像以外は 0。
+        """選択枠を描く角度。傾けられないものを選んでいれば 0。
 
         回している最中は下見の角度を使う。モデルには離すまで触らないので、
         ここを見ないと絵だけ回って枠が置いていかれる。
         """
-        image = self.state.selected_image
-        if image is None:
+        target = self.state.selected_rotatable
+        if target is None:
             return 0.0
-        if self.rotate_preview is not None and self.rotate_preview[0] == image.id:
+        if self.rotate_preview is not None and self.rotate_preview[0] == target.id:
             return self.rotate_preview[1]
-        return image.rotation
+        return target.rotation
 
     @staticmethod
     def _apply_rotation(painter: QPainter, rect: Rect, rotation: float) -> None:
@@ -1409,7 +1413,7 @@ class PageScene(QGraphicsScene):
             self._draw_selection(
                 painter, bounds, scale, self._accent(), show_handles=not self.state.is_locked_selection
             )
-            if self.state.selected_image is not None:
+            if self.state.selected_rotatable is not None:
                 self._draw_rotate_handle(painter, bounds, scale)
             if balloon is not None:
                 self._draw_balloon_outline_highlight(painter, balloon)
@@ -2269,9 +2273,9 @@ class PageView(QGraphicsView):
         return SNAP_PX / self.view_scale
 
     def _selected_rotation(self) -> float:
-        """選択中の画像の傾き。画像以外を選んでいるときは 0。"""
-        image = self.state.selected_image
-        return 0.0 if image is None else image.rotation
+        """選択中のものの傾き。傾けられないものを選んでいるときは 0。"""
+        target = self.state.selected_rotatable
+        return 0.0 if target is None else target.rotation
 
     def _rect_snap_threshold(self) -> float:
         """移動・リサイズで使う吸着の距離。**傾いた画像では 0**（吸着しない）。
@@ -3242,18 +3246,18 @@ class PageView(QGraphicsView):
         return math.degrees(math.atan2(y - cy, x - cx))
 
     def _rotate_handle_point(self) -> tuple[float, float] | None:
-        """回転つまみ（丸）の位置。画像を選んでいないときは None。
+        """回転つまみ（丸）の位置。傾けられないものを選んでいれば None。
 
         描く側（`PageScene._draw_rotate_handle`）と同じ場所を、painter を
         使わずに求める。片方だけ直すと、見えている印と掴める場所がズレる。
         """
-        image = self.state.selected_image
-        if image is None:
+        target = self.state.selected_rotatable
+        if target is None:
             return None
-        rect = image.rect
+        rect = target.rect
         cx, cy = rect.center
         top = rect.y - ROTATE_HANDLE_GAP_PX / self.view_scale
-        return rotate_point(cx, top, cx, cy, image.rotation)
+        return rotate_point(cx, top, cx, cy, target.rotation)
 
     def _rotate_handle_at(self, x: float, y: float) -> bool:
         """回転つまみの上か。
@@ -3643,18 +3647,18 @@ class PageView(QGraphicsView):
         with self.state.edit_page("コマの移動") as page:
             page.move_panel(object_id, dx, dy)
 
-    def _apply_rotate(self, image_id: str, angle: float) -> None:
+    def _apply_rotate(self, object_id: str, angle: float) -> None:
         """回した結果を確定する。
 
         傾きは配置の一部なので、履歴には位置や大きさと同じ1手として積む
         （→ 要件定義 6.3）。
         """
-        image = self.state.selected_image
-        if image is None or image.id != image_id or image.rotation == angle:
+        obj = self.state.selected_rotatable
+        if obj is None or obj.id != object_id or obj.rotation == angle:
             return
-        with self.state.edit_page("画像の回転") as page:
-            target = page.find(image_id)
-            if isinstance(target, ImageObject):
+        with self.state.edit_page(f"{object_label(obj)}の回転") as page:
+            target = page.find(object_id)
+            if isinstance(target, (ImageObject, StickerObject)):
                 target.rotation = angle
         self.state.message.emit(f"{angle:.0f}° 傾けました")
 

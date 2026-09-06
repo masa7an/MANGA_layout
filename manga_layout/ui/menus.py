@@ -928,12 +928,17 @@ class ImageMenu:
         )
         menu.addAction(self.fit_action)
         # 回すのはつまみ（→ 6.3）。ここに出すのは戻す側だけで、キーは足さない。
-        # 傾けるのは絵を見ながら合わせる操作なので、数値やキーでは代えられない
+        # 傾けるのは絵を見ながら合わせる操作なので、数値やキーでは代えられない。
+        #
+        # **マークも対象**（→ 6.14 の書き換え）。マークのメニューへ写さず
+        # ここ1つに置いているのは、メニューバーに同じ項目を2つ並べない
+        # ため（2026-09-06 に重複16件を無くしたばかり → 6.33）。マークを
+        # 選んだときの動線は右クリック（→ `ContextMenu.build`）
         self.reset_rotation_action = window._act(
             "回転をリセット",
             window.reset_image_rotation,
             None,
-            "選択中の画像の傾きを 0 に戻す",
+            "選択中の画像・マークの傾きを 0 に戻す",
         )
         menu.addAction(self.reset_rotation_action)
         menu.addSeparator()
@@ -946,8 +951,11 @@ class ImageMenu:
     def refresh(self) -> None:
         image = self._state.selected_image
         self.fit_action.setEnabled(image is not None)
+        # **こちらは画像に限らない。** 「コマにフィット」は画像だけの操作だが、
+        # 傾きは画像とマークの両方が持つ（→ `selected_rotatable`）
+        rotatable = self._state.selected_rotatable
         self.reset_rotation_action.setEnabled(
-            image is not None and image.rotation != 0.0
+            rotatable is not None and rotatable.rotation != 0.0
         )
         self.wand.refresh()
         self.tone.refresh()
