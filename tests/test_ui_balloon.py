@@ -814,6 +814,58 @@ class TestTailRoot:
         assert isinstance(window_with_balloon.view._drag, ResizeDrag)
 
 
+class TestTailCursorAfterSelect:
+    """選んだ直後に、カーソルが今の状態へ追いつく（→ `_refresh_cursor`）。
+
+    選んでいない吹き出しのしっぽの先端には「本体が動く」形（四方向の矢印）が
+    出て、押すと実際に本体を掴む。**その1手で吹き出しは選ばれるので、掴む側は
+    もう切り替わっている**のに、カーソルの引き直しは `mouseMoveEvent` からしか
+    呼ばれなかった。形が古いままなので、**その場で掴めることが見えない**
+    （2026-09-06、本人が実機で見つけた。欠陥ではなく操作感の話）。
+    """
+
+    @staticmethod
+    def 先端のつまみの中(state):
+        """先端のつまみの内側で、**頂点そのものは避けた**点。
+
+        頂点ちょうどを押すと、画面の整数 px への丸め（→ `tests/mouse.py`）で
+        点が三角形の外へ出ることがあり、吹き出しではなく下のコマが選ばれる。
+        つまみの半幅は 16px ÷ 表示倍率 ÷ 2 なので、2px 内側なら余裕がある。
+        """
+        tx, ty = state.selected_balloon.tail.tip
+        return tx, ty - 2.0
+
+    def test_選ぶクリックの直後にしっぽの形へ変わる(self, window_with_balloon):
+        from PySide6.QtCore import Qt
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        x, y = self.先端のつまみの中(state)
+        state.select(None)
+
+        view._update_cursor(x, y)
+        assert view.viewport().cursor().shape() == Qt.CursorShape.SizeAllCursor
+
+        click(view, x, y)  # **マウスは動かさない**
+
+        assert state.selected_id == state.page.floating[-1].id
+        assert view.viewport().cursor().shape() == Qt.CursorShape.PointingHandCursor
+
+    def test_その場で押せばしっぽが掴める(self, window_with_balloon):
+        """掴む側は元から切り替わっている。**直したのは見た目のほう。**"""
+        from manga_layout.ui.canvas import TailDrag
+
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        x, y = self.先端のつまみの中(state)
+        state.select(None)
+
+        click(view, x, y)
+        press(view, x, y)
+
+        assert isinstance(view._drag, TailDrag)
+
+
 class TestTailTurn:
     """メニューからしっぽの向きを変える。付け根だけでなく**先端も回る**。"""
 

@@ -2979,6 +2979,7 @@ class PageView(QGraphicsView):
 
         if self._drag is None:
             super().mouseReleaseEvent(event)
+            self._refresh_cursor(event)
             return
 
         drag = self._drag
@@ -2986,7 +2987,23 @@ class PageView(QGraphicsView):
         drag.commit(self)
 
         self.viewport().update()
+        self._refresh_cursor(event)
         event.accept()
+
+    def _refresh_cursor(self, event) -> None:
+        """離した時点で、今の状態に合わせてカーソルを引き直す。
+
+        **引き直しは `mouseMoveEvent` からしか呼ばれない。** そのため押下で
+        選択が変わっても、マウスを動かすまで形が古いままだった。
+
+        効くのはしっぽの先端（→ `_tail_tip_at`）。選んでいない吹き出しの
+        先端は「本体が動く」形（四方向の矢印）で、押すと本体を掴む。その1手で
+        吹き出しは選ばれるので**掴む側は既に切り替わっている**のに、形が
+        変わらないため、**その場で掴めることが見えなかった**（動かせるように
+        なるにはマウスをずらすしかない、と読めてしまう）。
+        """
+        if self._drag is None:
+            self._update_cursor(*self._scene_px(event))
 
     def _apply_focus(self, panel_id: str, focus: FocusLines, mode: str) -> None:
         """離した時点で1手として積む。**変わっていなければ積まない。**"""
