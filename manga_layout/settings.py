@@ -266,7 +266,7 @@ def load_raw_settings(path: pathlib.Path | None = None) -> dict | None:
 
     `None` は「ファイルが無い」と「壊れている」の両方を指す。区別が要る側は
     ファイルの有無で分ける（設定を調整する道具は、壊れている場合にだけ
-    「保存すると置き換わる」と知らせる → 要件定義 6.28）。
+    「保存すると置き換わる」と知らせる → 要件定義 6.31）。
     """
     path = path or settings_path()
     try:
@@ -287,7 +287,7 @@ def update_settings_file(
     「触っていない所が無くなった」に気づけない。
 
     アプリ本体は今までどおり `save_settings`（雛形を置くときだけ使う）。
-    こちらは設定を調整する道具から使う（→ 要件定義 6.28）。
+    こちらは設定を調整する道具から使う（→ 要件定義 6.31）。
     """
     data = load_raw_settings(path) or {}
     data.update(settings.to_dict())
