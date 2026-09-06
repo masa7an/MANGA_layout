@@ -25,12 +25,14 @@ from ..model import (
     PT_TO_PX,
     TAIL_SHAPE_BUBBLES,
     TAIL_SHAPE_TRIANGLE,
+    TEXT_SIZE_MAX_PX,
+    TEXT_SIZE_MIN_PX,
     ImageObject,
     Panel,
 )
 from ..settings import ensure_settings_file, load_settings, settings_path
 from ..storage import prune_unused_assets
-from .canvas import IMAGE_FILE_FILTER, PageView
+from .canvas import IMAGE_FILE_FILTER, PageView, font_size_label
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
 from .font_dialog import FontChooser
@@ -116,16 +118,18 @@ def align_label(align: str, direction: str) -> str:
     return labels.get(align, align)
 
 
-# 文字の大きさを1段階変える幅と、行き過ぎを止める範囲。
+# 文字の大きさを1段階変える幅。
 # 数値を打ち込ませるより、押して確かめるほうが速い。
 #
 # **1段階はポイントで決める。** 状態表示もフォント設定の窓もポイントで
 # 喋るので、px で決めると 1 段階が半端な数になる（以前の 2px は
 # 約 0.96pt で、押しても表示が 1pt 動いたり動かなかったりした）。
+#
+# **行き過ぎを止める範囲（`TEXT_SIZE_MIN_PX` / `TEXT_SIZE_MAX_PX`）は
+# `model.py` にある。** 四隅のドラッグ（`canvas.TextScaleDrag`）も同じ
+# 範囲を見るが、あちらはここを読めない（循環参照になる）
 TEXT_SIZE_STEP_PT = 2.0
 TEXT_SIZE_STEP_PX = TEXT_SIZE_STEP_PT * PT_TO_PX
-TEXT_SIZE_MIN_PX = 9.0
-TEXT_SIZE_MAX_PX = 180.0
 
 # 起動時の希望サイズ。画面に入らなければ後述の作業領域に合わせて縮める
 WINDOW_SIZE = (1100, 860)
@@ -1308,13 +1312,13 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _size_label(size_px: float) -> str:
-        """px とポイントを併記する。
+        """px とポイントを併記する（→ `canvas.font_size_label`）。
 
-        px だけだと**画面の点の数と取り違える**。実際にはページの座標
-        （150dpi 換算）なので、20px は紙の上では約 9.6pt にしかならない。
-        フォント設定の窓もポイントで喋るので、そちらとも突き合わせられる。
+        **書き方はあちらに置いてある。** 四隅のドラッグでも同じ値を出すが、
+        あちらからここは読めない（循環参照になる）。同じ値が2通りの書き方で
+        出ると、同じものを触っている実感が切れる
         """
-        return f"{size_px:.0f}px（約 {size_px / PT_TO_PX:.0f}pt）"
+        return font_size_label(size_px)
 
     def delete_text(self) -> None:
         text = self.state.selected_text

@@ -122,6 +122,19 @@ def vertical_font(font: Font) -> QFont:
 
 
 @dataclass(frozen=True)
+class TextScale:
+    """四隅のドラッグで拡大縮小している最中のセリフ（→ `canvas.TextScaleDrag`）。
+
+    **枠と文字の大きさを一緒に持つ。** 片方だけでは字組みが相似にならない
+    ——列の位置と行の高さは枠から、字の大きさはフォントから決まるので、
+    どちらか一方だけを変えると改行位置や列数が動いてしまう。
+    """
+
+    rect: Rect
+    size_px: float
+
+
+@dataclass(frozen=True)
 class DragPreview:
     """ドラッグ中の下見。
 
@@ -143,6 +156,11 @@ class DragPreview:
     focus: tuple[str, FocusLines] | None = None
     # 向きを変えている最中の (コマの id, 流線)。集中線と同じ形で持つ
     flow: tuple[str, FlowLines] | None = None
+    # 四隅で拡大縮小している最中の (セリフの id, 枠と文字の大きさ)。
+    # **離すまでモデルに触らない**という他の下見と同じ流儀だが、これだけは
+    # 出さないと操作の意味が画面に出ない——枠だけが動いて字がその場に
+    # 残ると、まさに直そうとしている「字が大きくならない」見え方になる
+    text_scale: tuple[str, TextScale] | None = None
     # その場編集中のセリフ。二重に見えないよう、下地を描かない
     editing_text_id: str | None = None
     # 入力欄にいま入っている文字列。**縦書きの下見のためだけに渡す**。
@@ -572,6 +590,17 @@ class PageRenderer:
         if preview.editing_text_id == obj.id:
             self._draw_text_editing(painter, obj, preview)
             return
+
+        # 拡大縮小の最中は、下見の枠と大きさで描く。**空のセリフの点線枠も
+        # ここを通る**ので、字を1つも入れていないセリフでも引いた大きさが
+        # その場で分かる
+        if preview.text_scale is not None and preview.text_scale[0] == obj.id:
+            scale = preview.text_scale[1]
+            obj = dataclasses.replace(
+                obj,
+                rect=scale.rect,
+                font=dataclasses.replace(obj.font, size_px=scale.size_px),
+            )
 
         if not obj.content:
             # 空のセリフは枠だけ出す。何も描かないと、作った直後に

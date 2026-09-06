@@ -238,6 +238,21 @@ class TextMixin:
             )
         self.set_next_text_font(family=family, size_px=size_px, bold=bold)
 
+    def scale_text(self, text_id: str, rect: Rect, size_px: float) -> None:
+        """セリフを枠ごと拡大縮小する（四隅のドラッグ → 要件定義 6.5）。
+
+        **枠と文字の大きさを1手で変える。** 別々に積むと Undo が2回要り、
+        1回目では枠だけが戻った中途半端な形が出る。
+
+        **大きさは次に作るセリフへも写す**（`set_text_font` と同じ）。
+        引いて決めた大きさが引き継がれないと、作品の中でセリフの大きさを
+        揃えるのに、置くたびにキーで合わせ直すことになる。
+        """
+        with self._edit_text(text_id, "セリフの拡大縮小") as text:
+            text.rect = rect
+            text.font = dataclasses.replace(text.font, size_px=size_px)
+        self.set_next_text_font(size_px=size_px)
+
     def set_next_text_font(
         self,
         *,

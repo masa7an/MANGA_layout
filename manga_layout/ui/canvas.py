@@ -63,6 +63,7 @@ from ..geometry import (
 )
 from ..images import to_png_bytes
 from ..layout import (
+    anchor_of,
     aspect_of,
     balloon_pick_at,
     default_balloon_rect,
@@ -93,7 +94,10 @@ from ..layout import (
     text_at,
 )
 from ..model import (
+    PT_TO_PX,
     SLANT_RIGHT,
+    TEXT_SIZE_MAX_PX,
+    TEXT_SIZE_MIN_PX,
     TONE_KIND_WHITE,
     BalloonObject,
     FlowLines,
@@ -115,6 +119,7 @@ from .render import (
     TEXT_ALIGN_FLAGS,
     DragPreview,
     PageRenderer,
+    TextScale,
     cosmetic_pen,
     polygon_of,
     qrect,
@@ -272,6 +277,37 @@ CORNER_HANDLES = ("nw", "ne", "se", "sw")
 ASPECT_HINT = "Shift キーを押しながらドラッグで元の縦横比に戻す"
 ASPECT_HINT_HELD = "元の縦横比に戻しています（Shift）"
 
+# セリフの四隅を掴んだときの案内（→ `TextScaleDrag`）。
+#
+# **Shift の意味が画像とは逆になる。** 画像では Shift が等比の側だが、
+# セリフの四隅は**押していないときが等比**（文字の大きさは1つの数なので、
+# 縦横を別々には変えられない）。Shift はそこから外れて、**昔からある
+# 「枠だけを変える」**へ戻る道になる。逆であることを黙っていると、
+# 画像の癖のまま押して結果が食い違うので、案内で先に言う
+TEXT_SCALE_HINT = "ドラッグで文字の大きさを変える。Shift キーで枠だけ"
+
+# 拡大縮小の途中で、枠の幅と高さに残しておく最小の値（ページの px）。
+#
+# **見た目の下限ではない**（それは `TEXT_SIZE_MIN_PX`）。掴んだ角を対角へ
+# ぴったり重ねると幅も高さも 0 になり、縦横比を出すところで 0 で割る。
+# 目に見えない大きさなので、ここで止めても操作の手応えは変わらない
+TEXT_SCALE_MIN_PX = 0.01
+
+
+def font_size_label(size_px: float) -> str:
+    """文字の大きさを、px とポイントの併記で言い直す。
+
+    px だけだと**画面の点の数と取り違える**。実際にはページの座標
+    （150dpi 換算）なので、20px は紙の上では約 9.6pt にしかならない。
+    フォント設定の窓もポイントで喋るので、そちらとも突き合わせられる。
+
+    **ここに置いてあるのは、読む側が2つあるため。** キーで1段階ずつ変える
+    側（`MainWindow._size_label`）と、四隅のドラッグ（`TextScaleDrag`）で、
+    後者は `window.py` を読めない（循環参照になる）。同じ値が違う書き方で
+    出ると、同じものを触っている実感が切れる
+    """
+    return f"{size_px:.0f}px（約 {size_px / PT_TO_PX:.0f}pt）"
+
 # 回転つまみ（丸）を上辺からどれだけ離すか（画面ピクセル）。
 # 上辺の「n」のつまみ（一辺 `HANDLE_PX`）と重ならない距離にする。
 # 近づけすぎると、大きさを変えるつもりで回してしまう。
@@ -364,7 +400,7 @@ class Drag:
     必要があり、1箇所忘れると「掴めるが動かない」ようなテストを書かないと
     気づけない壊れ方をした。
 
-    下の6つは `PageScene` が描画のために直読みする下見欄。**使う種類だけ
+    下に並ぶのは `PageScene` が描画のために直読みする下見欄。**使う種類だけ
     自分の値で上書きする。** ここが `PageScene` ではなく `Drag` にあるのは、
     「今どのドラッグが進行中か」に応じて自動で1つに絞られるようにするため。
     以前は6つとも `PageScene` 側のフィールドで、「同時に意味を持つのは
@@ -380,6 +416,13 @@ class Drag:
     rotate_preview: tuple[str, float] | None = None
     focus_preview: tuple[str, FocusLines] | None = None
     flow_preview: tuple[str, FlowLines] | None = None
+    text_scale_preview: tuple[str, TextScale] | None = None
+
+    # 下見の矩形のそばに出す文字。**None なら寸法**（`_draw_size_hint`）。
+    # 大きさを変える操作はどれも幅と高さで言えば済むが、セリフの四隅だけは
+    # 変えているのが**文字の大きさ**なので、枠の寸法を出しても手掛かりに
+    # ならない（→ `TextScaleDrag`）
+    size_hint: str | None = None
 
     def update(self, view: PageView, x: float, y: float, event) -> None:
         raise NotImplementedError
@@ -539,6 +582,104 @@ class ResizeDrag(Drag):
         if self.preview_rect == self.origin_rect:
             return
         view._apply_resize(self.preview_rect)
+
+
+def scaled_about(rect: Rect, anchor: tuple[float, float], factor: float) -> Rect:
+    """`anchor` を動かさずに拡大縮小した矩形。
+
+    `Rect.scaled` は原点（用紙の左上）を軸に拡大するので、そのままでは
+    掴んでいない角まで動く。
+    """
+    ax, ay = anchor
+    return Rect(
+        ax + (rect.x - ax) * factor,
+        ay + (rect.y - ay) * factor,
+        rect.w * factor,
+        rect.h * factor,
+    )
+
+
+class TextScaleDrag(Drag):
+    """セリフの四隅のつまみ。**枠ではなく文字の大きさを変える**（要件定義 6.5）。
+
+    枠だけを変えていた頃は、引いても字が 1px も大きくならなかった。
+    画像として見れば正しい（枠と中身は別物）が、セリフの枠は**字の外接矩形**
+    として描いてある（→ `layout.text_frame`）ので、**掴んでいるのは字そのもの
+    に見える。** 見えているとおりに動くほうを採った（本人談 2026-09-06）。
+
+    **枠と文字を同じ倍率で拡大する。** このアプリのセリフは折り返さない
+    （手動改行のみ → 要件定義 9章）ので、両方に同じ倍率を掛けると**字組みが
+    完全な相似**になる——列数も改行位置も1文字も動かない。片方だけ変えると、
+    縦書きの列の間隔や横書きの行の中央がずれる。
+
+    **常に等比。** フォントの大きさは1つの数なので、縦と横を別々には
+    変えられない。今までどおり枠だけを変えたいときは Shift を押しながら
+    掴む（→ `_begin_resize`）。
+
+    **吸着しない。** 他のコマの縦横の線へ吸い付く仕組み（→ `snap_point`）は
+    辺を合わせるためのもので、等比で拡大する操作では片方の辺しか合わせられ
+    ない。合わせた瞬間にもう片方が外れるので、揃えた気になるだけになる。
+    """
+
+    def __init__(
+        self,
+        text_id: str,
+        handle: str,
+        origin_frame: Rect,
+        origin_rect: Rect,
+        origin_size: float,
+    ):
+        self.text_id = text_id
+        self.handle = handle
+        # 掴んだときの字の外接矩形。倍率はここと引いた先の比で出す
+        self.origin_frame = origin_frame
+        # 掴んだときのセリフの枠と文字の大きさ。**倍率は必ずこの2つへ
+        # 掛ける。** 前の下見に掛け続けると、行き来しているうちに丸めが
+        # 積み上がって元の大きさへ戻れなくなる
+        self.origin_rect = origin_rect
+        self.origin_size = origin_size
+        # 掴んだ角の対角。拡大縮小してもここだけは動かない
+        # （つまみと動かない側の対応は `layout.anchor_of` が1か所で持つ）
+        self.anchor = anchor_of(origin_frame, handle)
+        self.factor = 1.0
+        self.preview_rect = origin_frame
+        self.text_scale_preview = (text_id, TextScale(origin_rect, origin_size))
+        self.size_hint = font_size_label(origin_size)
+
+    @classmethod
+    def begin(cls, view: PageView, handle: str, origin_frame: Rect) -> TextScaleDrag:
+        text = view.state.selected_text
+        return cls(text.id, handle, origin_frame, text.rect, text.font.size_px)
+
+    def update(self, view: PageView, x: float, y: float, event) -> None:
+        aspect = self.origin_frame.w / self.origin_frame.h
+        # **コマの最小（`min_panel_size`）は使わない。** 止めるのは文字の
+        # 大きさのほうで、下限は `TEXT_SIZE_MIN_PX`。矩形の側でも止めると
+        # **枠の広いセリフほど小さくできない**という説明の付かない差ができる
+        # ——既定の枠（外接矩形の幅 55.86px）では、コマの最小 30px に
+        # 当たって 22.5px より小さくできなかった（2026-09-06 実測）
+        resized = resize_rect_keep_aspect(
+            self.origin_frame, self.handle, x, y, TEXT_SCALE_MIN_PX, aspect
+        )
+        # **止めるのは倍率のほう。** 大きさだけを上下限で丸めると、枠が
+        # そのまま伸び続けて字だけが止まり、離した瞬間に位置が飛ぶ
+        size = self.origin_size * (resized.w / self.origin_frame.w)
+        size = min(max(size, TEXT_SIZE_MIN_PX), TEXT_SIZE_MAX_PX)
+        self.factor = size / self.origin_size
+        self.preview_rect = scaled_about(self.origin_frame, self.anchor, self.factor)
+        self.text_scale_preview = (
+            self.text_id,
+            TextScale(scaled_about(self.origin_rect, self.anchor, self.factor), size),
+        )
+        self.size_hint = font_size_label(size)
+
+    def commit(self, view: PageView) -> None:
+        # 掴んだだけで動かさなかったら何もしない（`ResizeDrag.commit` と同じ
+        # 理由。見た目が 1px も変わらないまま履歴が1手増えるのを避ける）
+        if self.factor == 1.0:
+            return
+        _, scale = self.text_scale_preview
+        view._apply_text_scale(self.text_id, scale.rect, scale.size_px)
 
 
 class RotateDrag(Drag):
@@ -938,11 +1079,45 @@ class PressRule:
     message: str = ""
 
 
+def _scaling_text(view: PageView, point: PressPoint) -> bool:
+    """このつまみを引くと、文字の大きさが変わるか（→ `TextScaleDrag`）。
+
+    **四隅だけ。** 辺のつまみは今までどおり枠を変える。縦書きで上寄せ・
+    下寄せにしたときは枠の縁が字の置き場所そのものになるので、枠を直す
+    手段を4つとも塞ぐわけにはいかない（要件定義 6.5）。
+
+    **Shift を押していたら枠だけ**（画像とは逆 → `TEXT_SCALE_HINT`）。
+    見るのは押した瞬間の Shift で、途中で押し直しても切り替わらない。
+    引いている最中に枠の拡大と文字の拡大が入れ替わると、**同じドラッグの
+    中で起点が変わる**ことになり、どちらの結果も狙って出せない。
+
+    大きさが 0 の枠は弾く。倍率は掴んだときの枠との比で出すので、
+    0 で割ることになる。**空のセリフは枠そのものが返る**ので普通は
+    起きないが、幅か高さが 0 のセリフは作れてしまう（→ `add_text`）。
+    """
+    bounds = point.selected_bounds
+    return (
+        view.state.selected_text is not None
+        and point.handle in CORNER_HANDLES
+        and not view._shift_held(point.event)
+        and bounds is not None
+        and bounds.w > 0.0
+        and bounds.h > 0.0
+    )
+
+
 def _begin_resize(view: PageView, point: PressPoint) -> Drag:
-    """8方向のつまみ。**掴んだ時点で縦横比の案内を出す。**
+    """8方向のつまみ。**掴んだ時点で案内を出す。**
 
     動かし始めてからでは遅い。表の他の行と違って2手あるので、関数にしてある。
+
+    セリフの四隅だけは、大きさを変えるのが枠ではなく文字になる
+    （→ `TextScaleDrag`）。
     """
+    if _scaling_text(view, point):
+        drag = TextScaleDrag.begin(view, point.handle, point.selected_bounds)
+        view.state.message.emit(TEXT_SCALE_HINT)
+        return drag
     drag = ResizeDrag.begin(view, point.handle, point.selected_bounds)
     view._update_aspect_hint(point.handle, view._shift_held(point.event))
     return drag
@@ -1092,7 +1267,7 @@ class PageScene(QGraphicsScene):
         super().__init__()
         self.state = state
         self.renderer = PageRenderer(state)
-        # 操作中のドラッグ。下の6つのプロパティはここから読む（→ `Drag`）。
+        # 操作中のドラッグ。下に並ぶプロパティはここから読む（→ `Drag`）。
         # `PageView` が press で作り、move のたびに書き換え、release で
         # None に戻す
         self.active_drag: Drag | None = None
@@ -1143,6 +1318,14 @@ class PageScene(QGraphicsScene):
     def flow_preview(self) -> tuple[str, FlowLines] | None:
         return self.active_drag.flow_preview if self.active_drag else None
 
+    @property
+    def text_scale_preview(self) -> tuple[str, TextScale] | None:
+        return self.active_drag.text_scale_preview if self.active_drag else None
+
+    @property
+    def size_hint(self) -> str | None:
+        return self.active_drag.size_hint if self.active_drag else None
+
     def update_scene_rect(self) -> None:
         size = self.state.page.size
         pad = max(size.w, size.h) * 0.25
@@ -1159,6 +1342,7 @@ class PageScene(QGraphicsScene):
             rotate=self.rotate_preview,
             focus=self.focus_preview,
             flow=self.flow_preview,
+            text_scale=self.text_scale_preview,
             editing_text_id=self.editing_text_id,
             editing_text_content=self.editing_text_content,
         )
@@ -1630,13 +1814,18 @@ class PageScene(QGraphicsScene):
 
         文字は表示倍率の影響を受けないよう、変換を外してから描く。
         位置だけは外す前の変換で求めておく。
+
+        **ドラッグが自分の言葉を持っていればそちらを出す**（→ `Drag.size_hint`）。
+        セリフの四隅で変わっているのは文字の大きさなので、枠の寸法を出しても
+        引いた手応えにならない。
         """
         corner = painter.transform().map(QPointF(rect.x, rect.y))
         painter.save()
         painter.resetTransform()
         painter.setPen(QPen(QColor("#FFFFFF")))
         painter.drawText(
-            QPointF(corner.x() + 4, corner.y() - 6), f"{rect.w:.0f} × {rect.h:.0f} px"
+            QPointF(corner.x() + 4, corner.y() - 6),
+            self.size_hint or f"{rect.w:.0f} × {rect.h:.0f} px",
         )
         painter.restore()
 
@@ -3529,6 +3718,15 @@ class PageView(QGraphicsView):
         with self.state.edit_page("コマの大きさ変更") as page:
             set_panel_rect(page.panel(panel_id), rect)
         self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
+
+    def _apply_text_scale(self, text_id: str, rect: Rect, size_px: float) -> None:
+        """セリフを枠ごと拡大縮小して確定する（→ `TextScaleDrag`）。
+
+        **`_apply_resize` を通さない。** あちらは矩形を差し替えるだけで、
+        文字の大きさを知らない。ここだけ2つを一緒に渡す。
+        """
+        self.state.scale_text(text_id, rect, size_px)
+        self.state.message.emit(f"文字の大きさ: {font_size_label(size_px)}")
 
     def _reject_panel_resize(self) -> None:
         """コマの大きさ変更を、中の画像が孤児になるので断る。

@@ -82,6 +82,10 @@ COLORS: dict[str, str] = {
     "なし": "#EEEEEE",
     "MoveDrag": "#BFD3F2",
     "ResizeDrag": "#3B6CB7",
+    # セリフの四隅。**大きさ変更（濃い青）と近い色にする。** 隣り合った
+    # つまみで別のドラッグになるので、地図の上では「同じ仲間の別の面」
+    # として見えるほうが読み取りやすい
+    "TextScaleDrag": "#6BA3E8",
     "RotateDrag": "#7B68EE",
     "TailDrag": "#E8743B",
     "TailRootDrag": "#F2C14E",

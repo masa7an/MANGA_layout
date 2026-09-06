@@ -12,13 +12,20 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
-from mouse import click, double_click, drag, press, release
+from mouse import click, double_click, drag, move_to, press, release
 from PySide6.QtGui import QFont
 
 from manga_layout import Rect
 from manga_layout.layout import text_frame
-from manga_layout.model import PT_TO_PX, TextObject
+from manga_layout.model import (
+    PT_TO_PX,
+    TEXT_SIZE_MAX_PX,
+    TEXT_SIZE_MIN_PX,
+    TextObject,
+)
 from manga_layout.ui import EditorState, MainWindow
+from manga_layout.ui.canvas import TextScaleDrag
+from manga_layout.ui.render import NO_PREVIEW
 from manga_layout.ui.state import TOOL_SELECT, TOOL_TEXT
 
 # 座標は px（要件定義 3章）。既定のセリフ 201×106 が中に収まる大きさにしてある
@@ -50,6 +57,22 @@ def window_with_text(window_with_balloon):
     """吹き出しの上にセリフを1つ置いた状態。セリフが選ばれている。"""
     window_with_balloon.state.add_text(Rect(300.0, 300.0, 240.0, 120.0), "セリフ")
     return window_with_balloon
+
+
+def paper(window, preview):
+    """用紙の側だけを1枚に描く（選択枠・つまみ・破線は入らない）。
+
+    **ページの px がそのまま画素になる**ので、描かれた場所を座標で言える。
+    """
+    from PySide6.QtGui import QImage, QPainter
+
+    page = window.state.page
+    target = QImage(int(page.size.w), int(page.size.h), QImage.Format.Format_ARGB32)
+    target.fill(0)
+    painter = QPainter(target)
+    window.view._scene.renderer.draw(painter, page, preview)
+    painter.end()
+    return target
 
 
 def only_text(page) -> TextObject:
@@ -354,6 +377,9 @@ class TestSelectionFrame:
 
         起点が字の側にあるので、**掴んでいない側は動かない**。以前は枠が
         起点だったため、右下を引くと左上が 87px 離れた枠の角のままだった。
+
+        **Shift で掴む**（→ `TestCornerScalesFont`）。四隅は文字の大きさを
+        変える側に移ったので、枠だけを変える道はこちらに残っている。
         """
         state = window_with_wide_text.state
         before = state.selected_bounds
@@ -364,6 +390,7 @@ class TestSelectionFrame:
             before.bottom,
             before.right + 30.0,
             before.bottom + 20.0,
+            shift=True,
         )
 
         after = only_text(state.page).rect
@@ -393,6 +420,230 @@ class TestSelectionFrame:
         state.add_text(rect, "")
 
         assert state.selected_bounds == rect
+
+
+class TestCornerScalesFont:
+    """四隅のつまみは、枠ではなく**文字の大きさ**を変える（要件定義 6.5）。
+
+    枠だけが変わっていた頃は、引いても字が 1px も大きくならなかった
+    （本人談 2026-09-06）。セリフの枠は字の外接矩形として描いてあるので
+    （→ `TestSelectionFrame`）、掴んでいるのは字そのものに見える。
+
+    **確かめられるのは組み方までで、描かれた字そのものではない**
+    （このファイルの冒頭のとおり、offscreen にはフォントが無い）。
+    字の大きさは `font.size_px`、字組みは外接矩形の形で見る。
+    """
+
+    @pytest.fixture
+    def window_with_wide_text(self, window_with_balloon):
+        """既定の大きさ（230×422）の枠に3文字だけ。`TestSelectionFrame` と同じ形。"""
+        window_with_balloon.state.add_text(Rect(300.0, 300.0, 230.0, 422.0), "セリフ")
+        return window_with_balloon
+
+    # 引いた倍率と、出てきた大きさを見比べるときの許容差。
+    #
+    # **画面の座標が整数だから要る。** マウスの位置は一度スクリーンの
+    # ピクセルへ丸められてから（`mouse.event_at` の `mapFromScene`）ページの
+    # px へ戻るので、狙った点にぴったりは届かない。既定の枠を2倍に引いた
+    # ときの実測で 84px に対して 83.88px（2026-09-06）
+    ROUNDING = 0.02
+
+    @staticmethod
+    def drag_corner(window, times: float, *, shift: bool = False) -> None:
+        """右下のつまみを、枠が `times` 倍になる位置まで引く。
+
+        **縦横を同じ割合で引く。** 等比は当てはめる側（`TextScaleDrag`）が
+        面倒を見るが、比の崩れた引き方をすると、どちらの辺に合わせたかで
+        期待値が変わり、テストが計算の写しになる。
+        """
+        frame = window.state.selected_bounds
+        drag(
+            window.view,
+            frame.right,
+            frame.bottom,
+            frame.x + frame.w * times,
+            frame.y + frame.h * times,
+            shift=shift,
+        )
+
+    def test_引くと文字が大きくなる(self, window_with_wide_text):
+        state = window_with_wide_text.state
+        before = state.selected_text.font.size_px
+
+        self.drag_corner(window_with_wide_text, 2.0)
+
+        assert only_text(state.page).font.size_px == pytest.approx(
+            before * 2.0, rel=self.ROUNDING
+        )
+
+    def test_枠も同じ倍率で伸びる(self, window_with_wide_text):
+        """枠だけ置いていかれると、縦書きの列の間隔や行の中央がずれる。
+
+        **引いた倍率とは比べない。** 見たいのは枠と文字が同じ倍率かどうかで、
+        そこは丸めの影響を受けない——どちらも同じ1つの倍率から出るので、
+        狙いより 0.1% 手前で止まっていても比は揃う
+        """
+        state = window_with_wide_text.state
+        before = state.selected_text
+        before_rect, before_size = before.rect, before.font.size_px
+
+        self.drag_corner(window_with_wide_text, 2.0)
+
+        after = only_text(state.page)
+        grown = after.font.size_px / before_size
+        assert after.rect.w / before_rect.w == pytest.approx(grown)
+        assert after.rect.h / before_rect.h == pytest.approx(grown)
+
+    def test_字組みは相似のまま(self, window_with_wide_text):
+        """列数も改行位置も動かない（折り返しが無い → 要件定義 9章）。
+
+        外接矩形の**縦横比**で見る。列が1本増えれば横に広がり、字が1つ
+        折り返されれば縦が縮むので、比が変われば組み方が変わっている。
+        """
+        state = window_with_wide_text.state
+        before = state.selected_bounds
+
+        self.drag_corner(window_with_wide_text, 2.0)
+
+        after = state.selected_bounds
+        assert after.w / after.h == pytest.approx(before.w / before.h)
+
+    def test_掴んでいない角は動かない(self, window_with_wide_text):
+        """右下を引いたら、左上はその場に残る（→ `layout.anchor_of`）。"""
+        state = window_with_wide_text.state
+        before = state.selected_bounds
+
+        self.drag_corner(window_with_wide_text, 2.0)
+
+        after = state.selected_bounds
+        assert (after.x, after.y) == pytest.approx((before.x, before.y))
+
+    def test_Shiftを押すと文字は変わらない(self, window_with_wide_text):
+        """今までどおり枠だけを変える道（→ `_scaling_text`）。"""
+        state = window_with_wide_text.state
+        before = state.selected_text.font.size_px
+
+        self.drag_corner(window_with_wide_text, 2.0, shift=True)
+
+        assert only_text(state.page).font.size_px == before
+
+    def test_辺のつまみは今までどおり(self, window_with_wide_text):
+        """変わるのは四隅だけ。縦書きの上寄せ・下寄せでは枠の縁が字の
+        置き場所そのものになるので、枠を直す手段を4つとも塞がない。
+        """
+        state = window_with_wide_text.state
+        before = state.selected_text.font.size_px
+        frame = state.selected_bounds
+
+        drag(
+            window_with_wide_text.view,
+            frame.right,
+            frame.center[1],
+            frame.right + 40.0,
+            frame.center[1],
+        )
+
+        assert only_text(state.page).font.size_px == before
+
+    def test_1手で元に戻せる(self, window_with_wide_text):
+        """枠と文字を別々に積むと、1回目で枠だけ戻った形が出る。"""
+        state = window_with_wide_text.state
+        # **値を控える。** オブジェクトを控えると、編集がその実体を
+        # 書き換えるので、戻した先と同じものを見ることになる
+        before = state.selected_text
+        before_rect, before_size = before.rect, before.font.size_px
+
+        self.drag_corner(window_with_wide_text, 2.0)
+        state.undo()
+
+        after = only_text(state.page)
+        assert after.font.size_px == before_size
+        assert after.rect == before_rect
+
+    def test_次に作るセリフへ引き継ぐ(self, window_with_wide_text):
+        """引いて決めた大きさが引き継がれないと、揃えるのに毎回押し直す
+        ことになる（→ `EditorState.set_text_font` と同じ理由）。
+        """
+        state = window_with_wide_text.state
+
+        self.drag_corner(window_with_wide_text, 2.0)
+
+        assert state.next_text_font.size_px == only_text(state.page).font.size_px
+
+    def test_引いている最中から字が大きく見える(self, window_with_wide_text):
+        """離すまで待たせない（→ `render.DragPreview.text_scale`）。
+
+        **モデルにはまだ触っていない**ことも一緒に押さえる。ここが崩れると、
+        ドラッグの途中経過が Undo の1手ずつになる。
+        """
+        state = window_with_wide_text.state
+        view = window_with_wide_text.view
+        frame = state.selected_bounds
+        before = state.selected_text.font.size_px
+
+        press(view, frame.right, frame.bottom)
+        move_to(view, frame.x + frame.w * 2.0, frame.y + frame.h * 2.0)
+
+        preview = view._scene.drag_preview().text_scale
+        assert preview is not None
+        text_id, scale = preview
+        assert text_id == state.selected_text.id
+        assert scale.size_px == pytest.approx(before * 2.0, rel=self.ROUNDING)
+        assert only_text(state.page).font.size_px == before
+
+        release(view, frame.x + frame.w * 2.0, frame.y + frame.h * 2.0)
+
+    def test_下見は用紙の側にも出る(self, window_with_balloon):
+        """下見の破線だけでなく、**用紙に描く字そのもの**が入れ替わる
+        （→ `render.PageRenderer._draw_text`）。
+
+        **空のセリフで確かめる。** offscreen にはフォントが1つも無いので
+        （このファイルの冒頭）字は1画素も描かれないが、空のセリフは点線の枠
+        として描かれるため、そこが動いたかどうかは画素で見える。
+
+        比べる相手は**下見を外して描いた同じページ**。用紙の側だけを描く
+        （選択枠や破線は `drawForeground` の側なので混ざらない）。
+        """
+        state = window_with_balloon.state
+        view = window_with_balloon.view
+        state.add_text(Rect(300.0, 300.0, 230.0, 422.0), "")
+        frame = state.selected_bounds
+
+        press(view, frame.right, frame.bottom)
+        move_to(view, frame.x + frame.w * 2.0, frame.y + frame.h * 2.0)
+
+        assert paper(window_with_balloon, NO_PREVIEW) != paper(
+            window_with_balloon, view._scene.drag_preview()
+        )
+
+        release(view, frame.x + frame.w * 2.0, frame.y + frame.h * 2.0)
+
+    def test_大きさは上下限で止まる(self, window_with_wide_text):
+        """行き過ぎを止めるのは**倍率のほう**（→ `TextScaleDrag.update`）。
+
+        枠だけ伸び続けて字が止まると、離した瞬間に位置が飛ぶ。止めた
+        大きさと枠が釣り合っていることまで見る。
+
+        **つまみを押さずに、ドラッグの中身を直接動かす。** 下限に当てるには
+        字を極端に小さくする必要があり、その大きさでは隣り合うつまみが
+        重なって、狙った角を押せない（→ `layout.handle_at` の角優先）。
+        """
+        state = window_with_wide_text.state
+        view = window_with_wide_text.view
+        text = state.selected_text
+        frame = state.selected_bounds
+
+        for far, expected in (
+            (20.0, TEXT_SIZE_MAX_PX),
+            (0.05, TEXT_SIZE_MIN_PX),
+        ):
+            handle = TextScaleDrag.begin(view, "se", frame)
+            handle.update(view, frame.x + frame.w * far, frame.y + frame.h * far, None)
+            _, scale = handle.text_scale_preview
+            assert scale.size_px == pytest.approx(expected)
+            assert scale.rect.w == pytest.approx(
+                text.rect.w * expected / text.font.size_px
+            )
 
 
 class TestFormat:

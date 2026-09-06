@@ -50,6 +50,9 @@ from manga_layout.ui.state import (
 PANEL = Rect(120.0, 120.0, 720.0, 540.0)
 BALLOON = Rect(300.0, 250.0, 240.0, 160.0)
 ROUGH = Rect(100.0, 200.0, 400.0, 400.0)
+# セリフの枠。**つまみが出るのは枠ではなく字の外接矩形**（→ `layout.text_frame`）
+# なので、ここの値そのものを押しても掴めない
+TEXT = Rect(300.0, 300.0, 230.0, 422.0)
 
 # 確かめる表示倍率。**等倍から上だけ**を見る。
 # 下は判定どうしが食い合うので、そちらは `TestZoomedOut` で別に扱う
@@ -124,6 +127,12 @@ def 場面_フキダシ(window) -> None:
 def 場面_飛びしっぽ(window) -> None:
     場面_フキダシ(window)
     window.state.selected_balloon.tail.shape = TAIL_SHAPE_BUBBLES
+
+
+def 場面_セリフ(window) -> None:
+    場面_コマ(window)
+    # 置いた時点で選ばれる（→ `EditorState.add_text`）
+    window.state.add_text(TEXT, "セリフ")
 
 
 def 場面_画像(window) -> None:
@@ -217,6 +226,18 @@ CASES: dict[str, tuple] = {
     ),
     "辺のつまみ": (
         場面_コマ,
+        lambda w: handle_positions(選択枠(w))["e"],
+        "ResizeDrag[e]",
+    ),
+    # セリフだけは、四隅と辺で始まるドラッグが違う（→ 要件定義 6.5）。
+    # 四隅は文字の大きさ、辺は今までどおり枠
+    "セリフの角のつまみ": (
+        場面_セリフ,
+        lambda w: handle_positions(選択枠(w))["se"],
+        "TextScaleDrag[se]",
+    ),
+    "セリフの辺のつまみ": (
+        場面_セリフ,
         lambda w: handle_positions(選択枠(w))["e"],
         "ResizeDrag[e]",
     ),

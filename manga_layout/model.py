@@ -147,6 +147,16 @@ DEFAULT_FONT_SIZE_PX = 42.0
 LEGACY_FONT_FAMILY = "Yu Gothic UI"
 LEGACY_FONT_SIZE_PX = 21.0
 
+# 文字の大きさの行き過ぎを止める範囲（px）。
+#
+# **画面（`ui/window.py`）ではなくここに置く。** 大きさを変える経路が
+# 2つある——キーで1段階ずつ（`MainWindow.step_text_size`）と、四隅の
+# ドラッグ（`ui/canvas.py` の `TextScaleDrag`）。後者は画面の下の層に
+# あり、`window.py` を読めない（循環参照になる）。両方が同じ範囲を
+# 見るには、どちらからも読める中核に置くしかない
+TEXT_SIZE_MIN_PX = 9.0
+TEXT_SIZE_MAX_PX = 180.0
+
 # 斜め割りの境界が傾く向き。上へ行くほど右が "/"、上へ行くほど左が "\"
 SLANT_RIGHT = "/"
 SLANT_LEFT = "\\"
