@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QBuffer, QIODevice, QRectF, Qt
+from PySide6.QtCore import QRectF, Qt
 from PySide6.QtGui import QFontMetricsF, QImage, QPainter
 
 from .. import vertical
 from ..geometry import Rect
+from ..images import to_png_bytes
 from ..model import TextObject
 
 # 透明な縁を落とす処理。**PSD 書き出しのために書かれたが、中身は
@@ -31,12 +32,24 @@ from ..model import TextObject
 from ..psd import crop_to_content
 from .render import TEXT_ALIGN_FLAGS, PageRenderer, qrect, text_font
 
-# ページ座標の何倍で焼くか。**書き出しの最大は 117%**（→ 6.7）なので、
-# 焼いたあと画面上で3倍に伸ばしても原寸を割らない。
+# ページ座標の何倍で焼くか。
+#
+# **大きく焼くほどきれいになる、ではない。** 描くときの縮小は
+# `QPainter.drawImage` が行い、これは滑らかにする指定を付けても
+# **2×2 の画素しか見ない**。4:1 や 8:1 に縮めると、8個か 62個の画素を
+# 捨てて2×2 だけで決めることになり、**細い線の縁が階段状になる。**
+# 実測では 4倍が 2倍よりはっきり粗く、8倍はさらに粗かった（2026-09-06）。
+#
+# **2倍にしてある。** 縮小率がちょうど 2:1 になり、2×2 の補間が
+# 「4画素の平均」と一致する——**この倍率でだけ、粗い補間が正しい縮小と
+# 同じ結果になる。** 実測でも、焼かないセリフと見分けが付かない。
+#
+# 1倍でも同じ見た目になるが、**画面を 200% に拡大したときに差が出る**
+# （2倍なら等倍で出せる）。書き出しの最大 117%（→ 6.7）にも余裕がある。
 #
 # 設定では変えられるようにしない。用紙ごとに書くべき数字が変わる類ではなく、
 # 選ばせるだけの値打ちが無い（→ 6.31 と同じ線引き）
-RASTER_SCALE = 4.0
+RASTER_SCALE = 2.0
 
 # 焼いた画像の長辺の上限（px）。極端に大きなセリフで、何千万画素の PNG を
 # 作らないための歯止め。ここに当たると倍率のほうを落とす
@@ -139,7 +152,7 @@ def rasterize(
         image.width() / scale,
         image.height() / scale,
     )
-    return _to_png(image), (image.width(), image.height()), placed
+    return to_png_bytes(image), (image.width(), image.height()), placed
 
 
 def _fit_scale(area: Rect, scale: float) -> float:
@@ -164,15 +177,3 @@ def _union(rects: list[Rect]) -> Rect:
 
 def _from_qrectf(rect: QRectF) -> Rect:
     return Rect(rect.x(), rect.y(), rect.width(), rect.height())
-
-
-def _to_png(image: QImage) -> bytes:
-    """PNG のバイト列。**ファイルには書かない。**
-
-    `assets/` へ入れる経路（`EditorState.import_bytes`）がバイト列を受け取る
-    作りなので、そこへそのまま渡せる形で返す。
-    """
-    buffer = QBuffer()
-    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
-    image.save(buffer, "PNG")
-    return bytes(buffer.data())
