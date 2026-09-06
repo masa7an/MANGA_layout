@@ -88,6 +88,7 @@ from ..images import (
 )
 from ..model import BalloonObject, ImageObject, Page, Panel, StickerObject, TextObject
 from ..psd import PsdGroup, PsdLayer, crop_to_content, write_psd
+from ..reading import column_first
 from ..tone import TonePieces, tone_pieces
 from .export import (
     DEFAULT_SCALE,
@@ -231,18 +232,28 @@ def reading_order(panels: list[Panel], gutter: float) -> list[Panel]:
     同じ段に並べたコマは上端が揃っているのが普通で、揃っていない縦の
     ずれは隙間より大きい。
 
-    **番号はラベルでしかない。** 変わったコマ割りで直感と合わないことは
-    ありうるが、中身が入れ替わるわけではない。
+    **4コマ2列のページだけは列優先で読む**（右列を上から下、続いて左列。
+    → `reading.column_first`）。この形のページでは `next_panel.reading_order()`
+    と同じ順になる（2026-09-06。それまでは必ず食い違っていた）。
 
-    **`next_panel.reading_order()` とは別物で、答えも食い違う。** あちらは
-    「縦に重なるコマは同じ段」で切り、こちらは「上端の差が隙間より小さい」で切る。
-    段の高さが揃わないページで違う答えになる（コマ割りを機械的に 400通り作って
-    照合したところ 125通りで不一致。4コマ2列のページは必ず不一致。2026-09-05 実測）。
+    **番号がラベルで済まなくなったので揃えた。** MCP 越しに「2コマ目にセリフを
+    入れて」と言えるようになり、その宛先がここの番号になった（`describe` の
+    `reading_order` はこの関数を使う）。指す相手がずれると別のコマが喋る
+    （2026-09-06。→ 要件定義 10.5）。
 
-    **1本にまとめない。** まとめるとここの出力が変わり、既に書き出した作品を
-    再度書き出したときフォルダ名の順が変わる（本人判断・2026-09-05。→ 要件定義 10.5）。
-    **直すつもりで揃えないこと。**
+    **段の切り方は今も `next_panel.reading_order()` と別で、答えも食い違う。**
+    あちらは「縦に重なるコマは同じ段」で切り、こちらは「上端の差が隙間より
+    小さい」で切る。段の高さが揃わないページで違う答えになる（コマ割りを
+    機械的に 400通り作って照合したところ 125通りで不一致。2026-09-05 実測）。
+
+    **そこは1本にまとめない。** まとめるとここの出力が広く変わり、既に書き出した
+    作品を再度書き出したときフォルダ名の順が変わる（本人判断・2026-09-05。
+    → 要件定義 10.5）。**揃えたのは4コマ2列の判定だけ。**
     """
+    by_column = column_first(panels)
+    if by_column is not None:
+        return by_column
+
     rows: list[tuple[float, list[Panel]]] = []
     for panel in sorted(panels, key=lambda p: p.bounds().y):
         top = panel.bounds().y
