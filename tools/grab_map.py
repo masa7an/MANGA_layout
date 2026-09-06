@@ -145,7 +145,17 @@ def roi_of(window) -> Rect:
 
 
 def label_at(view, x: float, y: float) -> str:
-    """そこを押したときに始まるドラッグの名前（層1と同じ見方）。"""
+    """そこを押したときの答え。**ドラッグの種類と、選ばれたもの。**
+
+    層1（`test_press_reach.py`）は種類だけを見ているが、地図には**選んだ
+    ものの id も入れる。** 種類だけだと、コマを掴んで動かすのとフキダシを
+    掴んで動かすのが同じ `MoveDrag` になり、**選び直しの相手が変わった改修**
+    が地図に写らない。押下の最後の一手は「その場所にあるものを選ぶ」
+    （→ `_pick_at`）なので、そこが変わったことは見えないと困る。
+
+    **色は種類だけで塗る**（→ `paint`）。id まで色を分けると、場面ごとに
+    色が変わって前後の絵が比べられなくなる。id は `digest.txt` の側で効く。
+    """
     from mouse import press
 
     view._drag = None
@@ -156,7 +166,7 @@ def label_at(view, x: float, y: float) -> str:
         if getattr(drag, attr, None) is not None:
             name += f"[{getattr(drag, attr)}]"
     view._drag = None
-    return name
+    return f"{name}({view.state.selected_id or '選択なし'})"
 
 
 def sweep(window, roi: Rect, step: int) -> list[list[str]]:
@@ -201,7 +211,8 @@ def paint(rows: list[list[str]], step: int) -> QImage:
     image = QImage(width, height, QImage.Format.Format_RGB32)
     for row_index, row in enumerate(rows):
         for col_index, name in enumerate(row):
-            color = QColor(COLORS.get(name.split("[")[0], UNKNOWN)).rgb()
+            kind = name.split("[")[0].split("(")[0]
+            color = QColor(COLORS.get(kind, UNKNOWN)).rgb()
             for dy in range(step):
                 for dx in range(step):
                     image.setPixel(col_index * step + dx, row_index * step + dy, color)
@@ -220,7 +231,7 @@ def digest_of(name: str, scale: float, roi: Rect, step: int, rows) -> str:
         f"## {name} @{scale:g}倍  範囲=({roi.x:g},{roi.y:g})-({roi.right:g},{roi.bottom:g})"
         f"  刻み={step}px  点={sum(counts.values())}"
     ]
-    lines += [f"  {label:<28} {count}" for label, count in sorted(counts.items())]
+    lines += [f"  {label:<40} {count}" for label, count in sorted(counts.items())]
     lines.append(f"  sha256 = {hashlib.sha256(raw).hexdigest()}")
     return "\n".join(lines)
 
@@ -303,9 +314,12 @@ def main(argv: list[str] | None = None) -> int:
             window.state.history.mark_saved()
             window.close()
             points = len(rows) * len(rows[0])
+            # **その都度流す。** 1場面に1分前後かかるので、ファイルへ
+            # 逃がして眺めているときに溜め込まれると進み具合が分からない
             print(
                 f"{name} @{scale:g}倍  {points} 点  {time.perf_counter() - started:.1f}秒"
-                f"  -> {file}"
+                f"  -> {file}",
+                flush=True,
             )
 
     digest = "\n".join(parts) + "\n"
