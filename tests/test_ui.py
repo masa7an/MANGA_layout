@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from mouse import double_click, event_at, move_to, press, release
 
 from manga_layout import Rect
 from manga_layout.layout import default_panel_rect, full_page_rect
@@ -135,60 +136,6 @@ class TestPanelEditing:
         assert window.state.page.panels == []
 
 
-def press(view, x: float, y: float) -> None:
-    """mm 座標を画面座標に直して、左ボタンの押下を送る。"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mousePressEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonPress,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def release(view, x: float, y: float) -> None:
-    """左ボタンの離しを送る（→ `press` と対）。"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseReleaseEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonRelease,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def move_to(view, x: float, y: float) -> None:
-    """左ボタンを押したままの移動を送る（→ `press` と対）。"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseMoveEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseMove,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.NoButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
 class TestAddPanelMode:
     """コマ追加は1回きり。追加したらすぐ編集に移る（要件定義 6.9）。
 
@@ -245,24 +192,6 @@ class TestAddPanelMode:
 
         assert isinstance(window.view._drag, ResizeDrag)
         assert window.view._drag.handle == "nw"
-
-
-def double_click(view, x: float, y: float) -> None:
-    """mm 座標を画面座標に直して、左ボタンのダブルクリックを送る。"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseDoubleClickEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonDblClick,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
 
 
 @pytest.fixture
@@ -1049,27 +978,6 @@ class Testドラッグ中のUndo:
         assert seen == []
 
 
-def press_at(view, x: float, y: float, shift: bool = False) -> None:
-    """Shift の有無を指定して左ボタンの押下を送る。"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    modifiers = (
-        Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
-    )
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mousePressEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonPress,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            modifiers,
-        )
-    )
-
-
 @pytest.fixture
 def messages(window_with_image):
     """状態表示に流れた文言を順に控える。"""
@@ -1088,7 +996,7 @@ class TestAspectHint:
         from manga_layout.ui.canvas import ASPECT_HINT
 
         bounds = window_with_image.state.selected_image.rect
-        press_at(window_with_image.view, bounds.right, bounds.bottom)  # 右下の角
+        press(window_with_image.view, bounds.right, bounds.bottom)  # 右下の角
 
         assert ASPECT_HINT in messages
 
@@ -1099,7 +1007,7 @@ class TestAspectHint:
 
         bounds = window_with_image.state.selected_image.rect
         x, y = handle_positions(bounds)[corner]
-        press_at(window_with_image.view, x, y)
+        press(window_with_image.view, x, y)
 
         assert ASPECT_HINT in messages
 
@@ -1111,7 +1019,7 @@ class TestAspectHint:
 
         bounds = window_with_image.state.selected_image.rect
         x, y = handle_positions(bounds)[edge]
-        press_at(window_with_image.view, x, y)
+        press(window_with_image.view, x, y)
 
         assert ASPECT_HINT not in messages
 
@@ -1124,7 +1032,7 @@ class TestAspectHint:
         window.state.message.connect(seen.append)
 
         bounds = window.state.selected_panel.shape.bounds()
-        press_at(window.view, bounds.right, bounds.bottom)
+        press(window.view, bounds.right, bounds.bottom)
 
         assert ASPECT_HINT not in seen
 
@@ -1132,7 +1040,7 @@ class TestAspectHint:
         from manga_layout.ui.canvas import ASPECT_HINT, ASPECT_HINT_HELD
 
         bounds = window_with_image.state.selected_image.rect
-        press_at(window_with_image.view, bounds.right, bounds.bottom, shift=True)
+        press(window_with_image.view, bounds.right, bounds.bottom, shift=True)
 
         assert ASPECT_HINT_HELD in messages
         assert ASPECT_HINT not in messages
@@ -1143,9 +1051,9 @@ class TestAspectHint:
 
         view = window_with_image.view
         bounds = window_with_image.state.selected_image.rect
-        press_at(view, bounds.right, bounds.bottom)
+        press(view, bounds.right, bounds.bottom)
         for offset in range(1, 6):
-            drag_to(view, bounds.right + offset, bounds.bottom + offset)
+            move_to(view, bounds.right + offset, bounds.bottom + offset)
 
         # ドラッグが実際に届いていること（届いていなければ 1 回で当然）
         assert view._scene.preview_rect != bounds
@@ -1156,9 +1064,9 @@ class TestAspectHint:
 
         view = window_with_image.view
         bounds = window_with_image.state.selected_image.rect
-        press_at(view, bounds.right, bounds.bottom)
-        drag_to(view, bounds.right + 5.0, bounds.bottom + 5.0)
-        drag_to(view, bounds.right + 10.0, bounds.bottom + 10.0, shift=True)
+        press(view, bounds.right, bounds.bottom)
+        move_to(view, bounds.right + 5.0, bounds.bottom + 5.0)
+        move_to(view, bounds.right + 10.0, bounds.bottom + 10.0, shift=True)
 
         assert messages.index(ASPECT_HINT) < messages.index(ASPECT_HINT_HELD)
 
@@ -1170,9 +1078,6 @@ class TestAspectHint:
         「維持」だったため、今の形を保つと誤読させていた
         （要件定義 5章の記載どおりの挙動で、2026-08-08 に文言だけ直した）。
         """
-        from PySide6.QtCore import QPointF, Qt
-        from PySide6.QtGui import QMouseEvent
-
         from manga_layout.layout import aspect_of
 
         image = window_with_image.state.selected_image
@@ -1181,39 +1086,16 @@ class TestAspectHint:
         distorted = window_with_image.state.selected_image.rect
         assert distorted.w / distorted.h == pytest.approx(1.0)
 
-        shift_event = QMouseEvent(
-            QMouseEvent.Type.MouseMove,
-            QPointF(0.0, 0.0),
-            QPointF(0.0, 0.0),
-            Qt.MouseButton.NoButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.ShiftModifier,
+        # 見ているのは Shift を押しているかどうかだけ（→ `_shift_held`）。
+        # 座標はどこでもよいので、歪ませた絵の真ん中にしておく
+        shift_event = event_at(
+            window_with_image.view, "move", *distorted.center, shift=True
         )
 
         locked = window_with_image.view._locked_aspect(shift_event)
 
         assert locked == pytest.approx(aspect_of(image.src_px))
         assert locked != pytest.approx(distorted.w / distorted.h)
-
-
-def drag_to(view, x: float, y: float, shift: bool = False) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    modifiers = (
-        Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
-    )
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseMoveEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseMove,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.NoButton,
-            Qt.MouseButton.LeftButton,
-            modifiers,
-        )
-    )
 
 
 class TestImageEditing:

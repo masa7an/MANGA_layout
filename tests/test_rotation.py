@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 
 import pytest
+from mouse import send
 
 from manga_layout import Rect, new_project
 from manga_layout.geometry import (
@@ -237,36 +238,6 @@ def window_with_image(window, png_bytes):
     return window
 
 
-def _mouse(view, kind, x, y, shift=False):
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    modifiers = (
-        Qt.KeyboardModifier.ShiftModifier if shift else Qt.KeyboardModifier.NoModifier
-    )
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    buttons = {
-        "press": (Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton),
-        "move": (Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton),
-        "release": (Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton),
-    }[kind]
-    types = {
-        "press": QMouseEvent.Type.MouseButtonPress,
-        "move": QMouseEvent.Type.MouseMove,
-        "release": QMouseEvent.Type.MouseButtonRelease,
-    }
-    event = QMouseEvent(
-        types[kind],
-        position,
-        view.viewport().mapToGlobal(position),
-        buttons[0],
-        buttons[1],
-        modifiers,
-    )
-    {"press": view.mousePressEvent, "move": view.mouseMoveEvent,
-     "release": view.mouseReleaseEvent}[kind](event)
-
-
 def rotate_image(window, angle):
     """選択中の画像を、確定と同じ道（履歴に積む）で傾ける。
 
@@ -306,7 +277,7 @@ class TestRotateHandle:
         from manga_layout.ui.canvas import RotateDrag
 
         view = window_with_image.view
-        _mouse(view, "press", *view._rotate_handle_point())
+        send(view, "press", *view._rotate_handle_point())
 
         assert isinstance(view._drag, RotateDrag)
         assert view._scene.rotate_preview is not None
@@ -317,7 +288,7 @@ class TestRotateHandle:
         seen = []
         window_with_image.state.message.connect(seen.append)
         view = window_with_image.view
-        _mouse(view, "press", *view._rotate_handle_point())
+        send(view, "press", *view._rotate_handle_point())
 
         assert ROTATE_HINT in seen
 
@@ -336,11 +307,11 @@ class TestRotateDrag:
     def test_引いたぶんだけ傾く(self, window_with_image):
         view = window_with_image.view
         rect = window_with_image.state.selected_image.rect
-        _mouse(view, "press", *view._rotate_handle_point())
+        send(view, "press", *view._rotate_handle_point())
         # つまみは真上（-90 度）にある。右（0 度）まで引けば 90 度回る
         target = point_at(rect, 0.0, 40.0)
-        _mouse(view, "move", *target)
-        _mouse(view, "release", *target)
+        send(view, "move", *target)
+        send(view, "release", *target)
 
         # 画面のピクセルは整数なので、掴んだ位置がわずかに丸まる。
         # 1度の幅で見れば「引いた向きへ回った」ことは確かめられる
@@ -351,8 +322,8 @@ class TestRotateDrag:
     def test_離すまでモデルに触らない(self, window_with_image):
         view = window_with_image.view
         rect = window_with_image.state.selected_image.rect
-        _mouse(view, "press", *view._rotate_handle_point())
-        _mouse(view, "move", *point_at(rect, 0.0, 40.0))
+        send(view, "press", *view._rotate_handle_point())
+        send(view, "move", *point_at(rect, 0.0, 40.0))
 
         # 下見には出るが、モデルはまだ 0
         assert view._scene.rotate_preview[1] == pytest.approx(90.0, abs=1.0)
@@ -361,11 +332,11 @@ class TestRotateDrag:
     def test_Shiftで15度ずつ刻む(self, window_with_image):
         view = window_with_image.view
         rect = window_with_image.state.selected_image.rect
-        _mouse(view, "press", *view._rotate_handle_point())
+        send(view, "press", *view._rotate_handle_point())
         # -90 + 47 = -43 の向きへ引く → 47 度ぶん回したことになる
         target = point_at(rect, -43.0, 40.0)
-        _mouse(view, "move", *target, shift=True)
-        _mouse(view, "release", *target)
+        send(view, "move", *target, shift=True)
+        send(view, "release", *target)
 
         assert window_with_image.state.selected_image.rotation == pytest.approx(45.0)
 
@@ -374,10 +345,10 @@ class TestRotateDrag:
         rect = window_with_image.state.selected_image.rect
         depth = window_with_image.state.history.depth
 
-        _mouse(view, "press", *view._rotate_handle_point())
+        send(view, "press", *view._rotate_handle_point())
         target = point_at(rect, 0.0, 40.0)
-        _mouse(view, "move", *target)
-        _mouse(view, "release", *target)
+        send(view, "move", *target)
+        send(view, "release", *target)
 
         assert window_with_image.state.history.depth == depth + 1
         assert window_with_image.state.history.undo_label == "画像の回転"
@@ -388,8 +359,8 @@ class TestRotateDrag:
         view = window_with_image.view
         depth = window_with_image.state.history.depth
         point = view._rotate_handle_point()
-        _mouse(view, "press", *point)
-        _mouse(view, "release", *point)
+        send(view, "press", *point)
+        send(view, "release", *point)
 
         assert window_with_image.state.history.depth == depth
 
@@ -401,7 +372,7 @@ class TestRotatedEditing:
         view = window_with_image.view
         image = window_with_image.state.selected_image
         image.rotation = 45.0
-        _mouse(view, "press", *image.rect.center)
+        send(view, "press", *image.rect.center)
 
         assert isinstance(view._drag, MoveDrag)
 
@@ -412,7 +383,7 @@ class TestRotatedEditing:
         image = window_with_image.state.selected_image
         image.rotation = 30.0
         x, y = handle_positions(image.rect, 30.0)["se"]
-        _mouse(view, "press", x, y)
+        send(view, "press", x, y)
 
         assert isinstance(view._drag, ResizeDrag)
         assert view._drag.handle == "se"

@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import pytest
-from test_ui_balloon import drag, move_to, press, release
+from mouse import drag, move_to, press, release
 from test_ui_context_menu import folded_labels, labels
 
 from manga_layout import Rect, tone as TN

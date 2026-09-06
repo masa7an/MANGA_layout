@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 import pytest
-from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter
+from mouse import double_click, press
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QImage, QPainter
 
 from manga_layout import Rect
 from manga_layout.assets import AssetStore
@@ -89,34 +90,18 @@ def 小さいマスク(px=(60, 60)) -> bytes:
     return to_png_bytes(mask)
 
 
-def _mouse_event(window, kind, u: float, v: float, shift: bool) -> QMouseEvent:
-    """絵の中の割合（0〜1）を、ページ座標を経由して canvas の座標へ直す。"""
+def point_of(window, u: float, v: float) -> tuple[float, float]:
+    """絵の中の割合（0〜1）を、ページ座標に直す。"""
     image = image_of(window)
-    x = image.rect.x + image.rect.w * u
-    y = image.rect.y + image.rect.h * v
-    view = window.view
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    return QMouseEvent(
-        kind,
-        position,
-        view.viewport().mapToGlobal(position),
-        Qt.MouseButton.LeftButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.ShiftModifier
-        if shift
-        else Qt.KeyboardModifier.NoModifier,
-    )
+    return (image.rect.x + image.rect.w * u, image.rect.y + image.rect.h * v)
 
 
 def click(window, u: float, v: float, *, shift: bool = False) -> None:
     """絵の中の割合（0〜1）で押す。
 
-    **押すだけ**（`test_ui_balloon.press` の Shift 付き版）。この道具は
-    ドラッグを持たないので、離す動きは要らない。
+    **押すだけ。** この道具はドラッグを持たないので、離す動きは要らない。
     """
-    window.view.mousePressEvent(
-        _mouse_event(window, QMouseEvent.Type.MouseButtonPress, u, v, shift)
-    )
+    press(window.view, *point_of(window, u, v), shift=shift)
 
 
 def quick_second_click(window, u: float, v: float, *, shift: bool = False) -> None:
@@ -125,9 +110,7 @@ def quick_second_click(window, u: float, v: float, *, shift: bool = False) -> No
     `click` を2回呼んでも再現できない——あちらは押下が2回届く経路で、
     **ゆっくり2回押した場合**にあたる。連打のほうを確かめるにはこちらが要る。
     """
-    window.view.mouseDoubleClickEvent(
-        _mouse_event(window, QMouseEvent.Type.MouseButtonDblClick, u, v, shift)
-    )
+    double_click(window.view, *point_of(window, u, v), shift=shift)
 
 
 def mask_of(window):

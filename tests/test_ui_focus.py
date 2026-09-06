@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import pytest
-from test_ui_balloon import click, drag, move_to, press, release
+from mouse import click, drag, move_to, press, release
 
 from manga_layout import Rect, focus as F
 from manga_layout.ui import EditorState, MainWindow

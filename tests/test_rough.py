@@ -19,9 +19,9 @@ from __future__ import annotations
 import json
 
 import pytest
+from mouse import drag, move_to, press, release
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QImage, QPainter
-from test_ui_balloon import drag, move_to, press, release
 
 from manga_layout import ProjectFormatError, Rect, new_project
 from manga_layout.images import ROUGH_BLUE, to_blue_pencil, to_png_bytes

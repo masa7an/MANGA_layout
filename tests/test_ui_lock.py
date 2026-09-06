@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import pytest
-from test_ui_balloon import click, drag
+from mouse import click, drag
 
 from manga_layout import Rect
 from manga_layout.layout import handle_positions

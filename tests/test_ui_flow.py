@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import pytest
-from test_ui_balloon import click, drag, move_to, press, release
+from mouse import click, drag, move_to, press, release
 
 from manga_layout import Rect, flow as FL, focus as F
 from manga_layout.ui import EditorState, MainWindow
@@ -50,42 +50,6 @@ def window_with_flow(window_with_panel):
 
 def panel(window):
     return window.state.page.panels[0]
-
-
-def shift_drag(view, x1, y1, x2, y2) -> None:
-    """Shift を押しながら引く。刻みが効くかを見るため。"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    def send(kind, x, y):
-        position = QPointF(view.mapFromScene(QPointF(x, y)))
-        buttons = {
-            "press": (Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton),
-            "move": (Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton),
-            "release": (Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton),
-        }[kind]
-        types = {
-            "press": QMouseEvent.Type.MouseButtonPress,
-            "move": QMouseEvent.Type.MouseMove,
-            "release": QMouseEvent.Type.MouseButtonRelease,
-        }
-        event = QMouseEvent(
-            types[kind],
-            position,
-            view.viewport().mapToGlobal(position),
-            buttons[0],
-            buttons[1],
-            Qt.KeyboardModifier.ShiftModifier,
-        )
-        {
-            "press": view.mousePressEvent,
-            "move": view.mouseMoveEvent,
-            "release": view.mouseReleaseEvent,
-        }[kind](event)
-
-    send("press", x1, y1)
-    send("move", x2, y2)
-    send("release", x2, y2)
 
 
 # -- 入れる・消す ------------------------------------------------------------
@@ -354,7 +318,7 @@ def test_Shiftで15度刻みになる(window_with_flow):
     start = view._scene.flow_angle_handle()
     cx, cy = PANEL_CENTER
     # 中心から見て約 20 度の方向。刻みが効けば 15 度に寄る
-    shift_drag(view, start[0], start[1], cx + 200.0, cy + 73.0)
+    drag(view, start[0], start[1], cx + 200.0, cy + 73.0, shift=True)
     assert panel(window).flow_lines.angle == pytest.approx(15.0)
 
 

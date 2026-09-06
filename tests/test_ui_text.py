@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 
 import pytest
+from mouse import click, double_click, drag, press, release
 from PySide6.QtGui import QFont
 
 from manga_layout import Rect
@@ -56,85 +57,6 @@ def only_text(page) -> TextObject:
     texts = [f for f in page.floating if isinstance(f, TextObject)]
     assert len(texts) == 1, f"セリフが {len(texts)} 個ある"
     return texts[0]
-
-
-def press(view, x: float, y: float) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mousePressEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonPress,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def release(view, x: float, y: float) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseReleaseEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonRelease,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def double_click(view, x: float, y: float) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseDoubleClickEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonDblClick,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def move_to(view, x: float, y: float) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseMoveEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseMove,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.NoButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def drag(view, x1: float, y1: float, x2: float, y2: float) -> None:
-    press(view, x1, y1)
-    move_to(view, x2, y2)
-    release(view, x2, y2)
-
-
-def click(view, x: float, y: float) -> None:
-    press(view, x, y)
-    release(view, x, y)
 
 
 def click_pair(view, x: float, y: float) -> None:

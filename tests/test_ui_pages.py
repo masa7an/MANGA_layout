@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import pytest
+from mouse import press_widget
 from PySide6.QtCore import QMimeData, QPointF, Qt
 from PySide6.QtGui import QDropEvent
 from PySide6.QtWidgets import QMessageBox
@@ -830,22 +831,10 @@ class TestPageJumpBar:
         入力欄の受け付ける範囲を絞ると、Qt は Enter を「入力途中」と見て
         何も起こさない。信号を直接出す検証だけではそこを見逃す。
         """
-        from PySide6.QtCore import QPointF
-        from PySide6.QtGui import QMouseEvent
         from PySide6.QtTest import QTest
 
         bar = three_pages.pages_title
-        point = QPointF(bar.number.rect().center())
-        bar.number.mousePressEvent(
-            QMouseEvent(
-                QMouseEvent.Type.MouseButtonPress,
-                point,
-                bar.number.mapToGlobal(point),
-                Qt.MouseButton.LeftButton,
-                Qt.MouseButton.LeftButton,
-                Qt.KeyboardModifier.NoModifier,
-            )
-        )
+        press_widget(bar.number)
         QTest.keyClicks(bar.edit, "3")
         QTest.keyClick(bar.edit, Qt.Key.Key_Return)
 

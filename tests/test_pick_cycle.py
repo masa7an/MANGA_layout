@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import pytest
+from mouse import double_click, press
 
 from manga_layout import Rect
 from manga_layout.layout import next_in_stack, pick_stack
@@ -31,42 +32,6 @@ SMALL = Rect(150.0, 150.0, 120.0, 100.0)
 BIG = Rect(100.0, 100.0, 400.0, 300.0)
 # 2枚が重なっている場所（小さいコマの中心）
 POINT = (210.0, 200.0)
-
-
-def press(view, x: float, y: float) -> None:
-    """左ボタンの押下を送る。**ダブルクリックの手前には必ずこれが入る。**"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mousePressEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonPress,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def double_click(view, x: float, y: float) -> None:
-    """左ボタンのダブルクリックを送る。"""
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseDoubleClickEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonDblClick,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
 
 
 def click_pair(view, x: float, y: float) -> None:

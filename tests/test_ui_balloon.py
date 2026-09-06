@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 
 import pytest
+from mouse import click, drag, move_to, press, release
 
 from manga_layout import Rect
 from manga_layout.model import TAIL_SHAPE_BUBBLES, TAIL_SHAPE_TRIANGLE, BalloonObject
@@ -74,68 +75,6 @@ def messages(window_with_balloon):
     seen = []
     window_with_balloon.state.message.connect(seen.append)
     return seen
-
-
-def press(view, x: float, y: float) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mousePressEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonPress,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def move_to(view, x: float, y: float) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseMoveEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseMove,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.NoButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def release(view, x: float, y: float) -> None:
-    from PySide6.QtCore import QPointF, Qt
-    from PySide6.QtGui import QMouseEvent
-
-    position = QPointF(view.mapFromScene(QPointF(x, y)))
-    view.mouseReleaseEvent(
-        QMouseEvent(
-            QMouseEvent.Type.MouseButtonRelease,
-            position,
-            view.viewport().mapToGlobal(position),
-            Qt.MouseButton.LeftButton,
-            Qt.MouseButton.NoButton,
-            Qt.KeyboardModifier.NoModifier,
-        )
-    )
-
-
-def drag(view, x1: float, y1: float, x2: float, y2: float) -> None:
-    press(view, x1, y1)
-    move_to(view, x2, y2)
-    release(view, x2, y2)
-
-
-def click(view, x: float, y: float) -> None:
-    press(view, x, y)
-    release(view, x, y)
 
 
 def balloon_menu_items(window):
