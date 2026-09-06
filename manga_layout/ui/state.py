@@ -39,6 +39,7 @@ from ..history import History
 from ..images import (
     BakedCache,
     ImageCache,
+    ReducedCache,
     rough_preview_from_bytes,
 )
 from ..layout import (
@@ -322,6 +323,11 @@ class EditorState(EffectsMixin, FileMixin, ImageMixin, PanelMixin, TextMixin, QO
         # こちらも画像と混ぜない。鍵に設定が入るぶん増え続けるので、
         # あちらと違って上限を持つ
         self.baked_cache = BakedCache()
+        # 縮めて描く文字画像（→ 6.34）の、縮めた写しの入れ物。
+        # **`QPainter` に縮めさせると縁が階段状になる**ので、先に
+        # `QImage.scaled` で縮めたものを渡す（→ PySide6の落とし穴 10）。
+        # 鍵に「縮めた先の大きさ」が入るぶん増え続けるので、上限を持つ
+        self.reduced_cache = ReducedCache()
         # 切り抜きの許容差（→ 10.3）。**作品ではなく操作の設定**なので
         # `project.json` には入れない（道具の選択と同じ扱い）
         self.wand_tolerance = WAND_TOLERANCE_DEFAULT

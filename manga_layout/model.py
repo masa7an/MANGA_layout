@@ -1017,6 +1017,19 @@ def floating_layer(obj: FloatingObject) -> int:
     return LAYER_BALLOON
 
 
+def is_text_image(obj: object) -> bool:
+    """セリフを焼いて作ったマークか（→ 要件定義 6.34）。
+
+    **見分けが要るのは、扱いを変える場所があるから。** いまは描くときの
+    縮小のしかた（→ PySide6の落とし穴 10）。組み込み素材のマークと違い、
+    細い線の集まりなので、粗い縮小が目に付く。
+
+    判定を1か所に置いてあるのは、`kind` の値そのものを各所に書き写さない
+    ため。`kind` は保存形式に出る値なので、散らすと直しにくくなる。
+    """
+    return isinstance(obj, StickerObject) and obj.kind == STICKER_KIND_TEXT
+
+
 def floating_order(obj: FloatingObject) -> tuple[int, int]:
     """奥から手前へ並べるときの鍵。`sorted(page.floating, key=...)` に使う。
 

@@ -211,6 +211,7 @@ class ImageMixin:
             return
         self.image_cache.forget(ref)
         self.baked_cache.forget(ref)
+        self.reduced_cache.forget(ref)
         if self.wand_scan is not None and self.wand_scan[0] == ref:
             self.forget_wand_gray()
 

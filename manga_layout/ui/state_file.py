@@ -68,6 +68,7 @@ class FileMixin:
         self.image_cache.clear()
         self.rough_cache.clear()
         self.baked_cache.clear()
+        self.reduced_cache.clear()
         self.forget_wand_gray()
         # 点検の印は前の作品のもの。ページの id ごと別系列になるので、
         # 残しても付きようがないが、消さないと数だけ残る（→ 要件定義 10.1）

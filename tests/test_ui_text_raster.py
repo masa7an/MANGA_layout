@@ -239,3 +239,119 @@ class Test動線:
             STICKER_KIND_LABELS[STICKER_KIND_TEXT] in label for label in labels
         )
         menu.deleteLater()
+
+
+
+@pytest.fixture
+def state(qapp, tmp_path):
+    """窓を出さない編集状態。
+
+    **描くときの縮小は、窓を出すと数えられない。** メインウィンドウを作ると
+    ページ一覧のサムネイルが別の大きさで同じページを描くので、写しが2つに
+    なる（それ自体は正しい動き）。ここで見たいのは「1回描くと1つできる」
+    ほうなので、描き手だけを使う。
+    """
+    st = EditorState()
+    st.save(tmp_path / "作品")
+    with st.edit("コマの追加") as project:
+        project.add_panel(project.pages[0], PANEL)
+    st.select(None)
+    return st
+
+
+def render(state):
+    from manga_layout.ui.export import render_page
+
+    return render_page(state, state.page)
+
+
+class Test描くときの縮小:
+    """**文字画像だけ、先に縮めてから描く**（→ 6.34、PySide6の落とし穴 10）。
+
+    `QPainter` の縮小は 2×2 の画素しか見ないので、4:1 では間引きになり、
+    細い線の縁が階段状になる。ここで見るのは「その道を通っているか」で、
+    見え方そのものは実機と書き出した1枚で確かめる。
+    """
+
+    def test_文字画像では先に縮める(self, state):
+        text = state.add_text(FRAME, "ぼそっ")
+        state.rasterize_text(text.id)
+        render(state)
+
+        assert len(state.reduced_cache) == 1
+
+    def test_2回描いても作り直さない(self, state):
+        text = state.add_text(FRAME, "ぼそっ")
+        state.rasterize_text(text.id)
+        render(state)
+        render(state)
+
+        assert len(state.reduced_cache) == 1
+
+    def test_マークでは先に縮めない(self, state):
+        """**文字だけに掛ける**（→ 6.34）。同じくらい縮めても通らないこと。"""
+        from manga_layout.stickers import STICKER_EXCLAIM
+
+        sticker = state.add_sticker(STICKER_EXCLAIM, 300.0, 300.0)
+        # 素材は 360x360。長辺 100px に置けば 3.6:1 で、境目（2:1）を超える
+        with state.edit_page("小さく") as page:
+            page.find(sticker.id).rect = Rect(300.0, 300.0, 100.0, 100.0)
+        render(state)
+
+        assert len(state.reduced_cache) == 0
+
+    def test_ほぼ等倍なら何もしない(self, state):
+        """拡大して置いたときは写しが要らない。作るだけ無駄になる。"""
+        text = state.add_text(FRAME, "ぼそっ")
+        sticker = state.rasterize_text(text.id)
+        with state.edit_page("大きく") as page:
+            found = page.find(sticker.id)
+            found.rect = Rect(
+                found.rect.x, found.rect.y, found.rect.w * 8.0, found.rect.h * 8.0
+            )
+        render(state)
+
+        assert len(state.reduced_cache) == 0
+
+    def test_見え方が変わる(self, state):
+        """**通しても結果が同じ**なら、この仕組みは何もしていないことになる。
+
+        同じ画像を「文字画像」と「それ以外」で置き、描き上がりを比べる。
+
+        **矩形の大きさを小数にしておく。** 整数だと `QPainter` の側も
+        正しい縮小をするので差が出ず、**書体が変わるだけでテストの結果が
+        変わる**（実際に、画面なしの書体で矩形が整数に落ちて差が消えた）。
+        """
+        text = state.add_text(FRAME, "ぼそっ")
+        sticker = state.rasterize_text(text.id)
+        with state.edit_page("小数にする") as page:
+            found = page.find(sticker.id)
+            found.rect = Rect(300.5, 300.25, 60.5, 90.75)
+        rect = state.page.find(sticker.id).rect
+        smoothed = render(state)
+
+        # `kind` を変えると `_to_draw` を通らなくなる＝直す前と同じ道
+        with state.edit_page("kind を変える") as page:
+            page.find(sticker.id).kind = "mark_like"
+        state.reduced_cache.clear()
+        naive = render(state)
+
+        differ = sum(
+            1
+            for y in range(int(rect.y), int(rect.bottom))
+            for x in range(int(rect.x), int(rect.right))
+            if smoothed.pixel(x, y) != naive.pixel(x, y)
+        )
+        assert differ > 0
+
+    def test_絵を消したら写しも手放す(self, state):
+        text = state.add_text(FRAME, "ぼそっ")
+        sticker = state.rasterize_text(text.id)
+        render(state)
+        assert len(state.reduced_cache) == 1
+
+        with state.edit_page("削除") as page:
+            page.remove_floating(sticker.id)
+        state.forget_if_unused(sticker.asset)
+
+        assert len(state.reduced_cache) == 0

@@ -283,3 +283,91 @@ class Test焼き込みCache:
 
         cache.forget("assets/m.png")
         assert len(cache) == 1, "元画像が違っても、そのマスクを使った1枚は全部落とす"
+
+
+class Test縮小版のCache:
+    """`QPainter` に縮めさせないための写しの入れ物（→ PySide6の落とし穴 10）。
+
+    **鍵は「参照＋縮めた先の大きさ」。** 拡大率を変えれば別の大きさが要るので、
+    参照だけを鍵にすると、拡大した瞬間に前の大きさの写しが出てくる。
+    """
+
+    @staticmethod
+    def _image(w: int = 400, h: int = 300):
+        from PySide6.QtGui import QImage
+
+        return QImage(w, h, QImage.Format.Format_ARGB32)
+
+    def test_2回目は縮め直さない(self, qapp):
+        from manga_layout.images import ReducedCache, reduced_for
+
+        cache = ReducedCache()
+        source = self._image()
+        calls = []
+
+        def make():
+            calls.append(1)
+            return reduced_for(source, 100, 75)
+
+        first = cache.get("ref", (100, 75), make)
+        again = cache.get("ref", (100, 75), make)
+
+        assert again is first
+        assert len(calls) == 1
+
+    def test_大きさが違えば作り直す(self, qapp):
+        from manga_layout.images import ReducedCache, reduced_for
+
+        cache = ReducedCache()
+        source = self._image()
+        small = cache.get("ref", (100, 75), lambda: reduced_for(source, 100, 75))
+        big = cache.get("ref", (200, 150), lambda: reduced_for(source, 200, 150))
+
+        assert small is not big
+        assert (big.width(), big.height()) == (200, 150)
+        assert len(cache) == 2
+
+    def test_上限を超えたら古いものから捨てる(self, qapp):
+        """拡大率は連続的に変わるので、持ちっぱなしにすると際限なく溜まる。"""
+        from manga_layout.images import ReducedCache, reduced_for
+
+        cache = ReducedCache(limit=3)
+        source = self._image()
+        for i in range(5):
+            cache.get("ref", (10 + i, 10), lambda i=i: reduced_for(source, 10 + i, 10))
+
+        assert len(cache) == 3
+
+    def test_参照ごとに手放せる(self, qapp):
+        """絵を消したときに、大きさ違いの写しがまとめて落ちること。"""
+        from manga_layout.images import ReducedCache, reduced_for
+
+        cache = ReducedCache()
+        source = self._image()
+        for size in ((100, 75), (200, 150)):
+            cache.get("a", size, lambda s=size: reduced_for(source, *s))
+        cache.get("b", (100, 75), lambda: reduced_for(source, 100, 75))
+
+        cache.forget("a")
+
+        assert len(cache) == 1
+
+    def test_縮めた1枚は範囲全体を平均する(self, qapp):
+        """`QPainter` の 2×2 と違い、捨てられる画素が無いこと。
+
+        市松模様を半分に縮めると、**どの画素も白と黒の中間**になる。
+        間引きだと白か黒のどちらかがそのまま残る。
+        """
+        from PySide6.QtGui import QImage, qGray
+
+        from manga_layout.images import reduced_for
+
+        source = QImage(64, 64, QImage.Format.Format_ARGB32)
+        for y in range(64):
+            for x in range(64):
+                source.setPixel(x, y, 0xFF000000 if (x + y) % 2 else 0xFFFFFFFF)
+
+        small = reduced_for(source, 32, 32)
+        grays = {qGray(small.pixel(x, y)) for y in range(32) for x in range(32)}
+
+        assert grays and all(60 < g < 195 for g in grays)

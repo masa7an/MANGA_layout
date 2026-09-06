@@ -290,6 +290,62 @@ class ImageCache:
         self._items.clear()
 
 
+class ReducedCache:
+    """**縮めて描く画像の、縮めた写し**を覚えておく（→ PySide6の落とし穴 10）。
+
+    `QPainter.drawImage` の縮小は、滑らかにする指定を付けても **2×2 の画素しか
+    見ない**。2:1 なら「4画素の平均」と一致するが、4:1 では 16画素のうち 4個で
+    決めることになり、細い線の縁が階段状になる。`QImage.scaled` は範囲全体を
+    平均する本来の縮小をするので、**先にそちらで縮めた写しを渡す。**
+
+    毎回縮め直すと描き直しのたびに全画素を触ることになるので、ここで持つ。
+    **鍵は「参照＋縮めた先の大きさ」**——拡大率を変えれば別の大きさが要るため。
+
+    **上限を持つ。** 拡大率は連続的に変わるので、持ちっぱなしにすると
+    大きさ違いの写しが際限なく溜まる。溢れたら古いものから捨てる（辞書は
+    入れた順を保つので、先頭を落とせばよい）。
+    """
+
+    def __init__(self, limit: int = 64) -> None:
+        self._limit = limit
+        self._items: dict[tuple[str, int, int], QImage] = {}
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def get(self, ref: str, size: tuple[int, int], make: Callable[[], QImage]) -> QImage:
+        key = (ref, size[0], size[1])
+        found = self._items.get(key)
+        if found is not None:
+            return found
+        made = make()
+        self._items[key] = made
+        while len(self._items) > self._limit:
+            self._items.pop(next(iter(self._items)))
+        return made
+
+    def forget(self, ref: str) -> None:
+        """その参照の写しを、大きさ違いもまとめて捨てる。"""
+        for key in [k for k in self._items if k[0] == ref]:
+            self._items.pop(key, None)
+
+    def clear(self) -> None:
+        self._items.clear()
+
+
+def reduced_for(image: QImage, width: int, height: int) -> QImage:
+    """`width` × `height` へ、範囲全体を平均して縮めた1枚。
+
+    **`QPainter` に縮めさせない**ための1枚（→ `ReducedCache`）。
+    """
+    return image.scaled(
+        width,
+        height,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+
 def toned(source: Preview | None, tone: Tone) -> Preview | None:
     """トーンを焼いた1枚を作る。**マスクの無い経路はこれだけで足りる。**
 

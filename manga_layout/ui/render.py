@@ -20,15 +20,26 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from dataclasses import dataclass
 
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QImage,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+)
 
 from .. import vertical
 from ..flow import flow_polygons
 from ..focus import focus_triangles
 from ..geometry import Rect
+from ..images import reduced_for
 from ..layout import balloon_outline, tail_bubbles, tail_triangle
 from ..model import (
     BalloonObject,
@@ -41,6 +52,7 @@ from ..model import (
     StickerObject,
     TextObject,
     floating_order,
+    is_text_image,
 )
 from ..slant import slant_polygons
 
@@ -66,6 +78,17 @@ TEXT_ALIGN_FLAGS = {
     "center": Qt.AlignmentFlag.AlignHCenter,
     "right": Qt.AlignmentFlag.AlignRight,
 }
+
+# 文字画像を「先に縮めてから描く」に切り替える境目（→ `PageRenderer._to_draw`）。
+#
+# **縮小の強さでは決められない。** `QPainter` が正しい縮小をするのは
+# **描く大きさが整数のとき**だけで、小数になった瞬間か、回転が掛かった
+# 瞬間に間引きへ落ちる（→ PySide6の落とし穴 10）。焼いた文字の矩形は
+# 字の範囲から割り算で出るので、**ほぼ必ず小数**になる。
+#
+# したがってここは「縮んでいるなら任せない」という低い境目にする。
+# 1.2 を切る（ほぼ等倍〜拡大）ところでだけ、写しを作る手間を省く
+REDUCE_FROM = 1.2
 
 
 def qrect(rect: Rect) -> QRectF:
@@ -528,8 +551,55 @@ class PageRenderer:
             self._draw_missing(painter, image)
             return
         painter.setOpacity(image.opacity)
-        painter.drawImage(qrect(image.rect), preview.image)
+        painter.drawImage(qrect(image.rect), self._to_draw(painter, image, preview.image))
         painter.setOpacity(1.0)
+
+    def _to_draw(
+        self, painter: QPainter, image: ImageObject | StickerObject, source: QImage
+    ) -> QImage:
+        """実際に渡す1枚。**縮めて描くときは、先に縮めた写しを返す。**
+
+        `QPainter` が範囲全体を平均する正しい縮小をするのは、**描く大きさが
+        整数で、回転が掛かっていないとき**だけ。どちらかを外れると 2×2 の
+        画素しか見ない補間に落ち、細い線の縁が階段状になる
+        （→ PySide6の落とし穴 10）。**焼いた文字の矩形は字の範囲を倍率で
+        割って出すので、ほぼ必ず小数**になり、外れるほうに当たる。
+
+        `QImage.scaled` は範囲全体を平均するので、**整数の大きさへそちらで
+        縮めてから渡す。** 残りの端数（1画素未満）は `QPainter` が伸ばすが、
+        ほぼ等倍なので間引きは起きない。
+
+        **対象は文字画像だけ**（→ 6.34）。同じ間引きは大きな写真でも起きて
+        いるが、線画ほど目立たず、要求も立っていない。全部に掛けると、
+        絵1枚ごとに拡大率ぶんの写しを抱えることになる。**要ることが分かって
+        から広げる**（6.14 の当たり判定と同じ線引き）。
+        """
+        if not is_text_image(image):
+            return source
+        width, height = self._device_size(painter, image.rect)
+        if source.width() < width * REDUCE_FROM or source.height() < height * REDUCE_FROM:
+            return source
+        return self.state.reduced_cache.get(
+            image.asset,
+            (width, height),
+            lambda: reduced_for(source, width, height),
+        )
+
+    @staticmethod
+    def _device_size(painter: QPainter, rect: Rect) -> tuple[int, int]:
+        """`rect` が実際に何画素として出るか。
+
+        **拡大率は painter から取る。** 画面（拡大縮小あり）・書き出し
+        （倍率あり）・サムネイル（小さい）で同じ処理が通るので、
+        呼ぶ側から渡してもらうと3か所で食い違う余地ができる。
+
+        回している最中は painter に回転も掛かっているが、`hypot` で
+        長さを取るので角度の影響を受けない。
+        """
+        t = painter.transform()
+        sx = math.hypot(t.m11(), t.m12())
+        sy = math.hypot(t.m21(), t.m22())
+        return max(1, math.ceil(rect.w * sx)), max(1, math.ceil(rect.h * sy))
 
     def _draw_missing(
         self, painter: QPainter, image: ImageObject | StickerObject
