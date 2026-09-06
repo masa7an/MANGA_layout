@@ -17,13 +17,21 @@
     ./venv/Scripts/python.exe tools/grab_map.py                    # 全場面
     ./venv/Scripts/python.exe tools/grab_map.py --scenes フキダシ,集中線
     ./venv/Scripts/python.exe tools/grab_map.py --step 1 --scale 1.0 --scale 0.25
-    ./venv/Scripts/python.exe tools/grab_map.py --check data/掴みの地図/digest.txt
+    ./venv/Scripts/python.exe tools/grab_map.py --out data/掴みの地図_あと \
+        --check data/掴みの地図/digest.txt
+
+**突き合わせるときは `--out` で別のフォルダを指す。** 書き出しは突き合わせより
+先に走るので、**ゴールデンと同じ場所へ書くと、上書きした自分自身と比べることに
+なり、必ず「差分なし」が出る**（そして元のゴールデンは消えている）。
+同じ場所を指したときは走る前に止める。
 
 出来るもの（既定で `data/掴みの地図/`。**`data/` は git 管理外**）::
 
     <場面>@<倍率>.png   塗り分けた地図。1画素＝ページの 1px
     index.html          全部を並べた1枚（色の見出し付き）
     digest.txt          場面ごとの内訳と sha256。**突き合わせるのはこれ**
+                        1行目に刻み・場面数・**窓の大きさ**が入る（窓が違うと
+                        境目の点がずれるので、比べてよい相手かがそこで分かる）
 
 **刻みは既定 2px。** いちばん小さいつまみは画面上 9px（`HANDLE_PX`）なので、
 それより粗いと**つまみを丸ごと飛ばす**（8px 刻みで、しっぽの先端に1点しか
@@ -286,6 +294,15 @@ def main(argv: list[str] | None = None) -> int:
 
     scales = args.scale or [1.0]
     out = Path(args.out)
+    # **走る前に止める。** 突き合わせは書き出しのあとに読むので、同じ場所を
+    # 指していると「上書きした自分自身」と比べて必ず差分なしになる。
+    # 8分かけたうえで嘘の合格が出るのが、この道具のいちばん危ない壊れ方
+    if args.check and Path(args.check).resolve() == (out / "digest.txt").resolve():
+        raise SystemExit(
+            f"突き合わせ先が書き出し先と同じ: {args.check}\n"
+            f"  先に上書きしてから読むので、必ず「差分なし」になる。\n"
+            f"  --out で別のフォルダを指す（例: --out {out}_あと）"
+        )
     out.mkdir(parents=True, exist_ok=True)
 
     QApplication.instance() or QApplication([])
@@ -297,11 +314,16 @@ def main(argv: list[str] | None = None) -> int:
 
     parts = [f"# 掴みの地図 digest ／ 刻み={args.step}px ／ 場面={len(wanted)}"]
     made: list[tuple[str, float, str]] = []
+    # 押した点は画面の整数 px へ丸めてから場面の座標へ戻る（→ `tests/mouse.py`）
+    # ので、**窓の大きさが違うと境目の点がずれうる。** 見出しに入れておけば、
+    # 別の大きさで取ったものと比べたときに、差分の1行目がそれを教える
+    viewport = "?"
     for name in wanted:
         for scale in scales:
             started = time.perf_counter()
             window = build(available[name])
             view = window.view
+            viewport = f"{view.viewport().width()}x{view.viewport().height()}"
             view.zoom_by(scale / view.view_scale, at_mouse=False)
             roi = roi_of(window)
             rows = sweep(window, roi, args.step)
@@ -322,6 +344,7 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
 
+    parts[0] += f" ／ 窓={viewport}"
     digest = "\n".join(parts) + "\n"
     (out / "digest.txt").write_text(digest, encoding="utf-8")
     page = write_html(out, made)
