@@ -1153,7 +1153,16 @@ def tail_tip_turned_to(
 def tail_root_point(
     balloon: BalloonObject, settings: BalloonSettings = DEFAULT_BALLOON_SETTINGS
 ) -> tuple[float, float] | None:
-    """付け根の中心。上下にずらす操作の掴み所として使う。"""
+    """付け根の中心。上下にずらす操作の掴み所として使う。しっぽ無しなら None。
+
+    **消えているしっぽには何も返さない**（`tail_triangle` `tail_bubbles`
+    と同じ）。以前はここだけ `enabled` を見ず、呼ぶ側2か所が呼ぶ前に
+    確かめることで実害を抑えていたが、**3つめの呼び出し側が確認を忘れると、
+    消したはずのしっぽの掴み所が出る**形だった。3つで揃えた（2026-09-06）。
+    """
+    if not balloon.tail.enabled:
+        return None
+
     angle = tail_base_angle(balloon)
     if angle is None:
         return None

@@ -579,19 +579,17 @@ class TestExtreme:
 
     @pytest.mark.parametrize("style", BALLOON_STYLES)
     @pytest.mark.parametrize("shape", [TAIL_SHAPE_TRIANGLE, TAIL_SHAPE_BUBBLES])
-    def test_しっぽを消すと形は出ないが掴み所だけは残る(self, style, shape):
-        """**今の挙動をそのまま書き留めたもの。**
+    def test_しっぽを消すと形も掴み所も出ない(self, style, shape):
+        """**しっぽを消したら、形の3つと掴み所の答えが揃って消える。**
 
-        三角と飛びしっぽは `enabled` を見て何も返さないが、
-        `tail_root_point` は見ない——「しっぽがあるならここ」を答える
-        だけの関数で、消えているかどうかは**呼ぶ側が見ている**
-        （`PageScene._draw_tail_handles` と `PageView._tail_root_at` の
-        2か所とも、呼ぶ前に `tail.enabled` を確かめている）。
+        以前は `tail_root_point` だけが `enabled` を見ず、「しっぽがあるなら
+        ここ」を答えていた。呼ぶ側2か所（`PageScene._draw_tail_handles` と
+        `PageView._tail_root_at`）が呼ぶ前に確かめていたので実害は無かったが、
+        **3つめの呼び出し側が確認を忘れると、消したはずのしっぽの掴み所が
+        出る**形だった。2026-09-06 に関数の側で揃えた。
 
-        **揃っていないので、3つめの呼び出し側が確認を忘れると、
-        消したはずのしっぽの掴み所が出る。** 今の2か所は確かめているので
-        実害は無く、ここでは**揃っていないことが黙って変わらないよう**
-        書き留めておく。
+        呼ぶ側の確認は**残してある。** あちらは掴み所の座標だけでなく、
+        先端の丸や「選んでいる吹き出しか」も見ているため。
         """
         for size, rect in RECTS.items():
             balloon = BalloonObject(
@@ -603,4 +601,4 @@ class TestExtreme:
             assert tail_triangle(balloon, SETTINGS) is None, size
             assert tail_bubbles(balloon, SETTINGS) == (), size
             assert tail_body_contains(balloon, *rect.center, SETTINGS) is False, size
-            assert tail_root_point(balloon, SETTINGS) is not None, size
+            assert tail_root_point(balloon, SETTINGS) is None, size
