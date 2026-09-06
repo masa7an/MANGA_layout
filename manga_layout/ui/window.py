@@ -71,6 +71,7 @@ from .state import (
     TOOL_PANEL,
     TOOL_ROUGH,
     TOOL_SELECT,
+    TOOL_SHORT_LABELS,
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
@@ -410,6 +411,10 @@ class MainWindow(QMainWindow):
         ):
             label = TOOL_LABELS[tool]
             action = QAction(f"{label} ({shortcut})" if shortcut else label, self)
+            # **道具箱のボタンにだけ短い名前を出す**（→ 6.33）。`setIconText` は
+            # 道具箱側しか見ないので、上で作った名前（メニュー・右クリック・
+            # 「メニューを探す」窓・ホバーの吹き出し）は変わらない
+            action.setIconText(TOOL_SHORT_LABELS[tool])
             action.setCheckable(True)
             if shortcut:
                 action.setShortcut(QKeySequence(shortcut))
@@ -548,25 +553,41 @@ class MainWindow(QMainWindow):
         道具の名前を並べ直すと、道具メニュー（`_build_menus` の
         `tool_menu`）と2か所を直すことになる。道具を増やしたときに
         片方だけ直し忘れると、道具箱にだけ出ない項目ができてしまう。
+
+        **ボタンに出るのは短い名前**（→ `TOOL_SHORT_LABELS`、6.33）。
+        メニューの名前をそのまま出すと 20項目のうち8つしか入らない。
         """
-        bar = QToolBar("道具", self)
+        bar = self.tool_bar = QToolBar("道具", self)
         bar.setMovable(False)
         self.addToolBar(bar)
         for action in self._tool_actions.values():
             bar.addAction(action)
         bar.addSeparator()
-        bar.addAction(self._act("← 前ページ", self.prev_page))
-        bar.addAction(self._act("次ページ →", self.next_page))
+        # ページ送りも道具と同じ扱いで、ボタンには矢印だけを出す（→ 6.33）。
+        # 何ページ目へ動くのかはホバーの吹き出しと状態表示の左に出る
+        for text, short, slot in (
+            ("← 前ページ", "←", self.prev_page),
+            ("次ページ →", "→", self.next_page),
+        ):
+            action = self._act(text, slot)
+            action.setIconText(short)
+            bar.addAction(action)
         self._build_font_toolbar()
 
     def _build_font_toolbar(self) -> None:
         """よく使う書体のボタン（→ 要件定義 6.5）。**道具箱とは別の段に置く。**
 
-        **道具の隣には置けない。** 道具箱は既に入り切っておらず、はみ出した
-        ぶんは送りのボタン（»）の中へ隠れる。**既定の窓（1100px）では20項目
-        のうち7つしか見えていない**（2026-09-06 実測。offscreen で数えた
-        ので実機の字幅とは違うが、道具だけで17項目ある以上、桁は変わらない）。
-        末尾に足した書体のボタンは、**必ずその隠れる側に入る。**
+        **道具の隣には置けない。** 足した当時、道具箱は入り切っておらず、
+        はみ出したぶんは送りのボタン（»）の中へ隠れていた。**既定の窓
+        （1100px）では20項目のうち8つしか見えていなかった**（2026-09-06 に
+        実機で計測。同じ日に offscreen で数えたときは7つだったが、あちらは
+        書体が1本も無く字幅が出ない）。末尾に足した書体のボタンは、
+        **必ずその隠れる側に入っていた。**
+
+        **道具箱そのものは 6.33 で直したが、この段は戻さない。** 短い名前に
+        できたのは道具の側だけで、書体名は「UD デジタル 教科書体 N」のように
+        長いまま出す必要がある（→ `_font_button_label`。詰めすぎると見分けが
+        付かない）。3つ並べれば再び道具箱を押し出す。
 
         段を増やすぶん用紙は狭くなるが、**押せないボタンを置くことに意味は
         無い。** 1回押しで切り替えるための機能なので、送りのボタンを開いて

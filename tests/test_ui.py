@@ -19,8 +19,10 @@ from manga_layout.layout import default_panel_rect, full_page_rect
 from manga_layout.storage import load_project
 from manga_layout.ui import EditorState, MainWindow
 from manga_layout.ui.state import (
+    TOOL_LABELS,
     TOOL_PANEL,
     TOOL_SELECT,
+    TOOL_SHORT_LABELS,
     TOOL_SPLIT_H,
     TOOL_SPLIT_SLANT,
     TOOL_SPLIT_V,
@@ -52,6 +54,49 @@ class TestBuild:
         assert "*" not in window._title()
         window.add_full_page_panel()
         assert "*" in window._title()
+
+
+class TestToolbar:
+    """道具箱のボタンの文言（→ 6.33）。
+
+    **入り切っているかは、ここでは確かめられない。** offscreen には書体が
+    1本も無く、字幅が出ないため（実機では 2309px → 1031px、20項目すべてが
+    見えることを 2026-09-06 に確認済み）。ここで見張るのは、**短い名前を
+    足し忘れていないか**と、**短くしたつもりが長いままになっていないか**。
+    """
+
+    def test_道具を足したら短い名前も足す(self):
+        """**片方だけ足すと落ちる。** 足し忘れると起動時に KeyError になるが、
+        （→ `_build_tool_actions`）、原因が名前の表だとは読み取りにくい。
+        """
+        assert TOOL_SHORT_LABELS.keys() == TOOL_LABELS.keys()
+
+    def test_短い名前はメニューの名前より長くならない(self):
+        for tool, short in TOOL_SHORT_LABELS.items():
+            assert len(short) <= len(TOOL_LABELS[tool]), tool
+
+    def test_短い名前にキーを書かない(self):
+        """ホバーの吹き出しに出る名前が既に「コマ追加 (P)」の形で持っている。"""
+        for tool, short in TOOL_SHORT_LABELS.items():
+            assert "(" not in short, tool
+
+    def test_ボタンには短い名前_メニューには元の名前(self, window):
+        for tool, action in window._tool_actions.items():
+            assert action.iconText() == TOOL_SHORT_LABELS[tool]
+            assert action.text().startswith(TOOL_LABELS[tool])
+
+    def test_ホバーの吹き出しは元の名前のまま(self, window):
+        """短くしたぶんは、ここで読める形で残す。"""
+        for tool, action in window._tool_actions.items():
+            assert action.toolTip().startswith(TOOL_LABELS[tool])
+
+    def test_ページ送りのボタンも短い(self, window):
+        pages = [
+            a for a in window.tool_bar.actions() if a.text().endswith("ページ →")
+            or a.text().startswith("← 前")
+        ]
+        assert [a.iconText() for a in pages] == ["←", "→"]
+        assert [a.text() for a in pages] == ["← 前ページ", "次ページ →"]
 
 
 class TestPanelEditing:

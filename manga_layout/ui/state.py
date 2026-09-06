@@ -189,6 +189,45 @@ TOOL_LABELS = {
     TOOL_WAND: "切り抜き",
 }
 
+# 道具箱のボタンにだけ出す短い名前（→ 要件定義 6.33）。
+#
+# **メニューの名前（`TOOL_LABELS`）は変えない。** 道具箱は横1列なので、17個の
+# 名前の長さがそのまま幅になる。既定の窓（1100px）で合計 2309px あり、
+# **20項目のうち8つしか見えていなかった**（2026-09-06 実機で計測。offscreen だと
+# 書体が1本も無く字幅が出ないので、実機でないと測れない）。短い名前を
+# `QAction.setIconText` で持たせると**道具箱のボタンにだけ効き**、メニュー・
+# 右クリック・「メニューを探す」窓・ホバーの吹き出しは元の名前のまま出る
+# （→ `MainWindow._build_tool_actions`）。
+#
+# **キーは書かない。** メニュー側の名前が「コマ追加 (P)」の形で持っており
+# （→ `_build_tool_actions`）、ホバーの吹き出しにもそちらが出る。道具箱でも
+# 出すと同じキーが2度並ぶだけになる（→ `menu_search.item_text` と同じ線引き）。
+#
+# **フキダシとマークは呼び名から作る**（`TOOL_LABELS` と同じ理由）。短い名前を
+# 手で書き写すと、改名したときにここだけ古いまま残る。末尾を落とすだけなので、
+# 呼び名がその形をやめた日には**短い名前が長い名前と同じになるだけ**で、
+# 食い違いにはならない。
+TOOL_SHORT_LABELS = {
+    TOOL_SELECT: "選択",
+    TOOL_PANEL: "コマ",
+    TOOL_SPLIT_H: "横割り",
+    TOOL_SPLIT_V: "縦割り",
+    TOOL_SPLIT_SLANT: "斜め割り",
+    **{
+        tool: BALLOON_STYLE_LABELS[style].removesuffix("_フキダシ")
+        for tool, style in BALLOON_TOOLS.items()
+    },
+    **{
+        tool: STICKER_KIND_LABELS[kind].removesuffix("マーク")
+        for tool, kind in STICKER_TOOLS.items()
+    },
+    TOOL_TEXT: "セリフ",
+    TOOL_ROUGH: "ラフ",
+    TOOL_TONE_AREA: "トーン",
+    # 元から短いので、そのまま（→ `TOOL_LABELS` の注記）
+    TOOL_WAND: "切り抜き",
+}
+
 # クリックだけでセリフを置いたときの大きさ（px）。
 # 吹き出しの既定より一回り小さくして、中に収まるようにしてある。
 #
