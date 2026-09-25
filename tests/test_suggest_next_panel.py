@@ -216,7 +216,6 @@ class TestShortcut:
 
     def test_キーはN(self, qapp):
         # **押すたびに次の案へ切り替える操作**なので、1打で繰り返せるキーにしてある。
-        # `Alt+P` は「ページ(&P)」メニューが使っていて割り当てられない
         window = MainWindow()
         try:
             keys = [
@@ -228,22 +227,16 @@ class TestShortcut:
             window.close()
 
 
-class TestAltHint:
-    """メニューバーの「＋ Alt キー」（→ `window._add_alt_hint`）。"""
+class TestMenuBar:
+    """メニューバーの作り（→ 要件定義 7章）。"""
 
-    def test_ヘルプの右に灰色で出す(self, qapp):
+    def test_右端に案内を出さない(self, qapp):
+        """「＋ Alt キー」の案内は 2026-09-25 に廃止した（本人の指示）。"""
         from PySide6.QtCore import Qt
-
-        from manga_layout.ui.window import ALT_HINT
 
         window = MainWindow()
         try:
-            corner = window.menuBar().cornerWidget(Qt.Corner.TopRightCorner)
-            assert corner is not None
-            assert corner.text() == ALT_HINT
-            assert not corner.isEnabled()                    # 灰色
-            # **メニューの文字の大きさに揃える**（利用者の設定は大きめ）
-            assert corner.font().pointSizeF() == window.menuBar().font().pointSizeF()
+            assert window.menuBar().cornerWidget(Qt.Corner.TopRightCorner) is None
         finally:
             window.close()
 
@@ -261,17 +254,6 @@ class TestAltHint:
             bar = window.menuBar()
             assert [a.text() for a in bar.actions() if not a.isEnabled()] == []
             assert all(a.menu() is not None for a in bar.actions())
-        finally:
-            window.close()
-
-    def test_メニューを探す窓には出さない(self, qapp):
-        from manga_layout.ui.menu_search import collect_menu_entries
-        from manga_layout.ui.window import ALT_HINT
-
-        window = MainWindow()
-        try:
-            texts = [e.text for e in collect_menu_entries(window)]
-            assert ALT_HINT not in texts
         finally:
             window.close()
 

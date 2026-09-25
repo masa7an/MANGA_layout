@@ -159,7 +159,7 @@ class TestMenuBar:
     def test_選択の道具は編集メニューの先頭(self, window):
         """どこにも属さない唯一の道具（→ 6.33）。"""
         places = menubar_entries(window)[id(window._tool_actions[TOOL_SELECT])]
-        assert places == ["編集(&E) > 選択の道具 (V)"]
+        assert places == ["編集 > 選択の道具 (V)"]
 
 
 class TestPanelEditing:

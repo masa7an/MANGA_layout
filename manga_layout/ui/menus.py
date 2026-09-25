@@ -209,7 +209,8 @@ class FileMenu:
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
-        menu = window.menuBar().addMenu("ファイル(&F)")
+        # アクセスキー（括弧の文字）は付けない（本人の指示 2026-09-25 → 要件定義 7章）
+        menu = window.menuBar().addMenu("ファイル")
         menu.addAction(window._act("新規作成", window.files.new_project, "Ctrl+N"))
         menu.addAction(
             window._act(
@@ -346,7 +347,8 @@ class EditMenu:
     def __init__(self, window: MainWindow) -> None:
         self._window = window
         self._state = window.state
-        menu = window.menuBar().addMenu("編集(&E)")
+        # アクセスキー（括弧の文字）は付けない（本人の指示 2026-09-25 → 要件定義 7章）
+        menu = window.menuBar().addMenu("編集")
         # **道具メニューを畳んだ跡の行き先**（→ 6.33）。道具は担当のメニュー
         # （コマ・フキダシ・マーク・セリフ・画像・ファイル）に1つずつ出ており、
         # **どこにも属さないのはこれだけ**だった。
@@ -411,7 +413,7 @@ class PanelMenu:
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
         # **アクセスキー（`(&M)`）は付けない**（本人の指示 2026-09-25）。
-        # `M` の1文字はビックリマークの道具が使っており、メニューバーに
+        # `M` の1文字はビックリマークの道具が使っており（`マーク(M)`）、
         # `コマ(M)` と出すと、M を押せばコマが出るように読めてしまう
         menu = window.menuBar().addMenu("コマ")
         # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
@@ -916,7 +918,8 @@ class ImageMenu:
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
-        menu = window.menuBar().addMenu("画像(&I)")
+        # アクセスキー（括弧の文字）は付けない（本人の指示 2026-09-25 → 要件定義 7章）
+        menu = window.menuBar().addMenu("画像")
         self.paste_action = window._act(
             "クリップボードから画像を貼り付け", window.paste_image, "Ctrl+V", "クリップボードの画像を置く"
         )
@@ -1015,7 +1018,10 @@ class PageMenu:
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
-        menu = window.menuBar().addMenu("ページ(&P)")
+        # **`(&P)` は付けない**（本人の指示 2026-09-25）。素の `P` はコマ追加の
+        # 道具で、使う頻度はそちらが高い。`ページ(P)` と出すと P でページの
+        # 操作が出るように読めてしまう
+        menu = window.menuBar().addMenu("ページ")
         # 「追加」は必ず末尾、「挿入」は表示中のページの前。行き先の決まった
         # ほうを別の項目にしてある（要件定義 6.1）
         menu.addAction(
@@ -1187,7 +1193,8 @@ class TextMenu:
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
-        menu = window.menuBar().addMenu("セリフ(&X)")
+        # アクセスキー（括弧の文字）は付けない（本人の指示 2026-09-25 → 要件定義 7章）
+        menu = window.menuBar().addMenu("セリフ")
         menu.addAction(window._tool_actions[TOOL_TEXT])
         menu.addSeparator()
 
@@ -1308,7 +1315,10 @@ class StickerMenu:
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
-        menu = window.menuBar().addMenu("マーク(&K)")
+        # **`(&M)` にする**（2026-09-25 に `(&K)` から変更）。素の `M` は
+        # ビックリマークの道具で、出ている文字と押した結果が揃う。`K` は
+        # 斜めに縦割りの道具で、`マーク(K)` だと食い違っていた
+        menu = window.menuBar().addMenu("マーク(&M)")
         for tool in STICKER_TOOLS:
             menu.addAction(window._tool_actions[tool])
         menu.addSeparator()

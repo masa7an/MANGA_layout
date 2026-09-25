@@ -276,4 +276,9 @@ class Testメニューバーの文字と押した結果を揃える:
         """`M` はビックリマークが使う。`コマ(M)` と出すと M でコマが出るように読める。"""
         titles = [a.text() for a in window.menuBar().actions()]
         assert "コマ" in titles
-        assert "マーク(&K)" in titles
+
+    def test_括弧の文字は3つだけ(self, window):
+        """押した結果と揃うものだけ残した（2026-09-25）。素の `B` `M` `H` が
+        それぞれフキダシ・ビックリマーク・ショートカット一覧を出す。"""
+        titles = [a.text() for a in window.menuBar().actions()]
+        assert [t for t in titles if "&" in t] == ["フキダシ(&B)", "マーク(&M)", "ヘルプ(&H)"]

@@ -177,12 +177,6 @@ BOTTOM_GAP_PX = 20
 FRAME_ALLOWANCE_PX = 48
 
 
-
-# メニューバーの右端に出す案内。**`ファイル(F)` の括弧が何なのかは、初めて見た人には
-# 分からない。** Alt と一緒に押す、という説明を、その括弧が並んでいる場所に置く
-ALT_HINT = "＋ Alt キー"
-
-
 class MainWindow(QMainWindow):
     def __init__(self, state: EditorState | None = None):
         super().__init__()
@@ -481,7 +475,8 @@ class MainWindow(QMainWindow):
         self.state.set_tool(tool)
 
     def _build_view_menu(self) -> None:
-        view_menu = self.menuBar().addMenu("表示(&V)")
+        # **`(&V)` は付けない**（本人の指示 2026-09-25）。素の `V` は選択の道具
+        view_menu = self.menuBar().addMenu("表示")
         self.pages_toggle_action = self.pages_dock.toggleViewAction()
         self.pages_toggle_action.setText(PAGES_MENU_LABEL)
         view_menu.addAction(self.pages_toggle_action)
@@ -528,33 +523,6 @@ class MainWindow(QMainWindow):
                 "ショートカットキーの一覧...", self.show_shortcuts, "H", SHORTCUTS_HINT
             )
         )
-        self._add_alt_hint()
-
-    def _add_alt_hint(self) -> None:
-        """メニューバーの右端に「＋ Alt キー」と灰色で出す。
-
-        **`ファイル(F)` の括弧が何なのかは、初めて見た人には分からない。**
-        Alt と一緒に押す、という説明を、その括弧が並んでいる場所そのものに置く。
-
-        **項目ではなく、メニューバーの隅に置く部品にする**（`setCornerWidget`）。
-        以前は「押せない項目」として置いていたが、**押せない項目を飛ばすかどうかは
-        見た目（スタイル）任せ**で、`SH_Menu_AllowActiveAndDisabled` が 1 の
-        `windowsvista` と `windows` では **Alt → → と進んだときに反転表示で止まる**
-        （↓ を押しても何も開かない。抜けられはするが行き止まりに見える）。
-        このPCの既定 `windows11` と `fusion` では起きないので、**手元では見えない**
-        （2026-09-05 に4つのスタイルで実測して確認）。
-
-        部品にすれば**どのスタイルでも項目ではなくなる**ので、この違いごと無くなる。
-        「メニューを探す」窓にも、そもそも項目でないので出ない。
-        """
-        hint = QLabel(ALT_HINT)
-        hint.setEnabled(False)                 # 灰色にするため（押せる部品ではない）
-        # **メニューの文字の大きさに揃える。** 既定のままだと本文の大きさになり、
-        # 隣の `ヘルプ(H)` より大きく見える（利用者の設定は大きめ）
-        hint.setFont(self.menuBar().font())
-        hint.setContentsMargins(0, 0, 8, 0)    # 右端に貼り付かないよう少しだけ空ける
-        self.menuBar().setCornerWidget(hint, Qt.Corner.TopRightCorner)
-        self._alt_hint_widget = hint
 
     def _build_font_actions(self) -> None:
         """よく使う書体の項目（→ 要件定義 6.5）。
