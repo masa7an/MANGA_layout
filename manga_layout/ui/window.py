@@ -56,6 +56,7 @@ from .menus import (
     StickerMenu,
     TextMenu,
 )
+from .history_panel import HistoryPanel
 from .pages import PageJumpBar, PageListPanel, PageSizeDialog
 from .project_io import ProjectIO
 from .shortcuts import SHORTCUTS_HINT, ShortcutsDialog, collect_groups
@@ -90,6 +91,8 @@ APP_TITLE = "漫画レイアウタ"
 # 表示メニューに出す、ページ一覧の開け閉め項目の名前。
 # 一覧の見出し（「ページ 1/9」）とは別に持つ（理由は `_refresh`）
 PAGES_MENU_LABEL = "ページ一覧"
+# 同じく、履歴パネルの開け閉め項目の名前（→ 要件定義 6.8）
+HISTORY_MENU_LABEL = "履歴"
 
 def adjust_tool_exit(tool: str) -> str:
     """調整の道具（→ `ADJUST_TOOLS`）を持っている間、状態表示の末尾に出す出口。
@@ -217,6 +220,7 @@ class MainWindow(QMainWindow):
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
+        self._build_history_dock()
         self._build_tool_actions()  # 各メニューが道具の項目を参照するので先に作る
         # よく使う書体も、セリフのメニューと道具箱の両方が参照する（→ 6.5）
         self._build_font_actions()
@@ -322,6 +326,23 @@ class MainWindow(QMainWindow):
         self.pages_title = PageJumpBar(self.state, self.pages_dock)
         self.pages_dock.setTitleBarWidget(self.pages_title)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.pages_dock)
+
+    def _build_history_dock(self) -> None:
+        """履歴パネル。右に置き、**最初は閉じておく**（要件定義 6.8）。
+
+        確かめたいときだけ開くもので、開きっぱなしにすると用紙を見る
+        場所がそのぶん狭くなる。ページ一覧と同じ左に積むと、縦に半分ずつ
+        分け合って、どちらも窮屈になる。
+        """
+        self.history_panel = HistoryPanel(self.state)
+        self.history_dock = QDockWidget(HISTORY_MENU_LABEL, self)
+        self.history_dock.setObjectName("history")
+        self.history_dock.setWidget(self.history_panel)
+        self.history_dock.setAllowedAreas(
+            Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea
+        )
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.history_dock)
+        self.history_dock.hide()
 
     def _act(self, text: str, slot, shortcut: str | None = None, tip: str = "") -> QAction:
         action = QAction(text, self)
@@ -462,6 +483,12 @@ class MainWindow(QMainWindow):
         self.pages_toggle_action = self.pages_dock.toggleViewAction()
         self.pages_toggle_action.setText(PAGES_MENU_LABEL)
         view_menu.addAction(self.pages_toggle_action)
+        self.history_toggle_action = self.history_dock.toggleViewAction()
+        self.history_toggle_action.setText(HISTORY_MENU_LABEL)
+        self.history_toggle_action.setStatusTip(
+            "積まれた手を新しい順に並べます。移動は動いた量（px）も出ます"
+        )
+        view_menu.addAction(self.history_toggle_action)
         view_menu.addSeparator()
         # 素の + / - とホイールでも拡大縮小できる（PageView 側で拾う）。
         # メニューには修飾キー付きのほうを出す。素のキーを割り当てると
@@ -1611,6 +1638,7 @@ class MainWindow(QMainWindow):
         # 実体と食い違う（2026-08-08 発見）。整理の直後に記録を空にして、
         # その組み合わせ自体を起こらなくする
         self.state.history.forget_undo_history()
+        self.history_panel.sync()
         # **記録を捨てたら画面も揃える。** `History` は通知を出さないので、
         # `state.changed` などを引き金にしている `refresh` は走らない。
         # 呼ばないと編集メニューが「元に戻す: コマの移動」と出たまま押せて、

@@ -49,10 +49,15 @@ def _decode(blob: bytes) -> Project:
 
 @dataclass(frozen=True)
 class Step:
-    """履歴の1手。`label` は「元に戻す: コマの移動」のように画面へ出す。"""
+    """履歴の1手。`label` は「元に戻す: コマの移動」のように画面へ出す。
+
+    `detail` は履歴パネル（→ 要件定義 6.8）にだけ添える補足（動いた量など）。
+    **メニューには出さない。** 「元に戻す」の項目名が長くなると読みにくい
+    """
 
     label: str
     state: bytes
+    detail: str = ""
 
 
 class History:
@@ -111,6 +116,16 @@ class History:
     @property
     def redo_label(self) -> str | None:
         return self._redo[-1].label if self._redo else None
+
+    @property
+    def undo_entries(self) -> list[tuple[str, str]]:
+        """戻せる手の `(label, detail)`。**古い順**（末尾が次に戻す手）。"""
+        return [(s.label, s.detail) for s in self._undo]
+
+    @property
+    def redo_entries(self) -> list[tuple[str, str]]:
+        """やり直せる手の `(label, detail)`。**次にやり直す手が先頭。**"""
+        return [(s.label, s.detail) for s in reversed(self._redo)]
 
     @property
     def merge_key(self) -> str | None:
@@ -175,7 +190,9 @@ class History:
 
     # -- 編集 --------------------------------------------------------------
 
-    def commit(self, label: str, *, merge_key: str | None = None) -> bool:
+    def commit(
+        self, label: str, *, merge_key: str | None = None, detail: str = ""
+    ) -> bool:
         """直前の確定以降の変更を、1手として確定する。
 
         変化が無ければ何もせず False を返す。ドラッグしたが元の位置に
@@ -194,7 +211,7 @@ class History:
             merge_key is not None and merge_key == self._merge_key and bool(self._undo)
         )
         if not merging:
-            self._undo.append(Step(label, self._baseline))
+            self._undo.append(Step(label, self._baseline, detail))
             if len(self._undo) > self._limit:
                 del self._undo[0]
 
@@ -208,7 +225,9 @@ class History:
         self._merge_key = None
 
     @contextlib.contextmanager
-    def edit(self, label: str, *, merge_key: str | None = None) -> Iterator[Project]:
+    def edit(
+        self, label: str, *, merge_key: str | None = None, detail: str = ""
+    ) -> Iterator[Project]:
         """1手ぶんの編集をまとめる。
 
         途中で例外が出た場合は直前の確定状態へ戻してから送出する。
@@ -220,7 +239,7 @@ class History:
         except Exception:
             self.rollback()
             raise
-        self.commit(label, merge_key=merge_key)
+        self.commit(label, merge_key=merge_key, detail=detail)
 
     def rollback(self) -> None:
         """確定していない変更を捨てて、直前の確定状態へ戻す。履歴には積まない。"""
@@ -277,7 +296,7 @@ class History:
         if not self._undo:
             return None
         step = self._undo.pop()
-        self._redo.append(Step(step.label, self._baseline))
+        self._redo.append(Step(step.label, self._baseline, step.detail))
         self._baseline = step.state
         self._project = _decode(step.state)
         self._merge_key = None
@@ -288,7 +307,7 @@ class History:
         if not self._redo:
             return None
         step = self._redo.pop()
-        self._undo.append(Step(step.label, self._baseline))
+        self._undo.append(Step(step.label, self._baseline, step.detail))
         self._baseline = step.state
         self._project = _decode(step.state)
         self._merge_key = None

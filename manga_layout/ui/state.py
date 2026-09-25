@@ -564,14 +564,21 @@ class EditorState(EffectsMixin, FileMixin, ImageMixin, PanelMixin, TextMixin, QO
     # -- 編集 --------------------------------------------------------------
 
     @contextlib.contextmanager
-    def edit(self, label: str, *, merge_key: str | None = None) -> Iterator[Project]:
-        """1手ぶんの編集。抜けたところで履歴に積み、画面を描き直す。"""
-        with self.history.edit(label, merge_key=merge_key) as project:
+    def edit(
+        self, label: str, *, merge_key: str | None = None, detail: str = ""
+    ) -> Iterator[Project]:
+        """1手ぶんの編集。抜けたところで履歴に積み、画面を描き直す。
+
+        `detail` は履歴パネルにだけ出す補足（→ `history.Step`）。
+        """
+        with self.history.edit(label, merge_key=merge_key, detail=detail) as project:
             yield project
         self.changed.emit()
 
     @contextlib.contextmanager
-    def edit_page(self, label: str, *, merge_key: str | None = None) -> Iterator[Page]:
+    def edit_page(
+        self, label: str, *, merge_key: str | None = None, detail: str = ""
+    ) -> Iterator[Page]:
         """1手ぶんの編集。表示中のページを直接返す。
 
         `edit()` に続けて `project.pages[self._page_index]` と書く形が
@@ -581,7 +588,7 @@ class EditorState(EffectsMixin, FileMixin, ImageMixin, PanelMixin, TextMixin, QO
         **`Project` そのものが要る操作には使えない。** `project.add_balloon`
         のように `Project` のメソッドを呼ぶ側は、今まで通り `edit()` を使うこと
         """
-        with self.edit(label, merge_key=merge_key) as project:
+        with self.edit(label, merge_key=merge_key, detail=detail) as project:
             yield project.pages[self._page_index]
 
     @contextlib.contextmanager

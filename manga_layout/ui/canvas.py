@@ -376,6 +376,23 @@ _HANDLE_CURSORS = {
 #
 # コマはどちらにも乗らない（斜めの組・最小サイズなど、大きさ変更・移動
 # 特有の制約を持つため）
+def move_amount_text(dx: float, dy: float) -> str:
+    """動いた量を履歴パネル向けに書く。例: `+2, -0.5 px`。
+
+    **小数1桁まで出す。** ダブルクリックの手ぶれで動いたかを確かめる
+    ための表示なので（2026-09-25 追加）、1px 未満の動きを 0 に丸めて
+    隠してはいけない。
+    """
+
+    def one(value: float) -> str:
+        rounded = round(value, 1)
+        if rounded == 0.0:
+            return "0"
+        return f"{rounded:+.1f}".removesuffix(".0")
+
+    return f"{one(dx)}, {one(dy)} px"
+
+
 _MOVE_TARGETS = (
     (lambda s: s.selected_image, ImageObject, "画像"),
     (lambda s: s.selected_text, TextObject, "セリフ"),
@@ -3627,6 +3644,7 @@ class PageView(QGraphicsView):
         if object_id is None:
             return
 
+        amount = move_amount_text(dx, dy)
         image = self.state.selected_image
         if image is not None and image.id == object_id:
             moved = image.rect.translated(dx, dy)
@@ -3636,7 +3654,7 @@ class PageView(QGraphicsView):
         for getter, cls, name in _MOVE_TARGETS:
             if getter(self.state) is None:
                 continue
-            with self.state.edit_page(f"{name}の移動") as page:
+            with self.state.edit_page(f"{name}の移動", detail=amount) as page:
                 obj = page.find(object_id)
                 if isinstance(obj, cls):
                     obj.rect = obj.rect.translated(dx, dy)
@@ -3647,11 +3665,11 @@ class PageView(QGraphicsView):
             # 指すページ座標なので、吹き出しの置き場所を変えても
             # 指す相手は変わらない（要件定義 4章）。
             # 上に乗ったセリフは一緒に動く
-            with self.state.edit_page("フキダシの移動") as page:
+            with self.state.edit_page("フキダシの移動", detail=amount) as page:
                 page.move_balloon(object_id, dx, dy)
             return
 
-        with self.state.edit_page("コマの移動") as page:
+        with self.state.edit_page("コマの移動", detail=amount) as page:
             page.move_panel(object_id, dx, dy)
 
     def _apply_rotate(self, object_id: str, angle: float) -> None:

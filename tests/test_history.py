@@ -550,3 +550,32 @@ class TestMemory:
         assert history.depth == DEFAULT_LIMIT
         # 50手ぶんで 20MB を超えるようなら方式を見直す
         assert history.memory_bytes() < 20 * 1024 * 1024
+
+
+class Test補足:
+    """履歴パネルにだけ出す補足（`Step.detail` → 要件定義 6.8）。"""
+
+    def test_並びは古い順とやり直しの先頭(self, sample_project):
+        history = History(sample_project)
+        for i, label in enumerate(("一", "二", "三")):
+            with history.edit(label, detail=f"d{i}") as project:
+                page = project.pages[0]
+                page.move_panel(page.panels[0].id, 1.0, 0.0)
+
+        history.undo()
+        history.undo()
+
+        assert history.undo_entries == [("一", "d0")]
+        assert history.redo_entries == [("二", "d1"), ("三", "d2")]
+
+    def test_戻してやり直しても補足は消えない(self, sample_project):
+        history = History(sample_project)
+        with history.edit("コマの移動", detail="+30, 0 px") as project:
+            page = project.pages[0]
+            page.move_panel(page.panels[0].id, 30.0, 0.0)
+
+        history.undo()
+        history.redo()
+
+        assert history.undo_entries == [("コマの移動", "+30, 0 px")]
+        assert history.undo_label == "コマの移動"
