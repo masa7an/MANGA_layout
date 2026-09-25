@@ -258,3 +258,22 @@ class Testメニューから辿れる:
 
         found = search(collect_menu_entries(window), "ホットキー")
         assert any("ショートカットキーの一覧..." == e.text for e in found)
+
+
+class Testメニューバーの文字と押した結果を揃える:
+    """メニューバーに出ている括弧の文字（`ヘルプ(H)`）と、その1文字を素で
+    押した結果が食い違わないこと（本人の指示 2026-09-25 → 7章）。"""
+
+    def test_Hで一覧が出る(self, window):
+        assert ("H", "ショートカットキーの一覧...") in pairs(menu_groups(window))
+
+    def test_横に分割にはキーが無い(self, window):
+        """`H` を一覧へ譲った。両方に付くと、押したときにどちらも発火しない。"""
+        keys = [k for k, action in pairs(menu_groups(window)) if action == "横に分割"]
+        assert keys == []
+
+    def test_コマのメニューに括弧の文字を付けない(self, window):
+        """`M` はビックリマークが使う。`コマ(M)` と出すと M でコマが出るように読める。"""
+        titles = [a.text() for a in window.menuBar().actions()]
+        assert "コマ" in titles
+        assert "マーク(&K)" in titles

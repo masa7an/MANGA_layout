@@ -400,7 +400,9 @@ class MainWindow(QMainWindow):
         for tool, shortcut in (
             (TOOL_SELECT, "V"),
             (TOOL_PANEL, "P"),
-            (TOOL_SPLIT_H, "H"),
+            # 横に分割にキーは割り当てない。`H` はヘルプの「ショートカット
+            # キーの一覧」へ譲った（本人の指示 2026-09-25 → `_build_help_menu`）
+            (TOOL_SPLIT_H, None),
             (TOOL_SPLIT_V, "J"),
             (TOOL_SPLIT_SLANT, "K"),
             # フキダシの並びは `BALLOON_TOOLS` と揃える（使う頻度の順
@@ -511,9 +513,11 @@ class MainWindow(QMainWindow):
         （「やり直す」に Ctrl+Y と Ctrl+Shift+Z の両方を通しているのと
         同じ形 → 7章）。
 
-        **一覧のほうにキーは付けない。** キーを覚えていない人が開く窓に
-        キーで入る道を作っても使われないし、キーを足せばそのぶん元から
-        通っていたものを塞ぐ（→ 7章）。
+        **一覧には `H` を付ける**（本人の指示 2026-09-25）。メニューバーに
+        `ヘルプ(H)` と出ているのに、H を押すと横に分割の道具へ持ち替わって
+        いた。**出ている文字と押した結果を揃える。** 横に分割のほうはキー無しに
+        した（→ `_build_tool_actions`）。以前は「覚えていない人が開く窓に
+        キーの道を作っても使われない」として付けていなかった。
         """
         menu = self.menuBar().addMenu("ヘルプ(&H)")
         action = self._act("メニューを探す...", self.search_menu, "F1", MENU_SEARCH_HINT)
@@ -521,7 +525,7 @@ class MainWindow(QMainWindow):
         menu.addAction(action)
         menu.addAction(
             self._act(
-                "ショートカットキーの一覧...", self.show_shortcuts, None, SHORTCUTS_HINT
+                "ショートカットキーの一覧...", self.show_shortcuts, "H", SHORTCUTS_HINT
             )
         )
         self._add_alt_hint()

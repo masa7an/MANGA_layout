@@ -221,6 +221,13 @@ SNAP_PX = 8.0
 # ページ全体を表示するときに、用紙の外に残す余白（シーンの px）
 FIT_MARGIN_PX = 30.0
 
+# 用紙の外へスクロールで出られる幅。用紙の長いほうの辺に対する割合で、
+# 上下左右それぞれに付く。**0.25 から 0.375 へ5割増やした**（本人の指示
+# 2026-09-25）。ページ下のほうのコマで画像を拡大するとき、つまみを引く
+# マウスが画面の端に当たって動かしにくかった。用紙を画面の中ほどまで
+# 引き上げられれば、下へ引く余地ができる
+SCENE_PAD_RATIO = 0.375
+
 # ホイール1目盛り／キー1回あたりの倍率。キーのほうが回数を稼ぎにくいので大きめ
 WHEEL_ZOOM_STEP = 1.15
 KEY_ZOOM_STEP = 1.25
@@ -1349,7 +1356,7 @@ class PageScene(QGraphicsScene):
 
     def update_scene_rect(self) -> None:
         size = self.state.page.size
-        pad = max(size.w, size.h) * 0.25
+        pad = max(size.w, size.h) * SCENE_PAD_RATIO
         self.setSceneRect(-pad, -pad, size.w + pad * 2, size.h + pad * 2)
 
     # -- 用紙とコマ --------------------------------------------------------

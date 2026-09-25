@@ -410,7 +410,10 @@ class PanelMenu:
 
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
-        menu = window.menuBar().addMenu("コマ(&M)")
+        # **アクセスキー（`(&M)`）は付けない**（本人の指示 2026-09-25）。
+        # `M` の1文字はビックリマークの道具が使っており、メニューバーに
+        # `コマ(M)` と出すと、M を押せばコマが出るように読めてしまう
+        menu = window.menuBar().addMenu("コマ")
         # 「作る」を先頭に置く。ここが選択中のコマへの操作だけだと、
         # 何も選んでいない間はメニュー全体がグレーになる（吹き出しでの失敗）
         menu.addAction(window._tool_actions[TOOL_PANEL])
