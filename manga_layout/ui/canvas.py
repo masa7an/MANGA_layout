@@ -3029,6 +3029,8 @@ class PageView(QGraphicsView):
         踏み込む操作を分けてあるのは今までどおりで（→ 6.3）、2回目から
         先が足した分。
 
+        **選んだものはその場で掴む。** 2回目を押したまま引けば動く。
+
         **道具を持っている間は、どれも踏み込まない。** 素早い2回目の押下は
         `mousePressEvent` ではなくここへ届く（Qt の配り方）ので、ここで
         打ち切らないと、道具を持ったまま連打しただけで選択が動く。
@@ -3076,6 +3078,11 @@ class PageView(QGraphicsView):
         # ダブルクリックが続いた場合（テストや、素早い連打）への備え
         self._selected_before_press = target
         self._announce_pick(target, stack)
+        # **選んだものをそのまま掴む。** 押したまま引けば、離さずに動かせる
+        # （2026-09-25 追加）。以前は選び直すだけで、動かすには一度離して
+        # 押し直す必要があった。ロックしたコマは押下と同じく掴まない（→ 6.17）
+        if not self.state.is_locked_selection:
+            self._drag = MoveDrag.begin(self, x, y)
         event.accept()
 
     def _double_click_text(self, text_id: str) -> None:

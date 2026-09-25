@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import pytest
-from mouse import double_click, press
+from mouse import double_click, move_to, press, release
 
 from manga_layout import Rect
 from manga_layout.layout import next_in_stack, pick_stack
@@ -176,3 +176,55 @@ class Test巡回:
         click_pair(window.view, *POINT)
 
         assert window.state.selected_id == only  # 押下で選ばれたまま
+
+
+class Test押したまま引く:
+    """2回目を押したまま引けば、選んだものがそのまま動く（2026-09-25 追加）。
+
+    以前は選び直すだけで、動かすには一度離して押し直す必要があった。
+    """
+
+    def test_画像が動く(self, buried):
+        window, _small, _big, image = buried
+        before = window.state.page.find(image).rect
+
+        click_pair(window.view, *POINT)
+        move_to(window.view, POINT[0] + 30.0, POINT[1] + 20.0)
+        release(window.view, POINT[0] + 30.0, POINT[1] + 20.0)
+
+        after = window.state.page.find(image).rect
+        assert (after.x - before.x, after.y - before.y) == pytest.approx((30.0, 20.0))
+        assert window.state.selected_id == image
+
+    def test_離しただけなら何も積まない(self, buried):
+        """選ぶだけのダブルクリックが、作品を書き換えてはいけない（→ 6.25）。"""
+        window, _small, _big, image = buried
+        before = window.state.page.find(image).rect
+        label = window.state.history.undo_label
+
+        click_pair(window.view, *POINT)
+        release(window.view, *POINT)
+
+        assert window.state.page.find(image).rect == before
+        assert window.state.history.undo_label == label
+
+    def test_ロックしたコマは掴まない(self, buried):
+        """押下と同じ扱い（→ 6.17）。巡回で選ぶことはできる。
+
+        **ロックするのは隠れた側のコマ。** 手前のコマへ戻る回は、直前の押下で
+        既にそのコマが選ばれていて、この経路を通らない（押下側の判定が効く）。
+        """
+        window, small, _big, _image = buried
+        window.state.select(small)
+        window.state.toggle_panel_lock()
+        window.state.select(None)
+        before = window.state.page.panel(small).shape.bounds()
+
+        click_pair(window.view, *POINT)  # 画像
+        release(window.view, *POINT)
+        click_pair(window.view, *POINT)  # 2回目でロックした隠れたコマ
+        assert window.state.selected_id == small
+        move_to(window.view, POINT[0] + 30.0, POINT[1] + 20.0)
+        release(window.view, POINT[0] + 30.0, POINT[1] + 20.0)
+
+        assert window.state.page.panel(small).shape.bounds() == before
