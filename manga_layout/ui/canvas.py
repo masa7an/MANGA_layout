@@ -551,6 +551,9 @@ class CreateFloatingDrag(Drag):
             view._apply_create_sticker(self.preview_rect, self.press)
         else:
             view._apply_create_text(self.preview_rect, self.press)
+        # 道具で置いた経路はここだけ（キー・右クリックは `add_*_at` を通る）
+        if self.kind != "sticker":
+            view.placed_with_tool.emit(self.kind)
 
 
 class MoveDrag(Drag):
@@ -2341,6 +2344,20 @@ class PageView(QGraphicsView):
     text_edit_finished = Signal()
     # コマの追加の道具でコマを置いた。最初の1回だけのヒント（→ 6.35）の合図
     panel_placed = Signal()
+    # ここから下も、最初の1回だけのヒント（→ 6.35）の合図。
+    # ホイールで拡大縮小した／スペース・中ボタンで画面を動かし始めた
+    wheel_zoomed = Signal()
+    panned = Signal()
+    # 道具を持ってクリック・ドラッグで置いた（"balloon" / "text"）。
+    # キー（T・B・W・G）でカーソルの位置に置いた場合は鳴らない
+    placed_with_tool = Signal(str)
+    # ダブルクリックで選び直した。引数は「巡回の2段目以降か」
+    # （直前にも同じ並びの2つめ以降を選んでいた）
+    double_click_picked = Signal(bool)
+    # コマを割った。引数は斜めに割ったか
+    panel_split = Signal(bool)
+    # 画像がコマから完全に出る操作を断った
+    image_orphan_rejected = Signal()
 
     def __init__(self, state: EditorState):
         # Qt の初期化より先に属性を持たせない（基底の __init__ が済むまで代入できない）
@@ -2511,6 +2528,7 @@ class PageView(QGraphicsView):
             return
         self.zoom_by(WHEEL_ZOOM_STEP if delta > 0 else 1.0 / WHEEL_ZOOM_STEP)
         event.accept()
+        self.wheel_zoomed.emit()
 
     def keyPressEvent(self, event) -> None:
         # **入力中は1つも横取りしない。** キー入力はまずこの部品に届くので、
@@ -2622,6 +2640,7 @@ class PageView(QGraphicsView):
             self._pan_from = event.position()
             self.viewport().setCursor(Qt.CursorShape.ClosedHandCursor)
             event.accept()
+            self.panned.emit()
             return
 
         if event.button() != Qt.MouseButton.LeftButton:
@@ -3212,7 +3231,8 @@ class PageView(QGraphicsView):
         stack = pick_stack(self.state.page, x, y)
         # **押される前の選択から数える。** 直前の押下で手前のコマに
         # 選び直されているため、今の選択から数えると巡回が戻る（→ 6.25）
-        target = next_in_stack(stack, self._selected_before_press)
+        before = self._selected_before_press
+        target = next_in_stack(stack, before)
         if target is None or target == self.state.selected_id:
             # 巡っても同じものに戻る場所（画像の無いコマ1枚など）。
             # 選択が動いたように見せない
@@ -3225,6 +3245,7 @@ class PageView(QGraphicsView):
         # ダブルクリックが続いた場合（テストや、素早い連打）への備え
         self._selected_before_press = target
         self._announce_pick(target, stack)
+        self.double_click_picked.emit(before in stack[1:])
         # **選んだものをそのまま掴む。** 押したまま引けば、離さずに動かせる
         # （2026-09-25 追加）。以前は選び直すだけで、動かすには一度離して
         # 押し直す必要があった。ロックしたコマは押下と同じく掴まない（→ 6.17）
@@ -3791,6 +3812,7 @@ class PageView(QGraphicsView):
         if panel is None or not image_orphaned_at(panel, rect, image.rotation):
             return False
         self.state.message.emit(f"コマの外まで出ると選べなくなるので、{reason}")
+        self.image_orphan_rejected.emit()
         return True
 
     def nudge_selected(self, dx: float, dy: float) -> None:
@@ -4102,6 +4124,7 @@ class PageView(QGraphicsView):
             )
         else:
             self.state.message.emit("コマを分割しました")
+        self.panel_split.emit(tool == TOOL_SPLIT_SLANT)
 
     # -- ドラッグ&ドロップ --------------------------------------------------
     #

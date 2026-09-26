@@ -882,13 +882,13 @@ class ToneMenu:
         add_level(
             "細い線を残す",
             "thin",
-            lambda: window.state.step_tone_thin(1),
+            lambda: window.step_tone_thin(1),
             "これより細いものはトーンにしない。線画の線が破線になるときに、直るまで何回でも",
         )
         add_level(
             "細い線も塗る",
             "thin",
-            lambda: window.state.step_tone_thin(-1),
+            lambda: window.step_tone_thin(-1),
             "細さで選り分けるのをやめる。線画を持たない絵ではこちら",
         )
 

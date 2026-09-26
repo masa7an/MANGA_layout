@@ -19,6 +19,22 @@ HINT_NUDGE = "nudge"
 HINT_RECENT = "recent_project"
 HINT_TONE = "tone"
 HINT_PANEL = "panel_image"
+# ここから下は 2026-09-27 にまとめて足したもの（文言は本人の確認済み）。
+# 他のエディタと挙動が違う所（A）・気づきにくい機能（B）・分かりにくい機能（C）
+HINT_DOUBLE_CLICK = "double_click"
+HINT_PAN = "pan"
+HINT_TEXT_KEY = "text_key"
+HINT_BALLOON_KEY = "balloon_key"
+HINT_CYCLE = "pick_cycle"
+HINT_ADJUST = "adjust_exit"
+HINT_SUGGEST = "suggest"
+HINT_CHECK = "check"
+HINT_NOTE = "page_note"
+HINT_RASTER = "rasterize"
+HINT_THIN = "tone_thin"
+HINT_SLANT = "slant"
+HINT_ORPHAN = "image_orphan"
+HINT_OPEN = "open_project"
 HINT_TEXTS = {
     HINT_NUDGE: "Alt+矢印キーで微調整ができます",
     # 文言は本人の指定（2026-09-27）。区切りの空白は全角
@@ -27,6 +43,20 @@ HINT_TEXTS = {
     HINT_TONE: "トーンの調整は、絵を選択しているときに行えます（オレンジ枠の表示中）",
     # 文言は本人の指定（2026-09-27）。空白は項目名の実物に揃えた
     HINT_PANEL: "次は　右クリック　→　[ファイル画像 読み込み]　で絵が置けます",
+    HINT_DOUBLE_CLICK: "中の絵はダブルクリックで選べます（Esc でコマに戻る）",
+    HINT_PAN: "画面の移動は　スペース＋ドラッグ　です",
+    HINT_TEXT_KEY: "T キーでカーソルの位置にすぐ置けます",
+    HINT_BALLOON_KEY: "B・W・G キーでカーソルの位置にすぐ置けます",
+    HINT_CYCLE: "同じ場所をダブルクリックするたびに、下のものへ順に移ります",
+    HINT_ADJUST: "終わるときは、同じ項目をもう一度押します",
+    HINT_SUGGEST: "N キーで次のコマの位置を提案できます（押すたびに別の案）",
+    HINT_CHECK: "書き出す前に　ファイル　→　抜けチェック　で漏れを点検できます",
+    HINT_NOTE: "ページ一覧の項目を右クリックすると、付箋を貼れます",
+    HINT_RASTER: "画像にしたセリフは、文字の打ち直しができません（戻すときは　元に戻す）",
+    HINT_THIN: "細い線を残す　は、何度か押して調整できます",
+    HINT_SLANT: "斜めに割った2枚は一緒に動きます（もう一度割ることはできません）",
+    HINT_ORPHAN: "絵はコマから完全には出せません（一部がかかっていれば置けます）",
+    HINT_OPEN: "作品フォルダの中の　project.json　を選んでください",
 }
 
 # 出してから消えるまで（本人の指定 2026-09-27）

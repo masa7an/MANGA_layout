@@ -24,7 +24,27 @@ from manga_layout import hints_seen
 from manga_layout.hints_seen import HINTS_SEEN_FILENAME, load_hints_seen, mark_hint_seen
 from manga_layout.recent_project import save_recent_project
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.hints import HINT_NUDGE, HINT_PANEL, HINT_RECENT, HINT_TEXTS, HINT_TONE
+from manga_layout.ui.hints import (
+    HINT_ADJUST,
+    HINT_BALLOON_KEY,
+    HINT_CHECK,
+    HINT_CYCLE,
+    HINT_DOUBLE_CLICK,
+    HINT_NOTE,
+    HINT_NUDGE,
+    HINT_OPEN,
+    HINT_ORPHAN,
+    HINT_PAN,
+    HINT_PANEL,
+    HINT_RASTER,
+    HINT_RECENT,
+    HINT_SLANT,
+    HINT_SUGGEST,
+    HINT_TEXT_KEY,
+    HINT_TEXTS,
+    HINT_THIN,
+    HINT_TONE,
+)
 
 
 def settle() -> None:
@@ -368,7 +388,15 @@ class Testコマの案内:
         empty.add_full_page_panel()
         empty.hint_banner.hide()
         empty.add_full_page_panel()
-        assert not banner_up(empty)
+        # 2つ目では次のコマの提案の案内（B-7）が出るので、帯の有無では見ない
+        assert empty.hint_banner.text() != HINT_TEXTS[HINT_PANEL]
+
+    def test_二つ目では提案を案内する(self, empty):
+        empty.add_full_page_panel()
+        empty.hint_banner.hide()
+        empty.add_full_page_panel()
+        assert banner_up(empty)
+        assert empty.hint_banner.text() == HINT_TEXTS[HINT_SUGGEST]
 
     def test_ファイル画像読み込みを使った人には出ない(self, empty, monkeypatch):
         empty.add_full_page_panel()
@@ -377,3 +405,206 @@ class Testコマの案内:
         monkeypatch.setattr(empty, "_choose_image_file", lambda: None)
         empty.open_image_file()
         assert HINT_PANEL in load_hints_seen(recorded_path())
+
+
+# -- 2026-09-27 にまとめて足した13件（A: 挙動の違い / B: 気づきにくい / C: 分かりにくい）
+
+
+def shown(win, hint_id) -> bool:
+    """その案内が今出ているか。"""
+    return banner_up(win) and win.hint_banner.text() == HINT_TEXTS[hint_id]
+
+
+@pytest.fixture
+def buried_image(qapp, fixture_dir):
+    """絵が2枚入ったコマ1つ。選択は外してある（ダブルクリックの巡回用）。"""
+    win = MainWindow(EditorState())
+    state = win.state
+    with state.edit("準備") as project:
+        project.add_panel(project.pages[0], Rect(100.0, 100.0, 400.0, 300.0))
+    panel = state.page.panels[0]
+    data = (fixture_dir / "rgb_opaque.png").read_bytes()
+    state.place_image(panel.id, data)
+    state.place_image(panel.id, data)
+    mark_hint_seen(HINT_NUDGE)  # 絵を選んだときの案内と混ぜない
+    state.select(None)
+    settle()
+    win.hint_banner.hide()
+    yield win
+    win.state.history.mark_saved()
+    win.close()
+
+
+def click_pair(view, x: float, y: float) -> None:
+    """利用者から見たダブルクリック1回（→ test_pick_cycle）。"""
+    from mouse import double_click, press as mouse_press
+
+    mouse_press(view, x, y)
+    double_click(view, x, y)
+
+
+class TestA挙動の違い:
+    def test_A1_絵の入ったコマを選ぶと出る(self, buried_image):
+        buried_image.state.select(buried_image.state.page.panels[0].id)
+        settle()
+        assert shown(buried_image, HINT_DOUBLE_CLICK)
+
+    def test_A1_絵の無いコマでは出ない(self, window):
+        mark_hint_seen(HINT_NUDGE)
+        window.state.select(window.state.page.panels[0].id)
+        settle()
+        assert HINT_DOUBLE_CLICK not in load_hints_seen(recorded_path())
+
+    def test_A1_ダブルクリックで入れた人には出ない(self, buried_image):
+        click_pair(buried_image.view, 300.0, 250.0)
+        settle()
+        assert HINT_DOUBLE_CLICK in load_hints_seen(recorded_path())
+        assert not shown(buried_image, HINT_DOUBLE_CLICK)
+
+    def test_A2_ホイールで出る(self, window):
+        from test_ui_zoom import wheel
+
+        wheel(window.view)
+        assert shown(window, HINT_PAN)
+
+    def test_A2_画面を動かした人には出ない(self, window):
+        from mouse import press as mouse_press
+        from test_ui_zoom import wheel
+
+        # スペースを押したままの押下＝画面の移動
+        window.view._space_held = True
+        mouse_press(window.view, 300.0, 300.0)
+        window.view._space_held = False
+        assert HINT_PAN in load_hints_seen(recorded_path())
+        wheel(window.view)
+        assert not banner_up(window)
+
+    def test_A4_道具で置いたフキダシで出る(self, window):
+        from mouse import click
+
+        from manga_layout.ui.state import TOOL_BALLOON
+
+        window.state.set_tool(TOOL_BALLOON)
+        click(window.view, 300.0, 300.0)
+        settle()
+        # 同じ操作で選択の案内（Alt+矢印）が上書きしない
+        assert shown(window, HINT_BALLOON_KEY)
+        assert HINT_NUDGE not in load_hints_seen(recorded_path())
+
+    def test_A4_道具で置いたセリフは入力を閉じてから出る(self, window):
+        from mouse import click
+
+        from manga_layout.ui.state import TOOL_TEXT
+
+        window.state.set_tool(TOOL_TEXT)
+        click(window.view, 300.0, 300.0)
+        assert window.view.is_editing_text
+        assert not banner_up(window)
+        window.view.finish_text_edit(commit=False)
+        settle()
+        assert shown(window, HINT_TEXT_KEY)
+
+    def test_A4_キーで置いた人には出ない(self, window, monkeypatch):
+        from PySide6.QtGui import QKeySequence, QShortcutEvent
+
+        from manga_layout.ui.state import TOOL_TEXT
+
+        monkeypatch.setattr(window.view, "page_point_under_cursor", lambda: (300.0, 300.0))
+        QApplication.sendEvent(
+            window._tool_actions[TOOL_TEXT], QShortcutEvent(QKeySequence("T"), None)
+        )
+        window.view.finish_text_edit(commit=False)
+        assert HINT_TEXT_KEY in load_hints_seen(recorded_path())
+
+    def test_A5_巡回の2段目で出る(self, buried_image):
+        click_pair(buried_image.view, 300.0, 250.0)
+        settle()
+        assert not shown(buried_image, HINT_CYCLE)
+        click_pair(buried_image.view, 300.0, 250.0)
+        assert shown(buried_image, HINT_CYCLE)
+
+    def test_A6_調整の道具を持つと出る(self, window):
+        from manga_layout.ui.state import TOOL_WAND
+
+        window._pick_tool(TOOL_WAND)
+        assert shown(window, HINT_ADJUST)
+
+    def test_A6_同じ項目で抜けたら消える(self, window):
+        from manga_layout.ui.state import TOOL_WAND
+
+        window._pick_tool(TOOL_WAND)
+        window._pick_tool(TOOL_WAND)
+        assert not banner_up(window)
+
+
+class TestB気づきにくい機能:
+    def test_B7_提案を使った人には出ない(self, window):
+        window.suggest_next_panel()
+        assert HINT_SUGGEST in load_hints_seen(recorded_path())
+
+    def test_B8_書き出しの窓と同時に出る(self, window, monkeypatch):
+        from PySide6.QtWidgets import QDialog
+
+        class Rejected:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def exec(self):
+                return QDialog.DialogCode.Rejected
+
+        monkeypatch.setattr("manga_layout.ui.project_io.ExportDialog", Rejected)
+        window.files.export_image()
+        assert shown(window, HINT_CHECK)
+
+    def test_B8_抜けチェックを使った人には出ない(self, window):
+        window.run_check()
+        assert HINT_CHECK in load_hints_seen(recorded_path())
+
+    def test_B9_2ページ目で出る(self, window):
+        window.add_page()
+        assert shown(window, HINT_NOTE)
+
+
+class TestC分かりにくい機能:
+    def test_C1_画像にしたら出る(self, window):
+        text = window.state.add_text(Rect(300.0, 250.0, 200.0, 120.0), "ぼそっ")
+        window.state.select(text.id)
+        window.rasterize_text()
+        assert shown(window, HINT_RASTER)
+
+    def test_C2_細い線を初めて押したら出る(self, with_image):
+        with_image.toggle_tone()
+        with_image.hint_banner.hide()
+        with_image.step_tone_thin(1)
+        assert shown(with_image, HINT_THIN)
+
+    def test_C3_斜めに割ったら出る(self, window):
+        from manga_layout.ui.state import TOOL_SPLIT_SLANT
+
+        window.view._apply_split(*CENTER, TOOL_SPLIT_SLANT)
+        assert shown(window, HINT_SLANT)
+
+    def test_C3_まっすぐ割ったら提案を案内する(self, window):
+        from manga_layout.ui.state import TOOL_SPLIT_V
+
+        mark_hint_seen(HINT_PANEL)
+        window.view._apply_split(*CENTER, TOOL_SPLIT_V)
+        assert shown(window, HINT_SUGGEST)
+
+    def test_C4_絵がコマから出る操作を断ったら出る(self, with_image):
+        image = with_image.state.selected_image
+        with_image.hint_banner.hide()
+        assert with_image.view._orphan_rejected(image, Rect(5000.0, 5000.0, 10.0, 10.0), "x")
+        assert shown(with_image, HINT_ORPHAN)
+
+    def test_C5_開く窓と同時に出る(self, qapp, monkeypatch):
+        monkeypatch.setattr(
+            "manga_layout.ui.project_io.QFileDialog.getOpenFileName",
+            lambda *args, **kwargs: ("", ""),
+        )
+        win = MainWindow(EditorState())
+        try:
+            win.files.open_project()
+            assert shown(win, HINT_OPEN)
+        finally:
+            win.close()

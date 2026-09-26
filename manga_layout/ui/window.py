@@ -47,10 +47,23 @@ from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
 from .font_dialog import FONT_DIALOG_SIZE, FontChooser
 from .hints import (
+    HINT_ADJUST,
+    HINT_BALLOON_KEY,
+    HINT_CHECK,
+    HINT_CYCLE,
+    HINT_DOUBLE_CLICK,
+    HINT_NOTE,
     HINT_NUDGE,
+    HINT_ORPHAN,
+    HINT_PAN,
     HINT_PANEL,
+    HINT_RASTER,
     HINT_RECENT,
+    HINT_SLANT,
+    HINT_SUGGEST,
+    HINT_TEXT_KEY,
     HINT_TEXTS,
+    HINT_THIN,
     HINT_TONE,
     HintBanner,
 )
@@ -233,6 +246,12 @@ class MainWindow(QMainWindow):
         # 起動時に一度読んでおき、出すたびに書き足す
         self.hint_banner = HintBanner(self.view)
         self._hints_seen = load_hints_seen()
+        # セリフの入力中に出番が来たヒント。入力欄を閉じたら出す（→ `show_once_hint`）
+        self._pending_hint: str | None = None
+        # 今の操作の中でヒントを1つ出したか。選択で出すヒントはあとへ回して
+        # 判定するので（→ `_queue_once_hints`）、同じ操作で出た別のヒントを
+        # 上書きしてしまう。立っていれば、選択のほうは次の機会に回す
+        self._hint_just_shown = False
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -296,6 +315,14 @@ class MainWindow(QMainWindow):
         self.view.text_edit_finished.connect(self._queue_once_hints)
         self.view.nudged.connect(self._on_nudged)
         self.view.panel_placed.connect(self.on_panel_placed)
+        self.view.text_edit_finished.connect(self._show_pending_hint)
+        self.view.wheel_zoomed.connect(lambda: self.show_once_hint(HINT_PAN))
+        self.view.panned.connect(lambda: self.hint_used(HINT_PAN))
+        self.view.placed_with_tool.connect(self._on_placed_with_tool)
+        self.view.double_click_picked.connect(self._on_double_click_picked)
+        self.view.panel_split.connect(self._on_panel_split)
+        self.view.image_orphan_rejected.connect(lambda: self.show_once_hint(HINT_ORPHAN))
+        self.state.tool_changed.connect(self._on_tool_changed_for_hints)
 
         # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
         self.file_menu.sync_recent_project()
@@ -509,7 +536,13 @@ class MainWindow(QMainWindow):
         if event.type() == QEvent.Type.Shortcut:
             for tool, place in getattr(self, "_place_on_key", {}).items():
                 if watched is self._tool_actions.get(tool):
-                    return self._place_under_cursor(place)
+                    placed = self._place_under_cursor(place)
+                    # キーで置けた人には、もう案内しない（→ 6.35）
+                    if placed and tool == TOOL_TEXT:
+                        self.hint_used(HINT_TEXT_KEY)
+                    elif placed and tool in BALLOON_TOOLS:
+                        self.hint_used(HINT_BALLOON_KEY)
+                    return placed
         return super().eventFilter(watched, event)
 
     def _place_under_cursor(self, place) -> bool:
@@ -539,6 +572,8 @@ class MainWindow(QMainWindow):
         """
         if tool in ADJUST_TOOLS and self.state.tool == tool:
             self.state.set_tool(TOOL_SELECT)
+            # 出口を使えた人には、もう案内しない（→ 6.35）
+            self.hint_used(HINT_ADJUST)
             return
         self.state.set_tool(tool)
 
@@ -1007,6 +1042,8 @@ class MainWindow(QMainWindow):
 
         お知らせは `state` の側で出している。**何番目の案かはここからは分からない。**
         """
+        # 使えた人には、もう案内しない（→ 6.35）
+        self.hint_used(HINT_SUGGEST)
         if self.state.suggest_next_panel():
             self.on_panel_placed()
 
@@ -1593,6 +1630,15 @@ class MainWindow(QMainWindow):
         """
         return font_size_label(size_px)
 
+    def step_tone_thin(self, steps: int) -> None:
+        """トーン → 細い線を残す／細い線も塗る（→ 6.27）。
+
+        **一回きりの操作に見えやすい**（本人談 2026-08-06）。項目名の段数に
+        加えて、初めて押したときに重ねてよいことを案内する（→ 6.35）。
+        """
+        self.state.step_tone_thin(steps)
+        self.show_once_hint(HINT_THIN)
+
     def rasterize_text(self) -> None:
         """選んでいるセリフを1枚の画像に焼く（→ 要件定義 6.34）。
 
@@ -1608,6 +1654,7 @@ class MainWindow(QMainWindow):
             self.state.message.emit("字が見つからず、画像にできませんでした")
             return
         self.state.message.emit("画像にしました。文字の打ち直しはできません")
+        self.show_once_hint(HINT_RASTER)
 
     def delete_text(self) -> None:
         text = self.state.selected_text
@@ -1739,6 +1786,8 @@ class MainWindow(QMainWindow):
         **作品には一切書かない。** 印は画面の状態（`state.check_marks`）
         だけに持つので、Undo にも保存形式にもサムネイルの指紋にも乗らない。
         """
+        # 使えた人には、書き出しのときの案内はもう要らない（→ 6.35）
+        self.hint_used(HINT_CHECK)
         findings = inspect_project(
             self.state.project, self.state.has_asset, self.state.asset_px
         )
@@ -1782,23 +1831,44 @@ class MainWindow(QMainWindow):
         開く。選ばれた時点ではまだ開いていないので、その場で見ると
         打っている最中に「Alt+矢印」の案内が出る——入力中は効かないキーを。
         """
-        if HINT_NUDGE in self._hints_seen:
+        if HINT_NUDGE in self._hints_seen and HINT_DOUBLE_CLICK in self._hints_seen:
             return
         QTimer.singleShot(0, self._show_once_hints)
 
     def _show_once_hints(self) -> None:
-        if HINT_NUDGE in self._hints_seen or self.view.is_editing_text:
+        if self.view.is_editing_text or self._hint_just_shown:
             return
         # 対象はセリフ・フキダシ・画像（本人の指定 2026-09-27）。
         # コマとマークでも効くが、案内するのはこの3つを選んだときだけ
         state = self.state
         if (
-            state.selected_text is None
-            and state.selected_balloon is None
-            and state.selected_image is None
+            state.selected_text is not None
+            or state.selected_balloon is not None
+            or state.selected_image is not None
         ):
+            self.show_once_hint(HINT_NUDGE)
             return
-        self._show_hint(HINT_NUDGE)
+        # 絵の入ったコマを選んだ。**中の絵は1クリックでは選べない**（→ 6.3）
+        if state.selected_panel is not None and state.panel_images:
+            self.show_once_hint(HINT_DOUBLE_CLICK)
+
+    def show_once_hint(self, hint_id: str) -> None:
+        """まだ出していなければ出す。**セリフの入力中は、閉じるまで待たせる。**
+
+        入力欄のそばに帯が出ると、打っている字から目が離れる。待たせた
+        ものは `text_edit_finished` で出す（→ `_show_pending_hint`）。
+        """
+        if hint_id in self._hints_seen:
+            return
+        if self.view.is_editing_text:
+            self._pending_hint = hint_id
+            return
+        self._show_hint(hint_id)
+
+    def _show_pending_hint(self) -> None:
+        hint_id, self._pending_hint = self._pending_hint, None
+        if hint_id is not None:
+            self.show_once_hint(hint_id)
 
     def _show_hint(self, hint_id: str) -> None:
         """一度きりのヒントを出す。"""
@@ -1807,6 +1877,11 @@ class MainWindow(QMainWindow):
         self._mark_hint_seen(hint_id)
         save_last_hint(hint_id)
         self.hint_banner.show_text(HINT_TEXTS[hint_id])
+        self._hint_just_shown = True
+        QTimer.singleShot(0, self._clear_hint_just_shown)
+
+    def _clear_hint_just_shown(self) -> None:
+        self._hint_just_shown = False
 
     def _on_nudged(self) -> None:
         """`Alt+矢印` が押された。**使えた人には、もう案内しない。**
@@ -1836,9 +1911,7 @@ class MainWindow(QMainWindow):
         「絵を選んでから」と断られたりする。開いた時点で出すのは、
         何かを押す前に知っておけば迷わずに済むため。
         """
-        if HINT_TONE in self._hints_seen:
-            return
-        self._show_hint(HINT_TONE)
+        self.show_once_hint(HINT_TONE)
 
     def on_panel_placed(self) -> None:
         """コマを置いた（道具・ページ全面・次のコマの提案）。
@@ -1846,10 +1919,48 @@ class MainWindow(QMainWindow):
         **初めて置いたときに、絵の置き方を案内する。** コマを置いた直後が
         次に絵を入れたくなる場面で、入口の右クリックはどこにも見えていない。
         分割は数えない——割るには先にコマがあるので、初めての1枚にはならない。
+
+        それを出し終えていて、ページにコマが2つ以上あれば、次のコマの提案
+        （`N`）を案内する。定石は並びから型を読むので、1つでは提案が乏しい。
         """
-        if HINT_PANEL in self._hints_seen:
+        if HINT_PANEL not in self._hints_seen:
+            self._show_hint(HINT_PANEL)
             return
-        self._show_hint(HINT_PANEL)
+        if len(self.state.page.panels) >= 2:
+            self.show_once_hint(HINT_SUGGEST)
+
+    def _on_panel_split(self, slant: bool) -> None:
+        """コマを割った。斜めなら組の振る舞いを、そうでなければ提案を案内する。"""
+        if slant and HINT_SLANT not in self._hints_seen:
+            self._show_hint(HINT_SLANT)
+            return
+        if len(self.state.page.panels) >= 2:
+            self.show_once_hint(HINT_SUGGEST)
+
+    def _on_placed_with_tool(self, kind: str) -> None:
+        """道具を持ってからクリックして置いた。**キーならその場に置ける**（→ 6.4・6.5）。
+
+        セリフは置いた直後に入力欄が開くので、閉じるまで待たせる
+        （→ `show_once_hint`）。
+        """
+        self.show_once_hint(HINT_TEXT_KEY if kind == "text" else HINT_BALLOON_KEY)
+
+    def _on_double_click_picked(self, continued: bool) -> None:
+        """ダブルクリックで選び直した。踏み込めた人に1クリックの案内は要らない。
+
+        巡回の2段目以降まで進んだ（`continued`）ら、下へ順に移ることを案内する。
+        """
+        self.hint_used(HINT_DOUBLE_CLICK)
+        if continued:
+            self.show_once_hint(HINT_CYCLE)
+
+    def _on_tool_changed_for_hints(self) -> None:
+        """調整の道具（ラフ・トーン範囲・切り抜き）は、持っている間ほかを選べない。
+
+        **抜け方を知らないと閉じ込められる**ので、初めて持ったときに出口を案内する。
+        """
+        if self.state.tool in ADJUST_TOOLS:
+            self.show_once_hint(HINT_ADJUST)
 
     def _can_offer_recent(self) -> bool:
         """『前回のファイルを開く』で続きから作業できる状態か。
@@ -1948,6 +2059,7 @@ class MainWindow(QMainWindow):
         """
         at = self.state.add_page()
         self.state.message.emit(f"末尾に {at + 1} ページ目を追加しました")
+        self._on_page_added()
 
     def insert_page(self) -> None:
         """表示中のページの**前**に1枚差し込んで、そこへ移る。
@@ -1959,6 +2071,16 @@ class MainWindow(QMainWindow):
         self.state.message.emit(
             f"表示中のページの前に差し込みました（{at + 1} ページ目）"
         )
+        self._on_page_added()
+
+    def _on_page_added(self) -> None:
+        """ページが2枚以上になったら、付箋を案内する（→ 6.18、6.35）。
+
+        付箋はページ一覧の右クリックにしか入口が無い。1枚のうちは
+        どこまで進んだかを印す必要がないので、2枚目からにする。
+        """
+        if len(self.state.project.pages) >= 2:
+            self.show_once_hint(HINT_NOTE)
 
     def delete_page(self) -> None:
         """ページを消す。**必ず確認する**（要件定義 6.1）。

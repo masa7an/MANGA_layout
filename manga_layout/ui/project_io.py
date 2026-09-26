@@ -45,7 +45,7 @@ from .export import (
     planned_paths,
     scale_label,
 )
-from .hints import HINT_RECENT
+from .hints import HINT_CHECK, HINT_OPEN, HINT_RECENT
 from .psd_export import export_psd_pages
 from .restore import RestoreDialog
 from .saving import SaveAsDialog
@@ -184,6 +184,8 @@ class ProjectIO:
         """
         if not self.confirm_discard():
             return
+        # 何を選ぶ窓なのかを、窓と同時に案内する（→ 6.35）
+        self._window.show_once_hint(HINT_OPEN)
         chosen, _ = QFileDialog.getOpenFileName(
             self._window, "作品を開く", self.dialog_start_dir(), PROJECT_FILE_FILTER
         )
@@ -414,6 +416,9 @@ class ProjectIO:
         if dest is None:
             return False
 
+        # 書き出す前に点検できることを、窓と同時に案内する（→ 6.35）。
+        # ここで知れば、窓を閉じて先に点検へ回れる
+        self._window.show_once_hint(HINT_CHECK)
         dialog = ExportDialog(
             dest,
             self._state.page_index,
