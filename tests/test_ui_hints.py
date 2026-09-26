@@ -620,3 +620,41 @@ class Test帯の位置:
         banner = window.hint_banner.geometry()
         assert banner.y() == area.y() + HINT_TOP_MARGIN
         assert abs(banner.center().x() - area.center().x()) <= 1
+
+    def test_画面の幅に収める(self, window):
+        """1行で収まらない長さは、文字を小さくせずに折り返す（→ `HINT_SIDE_MARGIN`）。
+
+        **窓の大きさは変えずに見る。** テストでは窓を表に出さないので、
+        窓を `resize` しても描画面の大きさは変わらない。
+        """
+        from manga_layout.ui.hints import HINT_SIDE_MARGIN
+
+        font = window.hint_banner.font()
+        window.hint_banner.show_text(HINT_TEXTS[HINT_RASTER])
+        area = window.view.viewport().geometry()
+        banner = window.hint_banner.geometry()
+
+        assert banner.width() <= area.width() - HINT_SIDE_MARGIN * 2
+        assert banner.left() >= area.left() + HINT_SIDE_MARGIN
+        assert window.hint_banner.font() == font
+
+    def test_収まらなければ指定の幅で折り返す(self, window):
+        banner = window.hint_banner
+        banner.setText(HINT_TEXTS[HINT_RASTER])
+        banner._fit(10_000)
+        one_line = banner.size()
+
+        banner._fit(one_line.width() // 2)
+
+        assert banner.wordWrap()
+        assert banner.width() == one_line.width() // 2
+        assert banner.height() > one_line.height()  # 行が増えた
+
+    def test_収まれば1行のまま(self, window):
+        """折り返しを入れたままだと、短い文でも見立ての幅で改行される。"""
+        banner = window.hint_banner
+        banner.setText(HINT_TEXTS[HINT_RASTER])
+        banner._fit(100)  # 一度折り返させてから
+        banner._fit(10_000)
+
+        assert not banner.wordWrap()

@@ -67,6 +67,10 @@ HINT_FONT_SCALE = 1.5
 # 画面の上端からの距離（画面 px）。**上端ぎりぎりに出す**（本人の指定 2026-09-27）。
 # 下寄りに出していたときは、開く窓（エクスプローラー）が帯を隠した
 HINT_TOP_MARGIN = 4
+# 画面の左右の端との最小の隙間（画面 px）。帯がこれより広くなるときは、
+# **文字を小さくせずに折り返す**（2026-09-27 のレビュー。文字の大きさは
+# 読める最小なので削らない）
+HINT_SIDE_MARGIN = 16
 
 HINT_STYLE = (
     "QLabel {"
@@ -102,7 +106,6 @@ class HintBanner(QLabel):
 
     def show_text(self, text: str, duration_ms: int = HINT_DURATION_MS) -> None:
         self.setText(text)
-        self.adjustSize()
         self._place()
         self.show()
         self.raise_()
@@ -121,8 +124,24 @@ class HintBanner(QLabel):
 
     def _place(self) -> None:
         area = self._view.viewport().geometry()
+        self._fit(area.width() - HINT_SIDE_MARGIN * 2)
         x = area.x() + (area.width() - self.width()) // 2
         self.move(max(area.x(), x), area.y() + HINT_TOP_MARGIN)
+
+    def _fit(self, limit: int) -> None:
+        """1行で `limit` に収まればそのまま、収まらなければ `limit` の幅で折り返す。
+
+        **収まるときは折り返しを切っておく。** 入れたままだと、短い文でも
+        Qt が見立てた幅で改行し、1行で済む案内が2行になる。
+        """
+        limit = max(1, limit)
+        self.setWordWrap(False)
+        natural = self.sizeHint()
+        if natural.width() <= limit:
+            self.resize(natural)
+            return
+        self.setWordWrap(True)
+        self.resize(limit, self.heightForWidth(limit))
 
 
 def _scaled_font(base: QFont, scale: float) -> QFont:
