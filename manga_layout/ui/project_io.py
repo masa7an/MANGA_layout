@@ -495,7 +495,9 @@ class ProjectIO:
         dialog = QProgressDialog(
             "書き出しています…", "中止", 0, len(indexes), self._window
         )
-        dialog.setWindowTitle("書き出し")
+        # 「中」まで付ける。PSD は1ページ 1.0 秒かかり画面が止まるので、
+        # 窓の名前だけで処理の最中だと分かるようにする（2026-09-27）
+        dialog.setWindowTitle("書き出し中")
         dialog.setWindowModality(Qt.WindowModality.WindowModal)
         # 1ページだけ・小さいページなど、一瞬で終わる書き出しでは出さない。
         # 明示的に show() すると即座に出てしまうので呼ばない
