@@ -741,6 +741,8 @@ class ToneMenu:
         # QAction のほうで、あちらは触ると実体ごと消える（→ `items_to_copy`、
         # PySide6の落とし穴.md の 1）
         self.menu = menu = QMenu(TONE_MENU_LABEL, window)
+        # 開いたら最初の1回だけのヒントを見る（→ 6.35）
+        menu.aboutToShow.connect(window.on_tone_menu_shown)
         self.toggle_action = window._act(
             "入れる",
             window.toggle_tone,

@@ -121,6 +121,12 @@ class ContextMenu:
         """
         return fold_label(TONE_MENU_LABEL, self._state.tool == TOOL_TONE_AREA)
 
+    def _tone_submenu(self, menu: QMenu) -> QMenu:
+        """トーンの畳みを足す。開いたら最初の1回だけのヒントを見る（→ 6.35）。"""
+        sub = menu.addMenu(self._tone_label())
+        sub.aboutToShow.connect(self._window.on_tone_menu_shown)
+        return sub
+
     def build(self, x: float, y: float) -> QMenu:
         """右クリックのメニューを組む。`x`, `y` は押した場所（シーンの px）。"""
         window = self._window
@@ -191,7 +197,7 @@ class ContextMenu:
             )
             menu.addAction(window.image_menu.open_image_action)
             menu.addSeparator()
-            self._copy_actions(menu.addMenu(self._tone_label()), window.tone_menu.copy_items)
+            self._copy_actions(self._tone_submenu(menu), window.tone_menu.copy_items)
 
         elif state.selected_panel is not None:
             self._add_split_here(menu, x, y)
@@ -214,9 +220,7 @@ class ContextMenu:
             # コマを右クリックした利用者には行き先が無い（本人談 2026-08-06）。
             # 絵が1枚のコマならそのまま効き、複数なら押したときに断る
             if state.panel_images:
-                self._copy_actions(
-                    menu.addMenu(self._tone_label()), window.tone_menu.copy_items
-                )
+                self._copy_actions(self._tone_submenu(menu), window.tone_menu.copy_items)
             menu.addSeparator()
             self._add_place_here(menu, x, y, ("balloon", "sticker", "text"))
             menu.addSeparator()

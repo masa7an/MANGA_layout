@@ -2,15 +2,17 @@
 
 見るのは、出る条件（セリフ・フキダシ・画像を選んだとき。入力中は出さない）、
 2回目から出ないこと、`Alt+矢印` を使ったら消えること、ヘルプから出し直せること。
-起動時の『前回のファイルを開く』の案内（前回の作品が実在するときだけ）も見る。
+起動時の『前回のファイルを開く』の案内（前回の作品が実在するときだけ）と、
+「トーン」の畳みを初めて開いたときの案内も見る。
 """
 
 from __future__ import annotations
 
 import pytest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu
 from test_ui_nudge_keys import press
 from test_ui_size_keys import (  # noqa: F401  （fixture を借りる）
+    CENTER,
     window,
     with_balloon,
     with_image,
@@ -22,7 +24,7 @@ from manga_layout import hints_seen
 from manga_layout.hints_seen import HINTS_SEEN_FILENAME, load_hints_seen, mark_hint_seen
 from manga_layout.recent_project import save_recent_project
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS
+from manga_layout.ui.hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS, HINT_TONE
 
 
 def settle() -> None:
@@ -296,3 +298,37 @@ class Testリセット:
     def test_記録が無くても落ちない(self, window):
         window.reset_hints()
         window.reset_hints()
+
+
+class Testトーンの案内:
+    """「トーン」の畳みを初めて開いたとき、効く場面を案内する。"""
+
+    def test_メニューバーから開くと出る(self, window):
+        window.tone_menu.menu.aboutToShow.emit()
+        assert banner_up(window)
+        assert window.hint_banner.text() == HINT_TEXTS[HINT_TONE]
+        assert HINT_TONE in load_hints_seen(recorded_path())
+
+    def test_二度目は出ない(self, window):
+        window.tone_menu.menu.aboutToShow.emit()
+        window.hint_banner.hide()
+        window.tone_menu.menu.aboutToShow.emit()
+        assert not banner_up(window)
+
+    def test_右クリックから開いても出る(self, with_image):
+        mark_hint_seen(HINT_NUDGE)  # 絵を置いたときの案内と混ぜない
+        with_image.hint_banner.hide()
+        with_image.state.select(with_image.state.page.panels[0].id)
+        menu = with_image.context_menu.build(*CENTER)
+        # 畳みの QAction から `menu()` で辿ると実体が消える
+        # （→ PySide6の落とし穴.md の 1）。子の QMenu を直に探す
+        tone = next(m for m in menu.findChildren(QMenu) if m.title() == "トーン")
+        tone.aboutToShow.emit()
+        assert banner_up(with_image)
+        assert with_image.hint_banner.text() == HINT_TEXTS[HINT_TONE]
+
+    def test_もう一度見るで出る(self, window):
+        window.tone_menu.menu.aboutToShow.emit()
+        window.hint_banner.hide()
+        window.show_hints_again()
+        assert window.hint_banner.text() == HINT_TEXTS[HINT_TONE]

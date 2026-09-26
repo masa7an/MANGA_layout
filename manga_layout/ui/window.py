@@ -46,7 +46,7 @@ from .canvas import IMAGE_FILE_FILTER, PageView, font_size_label
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
 from .font_dialog import FONT_DIALOG_SIZE, FontChooser
-from .hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS, HintBanner
+from .hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS, HINT_TONE, HintBanner
 from .menu_search import (
     HIGHLIGHT_SECONDS,
     MENU_SEARCH_HINT,
@@ -1816,6 +1816,18 @@ class MainWindow(QMainWindow):
             return
         self._hints_seen.add(hint_id)
         mark_hint_seen(hint_id)
+
+    def on_tone_menu_shown(self) -> None:
+        """「トーン」の畳みが開いた（メニューバー・右クリックとも）。
+
+        **初めて開いたときに、効く場面を案内する。** トーンの持ち主は絵で
+        （→ 6.27）、コマを選んだままだと項目がグレーだったり、押しても
+        「絵を選んでから」と断られたりする。開いた時点で出すのは、
+        何かを押す前に知っておけば迷わずに済むため。
+        """
+        if HINT_TONE in self._hints_seen:
+            return
+        self._show_hint(HINT_TONE)
 
     def _can_offer_recent(self) -> bool:
         """『前回のファイルを開く』で続きから作業できる状態か。

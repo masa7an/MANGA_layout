@@ -17,10 +17,13 @@ from PySide6.QtWidgets import QAbstractScrollArea, QLabel
 # **名前は変えない。** 変えると、既に出した人にもう一度出る
 HINT_NUDGE = "nudge"
 HINT_RECENT = "recent_project"
+HINT_TONE = "tone"
 HINT_TEXTS = {
     HINT_NUDGE: "Alt+矢印キーで微調整ができます",
     # 文言は本人の指定（2026-09-27）。区切りの空白は全角
     HINT_RECENT: "[ファイル]　→　[前回のファイルを開く]　で続きから作業できます",
+    # 文言は本人の指定（2026-09-27）。オレンジ枠＝絵の選択枠（`canvas.IMAGE_ACCENT`）
+    HINT_TONE: "トーンの調整は、絵を選択しているときに行えます（オレンジ枠の表示中）",
 }
 
 # 出してから消えるまで（本人の指定 2026-09-27）
