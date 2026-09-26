@@ -3,7 +3,7 @@
 見るのは、出る条件（セリフ・フキダシ・画像を選んだとき。入力中は出さない）、
 2回目から出ないこと、`Alt+矢印` を使ったら消えること、ヘルプから出し直せること。
 起動時の『前回のファイルを開く』の案内（前回の作品が実在するときだけ）と、
-「トーン」の畳みを初めて開いたときの案内も見る。
+「トーン」の畳みを初めて開いたとき・コマを初めて置いたときの案内も見る。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from manga_layout import hints_seen
 from manga_layout.hints_seen import HINTS_SEEN_FILENAME, load_hints_seen, mark_hint_seen
 from manga_layout.recent_project import save_recent_project
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS, HINT_TONE
+from manga_layout.ui.hints import HINT_NUDGE, HINT_PANEL, HINT_RECENT, HINT_TEXTS, HINT_TONE
 
 
 def settle() -> None:
@@ -332,3 +332,48 @@ class Testトーンの案内:
         window.hint_banner.hide()
         window.show_hints_again()
         assert window.hint_banner.text() == HINT_TEXTS[HINT_TONE]
+
+
+class Testコマの案内:
+    """コマを初めて置いたとき、右クリックから絵を置けることを案内する。"""
+
+    @pytest.fixture
+    def empty(self, qapp, tmp_path):
+        win = MainWindow(EditorState())
+        win.state.save(tmp_path / "作品")
+        yield win
+        win.state.history.mark_saved()
+        win.close()
+
+    def test_道具で置くと出る(self, empty):
+        empty.view._apply_create(Rect(120.0, 120.0, 400.0, 300.0), (120.0, 120.0))
+        assert banner_up(empty)
+        assert empty.hint_banner.text() == HINT_TEXTS[HINT_PANEL]
+        assert HINT_PANEL in load_hints_seen(recorded_path())
+
+    def test_ページ全面でも出る(self, empty):
+        empty.add_full_page_panel()
+        assert empty.hint_banner.text() == HINT_TEXTS[HINT_PANEL]
+
+    def test_次のコマの提案でも出る(self, empty):
+        # 全面のコマだと次を置く余地が無いので、上半分に置いておく
+        empty.view._apply_create(Rect(120.0, 120.0, 720.0, 540.0), (120.0, 120.0))
+        empty.hint_banner.hide()
+        empty.reset_hints()
+        empty.suggest_next_panel()
+        assert banner_up(empty)
+        assert empty.hint_banner.text() == HINT_TEXTS[HINT_PANEL]
+
+    def test_二度目は出ない(self, empty):
+        empty.add_full_page_panel()
+        empty.hint_banner.hide()
+        empty.add_full_page_panel()
+        assert not banner_up(empty)
+
+    def test_ファイル画像読み込みを使った人には出ない(self, empty, monkeypatch):
+        empty.add_full_page_panel()
+        empty.hint_banner.hide()
+        empty.reset_hints()
+        monkeypatch.setattr(empty, "_choose_image_file", lambda: None)
+        empty.open_image_file()
+        assert HINT_PANEL in load_hints_seen(recorded_path())

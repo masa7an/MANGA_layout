@@ -2339,6 +2339,8 @@ class PageView(QGraphicsView):
     # セリフの入力欄が閉じた。中身を変えずに閉じると `state.changed` が
     # 鳴らないので、入力中に見送ったヒント（→ 6.35）の出し直しはこれで拾う
     text_edit_finished = Signal()
+    # コマの追加の道具でコマを置いた。最初の1回だけのヒント（→ 6.35）の合図
+    panel_placed = Signal()
 
     def __init__(self, state: EditorState):
         # Qt の初期化より先に属性を持たせない（基底の __init__ が済むまで代入できない）
@@ -3630,6 +3632,7 @@ class PageView(QGraphicsView):
             f"コマを追加しました（{rect.w:.0f} × {rect.h:.0f} px）。"
             "位置と大きさを調整できます"
         )
+        self.panel_placed.emit()
 
     def _apply_create_balloon(
         self, rect: Rect, press: tuple[float, float], style: str | None = None

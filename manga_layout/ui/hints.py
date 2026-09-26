@@ -18,12 +18,15 @@ from PySide6.QtWidgets import QAbstractScrollArea, QLabel
 HINT_NUDGE = "nudge"
 HINT_RECENT = "recent_project"
 HINT_TONE = "tone"
+HINT_PANEL = "panel_image"
 HINT_TEXTS = {
     HINT_NUDGE: "Alt+矢印キーで微調整ができます",
     # 文言は本人の指定（2026-09-27）。区切りの空白は全角
     HINT_RECENT: "[ファイル]　→　[前回のファイルを開く]　で続きから作業できます",
     # 文言は本人の指定（2026-09-27）。オレンジ枠＝絵の選択枠（`canvas.IMAGE_ACCENT`）
     HINT_TONE: "トーンの調整は、絵を選択しているときに行えます（オレンジ枠の表示中）",
+    # 文言は本人の指定（2026-09-27）。項目名の実物は「ファイル画像 読み込み...」
+    HINT_PANEL: "右クリック　→　[ファイル画像読み込み]　で絵が置けます",
 }
 
 # 出してから消えるまで（本人の指定 2026-09-27）

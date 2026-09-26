@@ -46,7 +46,14 @@ from .canvas import IMAGE_FILE_FILTER, PageView, font_size_label
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
 from .font_dialog import FONT_DIALOG_SIZE, FontChooser
-from .hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS, HINT_TONE, HintBanner
+from .hints import (
+    HINT_NUDGE,
+    HINT_PANEL,
+    HINT_RECENT,
+    HINT_TEXTS,
+    HINT_TONE,
+    HintBanner,
+)
 from .menu_search import (
     HIGHLIGHT_SECONDS,
     MENU_SEARCH_HINT,
@@ -288,6 +295,7 @@ class MainWindow(QMainWindow):
         self.state.selection_changed.connect(self._queue_once_hints)
         self.view.text_edit_finished.connect(self._queue_once_hints)
         self.view.nudged.connect(self._on_nudged)
+        self.view.panel_placed.connect(self.on_panel_placed)
 
         # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
         self.file_menu.sync_recent_project()
@@ -999,7 +1007,8 @@ class MainWindow(QMainWindow):
 
         お知らせは `state` の側で出している。**何番目の案かはここからは分からない。**
         """
-        self.state.suggest_next_panel()
+        if self.state.suggest_next_panel():
+            self.on_panel_placed()
 
     def toggle_panel_lock(self) -> None:
         """選んだコマのロックを付け外しする（要件定義 6.17）。
@@ -1189,6 +1198,8 @@ class MainWindow(QMainWindow):
         panel = self._target_panel()
         if panel is None:
             return
+        # 使えた人には、もう案内しない（→ 6.35）
+        self.hint_used(HINT_PANEL)
         chosen = self._choose_image_file()
         if chosen is None:
             return
@@ -1829,6 +1840,17 @@ class MainWindow(QMainWindow):
             return
         self._show_hint(HINT_TONE)
 
+    def on_panel_placed(self) -> None:
+        """コマを置いた（道具・ページ全面・次のコマの提案）。
+
+        **初めて置いたときに、絵の置き方を案内する。** コマを置いた直後が
+        次に絵を入れたくなる場面で、入口の右クリックはどこにも見えていない。
+        分割は数えない——割るには先にコマがあるので、初めての1枚にはならない。
+        """
+        if HINT_PANEL in self._hints_seen:
+            return
+        self._show_hint(HINT_PANEL)
+
     def _can_offer_recent(self) -> bool:
         """『前回のファイルを開く』で続きから作業できる状態か。
 
@@ -1912,6 +1934,7 @@ class MainWindow(QMainWindow):
         with self.state.edit("コマの追加") as project:
             panel = project.add_panel(project.pages[self.state.page_index], rect)
         self.state.select(panel.id)
+        self.on_panel_placed()
 
     # -- ページ ------------------------------------------------------------
 
