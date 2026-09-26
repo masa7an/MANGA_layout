@@ -2333,6 +2333,12 @@ class PageView(QGraphicsView):
     # セリフは文字の大きさを変えるので、`window.py` の受け持ち
     # （こちらからは読めない → `font_size_label`）
     size_step_requested = Signal(int)
+    # `Alt+矢印` が押された。動いたかどうかは問わない——キーを知っている
+    # ことが分かれば、最初の1回だけのヒント（→ 6.35）はもう要らない
+    nudged = Signal()
+    # セリフの入力欄が閉じた。中身を変えずに閉じると `state.changed` が
+    # 鳴らないので、入力中に見送ったヒント（→ 6.35）の出し直しはこれで拾う
+    text_edit_finished = Signal()
 
     def __init__(self, state: EditorState):
         # Qt の初期化より先に属性を持たせない（基底の __init__ が済むまで代入できない）
@@ -2534,6 +2540,7 @@ class PageView(QGraphicsView):
                 return
             if key in NUDGE_KEYS:
                 self.nudge_selected(*NUDGE_KEYS[key])
+                self.nudged.emit()
                 event.accept()
                 return
         # どこまでを黒と見るかを連打で合わせる（→ 要件定義 6.27）。
@@ -3038,6 +3045,7 @@ class PageView(QGraphicsView):
         self._scene.editing_text_id = None
         self._scene.editing_text_content = None
         self._scene.removeItem(editor)
+        self.text_edit_finished.emit()
 
         if is_new and (not commit or not content.strip()):
             # **確定していない中身は捨ててから消す。** 追加した時点の

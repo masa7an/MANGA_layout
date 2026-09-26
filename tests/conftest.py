@@ -94,6 +94,21 @@ def 前回開いた作品の記録を逃がす(tmp_path_factory, monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def 出したヒントの記録を逃がす(tmp_path_factory, monkeypatch):
+    """本物の `data/hints_seen.txt` に書かせない。
+
+    ヒントはセリフ・フキダシ・画像を選ぶと出て、出したことを書き足す
+    （→ `manga_layout.hints_seen`）。テストが本物へ書くと、本人がまだ
+    見ていないヒントが「出した」ことになり、二度と出なくなる。
+    """
+    directory = tmp_path_factory.mktemp("hints_seen")
+    monkeypatch.setattr(
+        "manga_layout.hints_seen.hints_seen_path",
+        lambda: directory / "hints_seen.txt",
+    )
+
+
 @pytest.fixture
 def settings_file(tmp_path_factory) -> pathlib.Path:
     """テスト用の設定ファイルの置き場所（→ `設定を逃がす`）。

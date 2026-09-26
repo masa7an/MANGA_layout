@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from ..check import headline, inspect_project, marked_page_ids
 from ..errors import MangaLayoutError
+from ..hints_seen import load_hints_seen, mark_hint_seen
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect
 from ..model import (
@@ -38,6 +39,7 @@ from .canvas import IMAGE_FILE_FILTER, PageView, font_size_label
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
 from .font_dialog import FONT_DIALOG_SIZE, FontChooser
+from .hints import HINT_NUDGE, HINT_TEXTS, HintBanner
 from .menu_search import (
     HIGHLIGHT_SECONDS,
     MENU_SEARCH_HINT,
@@ -213,6 +215,10 @@ class MainWindow(QMainWindow):
         self._menu_highlight_timer: QTimer | None = None
         # ショートカットキーの一覧（→ 7章）。こちらも押されるまで作らない
         self._shortcuts_dialog: ShortcutsDialog | None = None
+        # 最初の1回だけ出す操作のヒント（→ 6.35）。出したものの名前は
+        # 起動時に一度読んでおき、出すたびに書き足す
+        self.hint_banner = HintBanner(self.view)
+        self._hints_seen = load_hints_seen()
 
         self._tool_actions: dict[str, QAction] = {}
         self._build_pages_dock()
@@ -271,6 +277,10 @@ class MainWindow(QMainWindow):
         self.state.message.connect(lambda text: self.statusBar().showMessage(text, 6000))
         self.view.context_menu_requested.connect(self.context_menu.show)
         self.view.size_step_requested.connect(self.step_selected_size)
+        # ヒントは選び直したとき・セリフの入力欄を閉じたときに見る
+        self.state.selection_changed.connect(self._queue_once_hints)
+        self.view.text_edit_finished.connect(self._queue_once_hints)
+        self.view.nudged.connect(self._on_nudged)
 
         # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
         self.file_menu.sync_recent_project()
@@ -562,6 +572,14 @@ class MainWindow(QMainWindow):
         menu.addAction(
             self._act(
                 "ショートカットキーの一覧...", self.show_shortcuts, "H", SHORTCUTS_HINT
+            )
+        )
+        # 見逃したときの戻り道（→ 6.35）。**キーは付けない**（→ 7章）
+        menu.addAction(
+            self._act(
+                "ヒントをもう一度見る",
+                self.show_hints_again,
+                tip="最初に一度だけ出す操作のヒント（Alt+矢印キーで微調整）をもう一度出します",
             )
         )
 
@@ -1727,6 +1745,59 @@ class MainWindow(QMainWindow):
         if self._shortcuts_dialog is None:
             self._shortcuts_dialog = ShortcutsDialog(self)
         self._shortcuts_dialog.show_groups(collect_groups(self))
+
+    # -- 最初の1回だけのヒント（→ 要件定義 6.35） ------------------------------
+
+    def _queue_once_hints(self) -> None:
+        """出すかどうかの判定を、今の操作が済んだあとへ回す。
+
+        **その場で判定しない。** セリフを置くと、選ばれた直後に入力欄が
+        開く。選ばれた時点ではまだ開いていないので、その場で見ると
+        打っている最中に「Alt+矢印」の案内が出る——入力中は効かないキーを。
+        """
+        if HINT_NUDGE in self._hints_seen:
+            return
+        QTimer.singleShot(0, self._show_once_hints)
+
+    def _show_once_hints(self) -> None:
+        if HINT_NUDGE in self._hints_seen or self.view.is_editing_text:
+            return
+        # 対象はセリフ・フキダシ・画像（本人の指定 2026-09-27）。
+        # コマとマークでも効くが、案内するのはこの3つを選んだときだけ
+        state = self.state
+        if (
+            state.selected_text is None
+            and state.selected_balloon is None
+            and state.selected_image is None
+        ):
+            return
+        # **出した時点で記録する。** 5秒のあいだにアプリが落ちても、
+        # 次の起動で同じ案内が出直すことはない
+        self._mark_hint_seen(HINT_NUDGE)
+        self.hint_banner.show_text(HINT_TEXTS[HINT_NUDGE])
+
+    def _on_nudged(self) -> None:
+        """`Alt+矢印` が押された。**使えた人には、もう案内しない。**
+
+        出ていれば、伝わったものとしてすぐ消す。出す前に自分で見つけた
+        人には、この先も出さない。
+        """
+        self._mark_hint_seen(HINT_NUDGE)
+        self.hint_banner.hide()
+
+    def _mark_hint_seen(self, hint_id: str) -> None:
+        if hint_id in self._hints_seen:
+            return
+        self._hints_seen.add(hint_id)
+        mark_hint_seen(hint_id)
+
+    def show_hints_again(self) -> None:
+        """ヘルプ → ヒントをもう一度見る。**選んでいるものに関わらず、今すぐ出す。**
+
+        記録を消して「次に選んだとき」に回す作りにすると、押しても
+        その場では何も起きず、効いたのか分からない。
+        """
+        self.hint_banner.show_text(HINT_TEXTS[HINT_NUDGE])
 
     def highlight_menu(self, name: str) -> None:
         """メニューバーの見出し1つを四角く囲む（→ 要件定義 6.30）。
