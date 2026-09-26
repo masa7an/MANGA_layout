@@ -176,6 +176,35 @@ class TestTキーでその場に置く:
         assert self.texts(window) == []
         assert window.state.tool == TOOL_TEXT
 
+    def test_ヒントの帯の下でも置ける(self, window_with_balloon, monkeypatch):
+        """帯は画面の枠の子で、描画面の子ではない。重なりに数えると置けない。"""
+        from manga_layout.ui import canvas
+
+        window = window_with_balloon
+        window.hint_banner.show_text("案内")
+        monkeypatch.setattr(canvas.QApplication, "widgetAt", lambda *_: window.hint_banner)
+        window.view.centerOn(*BALLOON.center)
+        self.カーソルを置く(window, *BALLOON.center)
+        self.Tキーを押す(window)
+
+        assert len(self.texts(window)) == 1
+
+    def test_別の窓が重なっていたら置かない(self, window_with_balloon, monkeypatch):
+        """帯を通すために緩めた判定が、本物の重なりまで通していないか（対照）。"""
+        from PySide6.QtWidgets import QWidget
+
+        from manga_layout.ui import canvas
+
+        window = window_with_balloon
+        other = QWidget()
+        monkeypatch.setattr(canvas.QApplication, "widgetAt", lambda *_: other)
+        window.view.centerOn(*BALLOON.center)
+        self.カーソルを置く(window, *BALLOON.center)
+        self.Tキーを押す(window)
+
+        assert self.texts(window) == []
+        assert window.state.tool == TOOL_TEXT
+
     def test_押しっぱなしでも1つしか置かない(self, window_with_balloon):
         # キーの繰り返しは項目の `autoRepeat` で止まる（→ test_ui_balloon の同名）
         assert window_with_balloon._tool_actions[TOOL_TEXT].autoRepeat() is False

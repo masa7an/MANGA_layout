@@ -3635,12 +3635,15 @@ class PageView(QGraphicsView):
         if not self.viewport().rect().contains(local):
             return None
         # 別の窓（浮かせたドック等）が上に重なっていたら、見えているのは
-        # 用紙ではない。offscreen では常に None が返るので、そのときは見ない
+        # 用紙ではない。offscreen では常に None が返るので、そのときは見ない。
+        #
+        # **画面の枠の子は重なりに数えない。** ヒントの帯（`HintBanner`）は
+        # 枠の子として用紙の上に重なるが、半透明で数秒で消える案内にすぎない。
+        # 数えると、帯の下でだけキーで置けなくなる（2026-09-27 のレビュー）。
+        # 描画面（viewport）も枠の子なので、ここに含まれる。スクロールバーも
+        # 枠の子だが、上の描画面の範囲の判定で先に外れている
         under = QApplication.widgetAt(global_pos)
-        viewport = self.viewport()
-        if under is not None and not (
-            under is viewport or viewport.isAncestorOf(under)
-        ):
+        if under is not None and not self.isAncestorOf(under):
             return None
         point = self.mapToScene(local)
         x, y = point.x(), point.y()
