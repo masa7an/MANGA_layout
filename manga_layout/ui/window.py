@@ -451,17 +451,18 @@ class MainWindow(QMainWindow):
             self.addAction(action)
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
-        # **`T` と `B` のキーは、カーソルが用紙の上ならその場に置く**
-        # （→ 6.5・6.9）。同じ項目はメニュー・道具箱・右クリックからも
-        # 押せるので、`triggered` では分けられない。右クリックのメニューは
+        # **`T` とフキダシのキー（`B`・`W`・`G`）は、カーソルが用紙の
+        # 上ならその場に置く**（→ 6.5・6.4）。同じ項目はメニュー・道具箱・
+        # 右クリックからも押せるので、`triggered` では分けられない。右クリックのメニューは
         # 用紙の上に開くため、分けないと「押した項目の位置」に置かれる。
         # キーで押したときにだけ届く `Shortcut` の出来事を、項目に届く前に拾う
         self._place_on_key = {
             TOOL_TEXT: self.view.add_text_at,
-            TOOL_BALLOON: lambda x, y: self.view.add_balloon_at(
-                x, y, BALLOON_TOOLS[TOOL_BALLOON]
-            ),
         }
+        for tool in (TOOL_BALLOON, TOOL_BALLOON_CLOUD, TOOL_BALLOON_JAGGED):
+            self._place_on_key[tool] = partial(
+                self.view.add_balloon_at, style=BALLOON_TOOLS[tool]
+            )
         for tool in self._place_on_key:
             self._tool_actions[tool].installEventFilter(self)
         # **選択にだけ説明を添える。** 他の道具は「〜を追加」「〜を調整」と
@@ -480,12 +481,12 @@ class MainWindow(QMainWindow):
         return super().eventFilter(watched, event)
 
     def _place_under_cursor(self, place) -> bool:
-        """`T` / `B` キーが押された。カーソルが用紙の上なら、そこに置く。
+        """`T` / `B` / `W` / `G` キーが押された。カーソルが用紙の上なら、そこに置く。
 
         置いたら True（項目には届けない）。用紙の外なら False を返して、
         いつもどおり道具の持ち替えに回す。**道具を持ってからクリックする
         2手は、押した瞬間に置き場所が決まっているのに、もう1手を求める**
-        （本人の指摘 2026-09-27。直感的でなく戸惑う。`B` は同日に追加）。
+        （本人の指摘 2026-09-27。直感的でなく戸惑う。フキダシのキーは同日に追加）。
         """
         point = self.view.page_point_under_cursor()
         if point is None:

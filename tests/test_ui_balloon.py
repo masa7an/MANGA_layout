@@ -197,8 +197,17 @@ class TestBalloonMenu:
         assert found == {f"{name}にする" for name in BALLOON_STYLE_LABELS.values()}
 
 
-class TestBキーでその場に置く:
-    """`B` キーを押したとき、カーソルが用紙の上ならその場に置く。
+# キーのあるフキダシの道具。キーの無い種類はメニューと右クリックから出す
+KEYED_BALLOON_TOOLS = [
+    (TOOL_BALLOON, "B"),
+    (TOOL_BALLOON_CLOUD, "W"),
+    (TOOL_BALLOON_JAGGED, "G"),
+]
+
+
+@pytest.mark.parametrize(("tool", "key"), KEYED_BALLOON_TOOLS)
+class Testキーでその場に置く:
+    """`B`・`W`・`G` キーを押したとき、カーソルが用紙の上ならその場に置く。
 
     テキストの `T` キーと同じ扱い（→ tests/test_ui_text.py）。**キーで押した
     ときだけ**置き、メニュー・右クリックからは道具を持つだけ。
@@ -214,45 +223,48 @@ class TestBキーでその場に置く:
         view = window.view
         QCursor.setPos(view.viewport().mapToGlobal(view.mapFromScene(QPointF(x, y))))
 
-    def Bキーを押す(self, window) -> None:
+    def キーを押す(self, window, tool: str, key: str) -> None:
         from PySide6.QtGui import QKeySequence, QShortcutEvent
         from PySide6.QtWidgets import QApplication
 
-        action = window._tool_actions[TOOL_BALLOON]
-        QApplication.sendEvent(action, QShortcutEvent(QKeySequence("B"), None))
+        action = window._tool_actions[tool]
+        assert action.shortcut() == QKeySequence(key), "キーの割り当てが変わった"
+        QApplication.sendEvent(action, QShortcutEvent(QKeySequence(key), None))
 
-    def test_用紙の上ならその場に置く(self, window_with_panel):
+    def test_用紙の上ならその場に置く(self, window_with_panel, tool, key):
         window = window_with_panel
         window.view.centerOn(*self.WHERE)
         self.カーソルを置く(window, *self.WHERE)
-        self.Bキーを押す(window)
+        self.キーを押す(window, tool, key)
 
         floating = window.state.page.floating
         assert len(floating) == 1
         assert isinstance(floating[0], BalloonObject)
-        assert floating[0].style == BALLOON_TOOLS[TOOL_BALLOON]
+        assert floating[0].style == BALLOON_TOOLS[tool]
         assert floating[0].rect.center == pytest.approx(self.WHERE, abs=1.0)
         assert window.state.tool == TOOL_SELECT
 
-    def test_用紙の外なら道具を持つだけ(self, window_with_panel):
+    def test_用紙の外なら道具を持つだけ(self, window_with_panel, tool, key):
         window = window_with_panel
         window.view.fit_page()
         size = window.state.page.size
         self.カーソルを置く(window, -10.0, size.h / 2.0)
         assert window.view.page_point_under_cursor() is None, "灰色の上に置けていない"
-        self.Bキーを押す(window)
+        self.キーを押す(window, tool, key)
 
         assert window.state.page.floating == []
-        assert window.state.tool == TOOL_BALLOON
+        assert window.state.tool == tool
 
-    def test_メニューから押したら用紙の上でも道具を持つだけ(self, window_with_panel):
+    def test_メニューから押したら用紙の上でも道具を持つだけ(
+        self, window_with_panel, tool, key
+    ):
         window = window_with_panel
         window.view.centerOn(*self.WHERE)
         self.カーソルを置く(window, *self.WHERE)
-        window._tool_actions[TOOL_BALLOON].trigger()
+        window._tool_actions[tool].trigger()
 
         assert window.state.page.floating == []
-        assert window.state.tool == TOOL_BALLOON
+        assert window.state.tool == tool
 
 
 class TestAdd:
