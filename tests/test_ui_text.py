@@ -1493,6 +1493,53 @@ class TestConfirmHint:
         window_with_text.view.finish_text_edit(commit=False)
 
 
+class Test取消の目印:
+    """確定の目印の右に並べる「取消（Esc）」の目印（2026-09-27）。
+
+    **表示だけの疑似ボタン**（本人の指示）。押しても取り消しにはならず、
+    確定の目印と同じく下の画面へ素通りして確定する。
+    """
+
+    def 開く(self, window):
+        window.view.begin_text_edit(window.state.selected_text.id)
+        return window.view._text_editor
+
+    def test_確定の目印の右に同じ高さで並ぶ(self, window_with_text):
+        editor = self.開く(window_with_text)
+        confirm, cancel = editor._confirm, editor._cancel
+        確定 = confirm.mapRectToScene(confirm.boundingRect())
+        取消 = cancel.mapRectToScene(cancel.boundingRect())
+        window_with_text.view.finish_text_edit(commit=False)
+
+        assert 取消.left() > 確定.right()
+        assert 取消.top() == pytest.approx(確定.top())
+        assert 取消.bottom() == pytest.approx(確定.bottom())
+
+    def test_Escキーを名乗る(self):
+        from manga_layout.ui.canvas import CancelHintItem
+
+        assert "Esc" in CancelHintItem.LABEL
+
+    def test_押しても自分では受け取らない(self, window_with_text):
+        from PySide6.QtCore import Qt
+
+        受け取る = self.開く(window_with_text)._cancel.acceptedMouseButtons()
+        window_with_text.view.finish_text_edit(commit=False)
+
+        assert 受け取る == Qt.MouseButton.NoButton
+
+    def test_押すと確定する(self, window_with_text):
+        """**取り消しにはならない。** 表示だけなので、確定の道に乗る。"""
+        editor = self.開く(window_with_text)
+        editor.setPlainText("打ち込んだ内容")
+        spot = editor._cancel.mapToScene(editor._cancel.boundingRect().center())
+
+        click(window_with_text.view, spot.x(), spot.y())
+
+        assert window_with_text.view._text_editor is None, "入力から抜けていない"
+        assert only_text(window_with_text.state.page).content == "打ち込んだ内容"
+
+
 class Test縦書きの下見:
     """入力中に、確定後の縦書きを枠の中へ出す（2026-09-05）。
 

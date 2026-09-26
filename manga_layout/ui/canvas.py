@@ -1908,6 +1908,10 @@ class ConfirmHintItem(QGraphicsItem):
         """
         return self.GAP + self._h
 
+    def width(self) -> float:
+        """目印の幅。右へ並べる札の足し幅（→ `CancelHintItem`）。"""
+        return self._w
+
     def boundingRect(self) -> QRectF:
         return QRectF(0.0, self.GAP, self._w, self._h)
 
@@ -1922,6 +1926,65 @@ class ConfirmHintItem(QGraphicsItem):
         painter.drawText(
             QPointF(self.PADDING_X, self.GAP + self._baseline), self.LABEL
         )
+
+
+class CancelHintItem(QGraphicsItem):
+    """確定の目印の右に並べる「取消」の目印（本人の指示 2026-09-27）。
+
+    **表示だけの疑似ボタン。** 押し方（Esc）をその場に出すためのもので、
+    確定の目印と対にして「抜け方は2つある」と一目で分かるようにする。
+
+    **押しても取り消しにはならない。** 自分では受け取らず（`NoButton`）、
+    クリックは下の画面へ素通りして「画面を触ったら確定」の道に乗る——
+    つまり**押すと確定する。** 取り消すには Esc を押す。表示のみという
+    指示のとおりで、押して取り消す形にはしていない。
+
+    `ConfirmHintItem` の子にしてある。倍率を無視する親の座標系に並ぶので、
+    横の間隔を画面の画素で書ける（→ `SizeKeysHintItem` と同じ理由）。
+    """
+
+    PADDING_X = 8.0
+    PADDING_Y = 4.0
+    # 確定の目印の右端との間隔（画面の画素）。2つが1組に見える程度に詰める
+    GAP = 6.0
+    LABEL = "取消（Esc）"
+
+    # 灰色。確定（青）が進む側、こちらは戻る側。**赤にはしない**——
+    # 取り消しても失うのは打ちかけの内容だけで、警告の色を使うほどではない
+    BG = QColor("#757575")
+    FG = QColor("#FFFFFF")
+
+    def __init__(self, parent: ConfirmHintItem):
+        super().__init__(parent)
+        self._font = QFont()
+        self._font.setPixelSize(12)
+        metrics = QFontMetricsF(self._font)
+        self._w = metrics.horizontalAdvance(self.LABEL) + self.PADDING_X * 2
+        self._h = metrics.height() + self.PADDING_Y * 2
+        self._baseline = self.PADDING_Y + metrics.ascent()
+        # 上下の位置は親と揃える。親は自分の内側で `GAP` ぶん下げて描くので、
+        # 同じだけ下げる
+        self._top = ConfirmHintItem.GAP
+
+        self.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        self.setZValue(1001)
+        self.setPos(parent.width() + self.GAP, 0.0)
+
+    def _box(self) -> QRectF:
+        return QRectF(0.0, self._top, self._w, self._h)
+
+    def boundingRect(self) -> QRectF:
+        return self._box()
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        box = self._box()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(self.BG))
+        painter.drawRoundedRect(box, 3.0, 3.0)
+
+        painter.setFont(self._font)
+        painter.setPen(QPen(self.FG))
+        painter.drawText(QPointF(self.PADDING_X, self._top + self._baseline), self.LABEL)
 
 
 # 看板に出す記号と、実際の割り当ての対応（本人の指示 2026-09-05）。
@@ -2141,7 +2204,8 @@ class TextEditorItem(QGraphicsTextItem):
         self._place_in(text.rect)
 
         self._confirm = ConfirmHintItem(self)
-        # 目印の子。位置は目印の座標系で決まるので、置き直しは要らない
+        # どちらも目印の子。位置は目印の座標系で決まるので、置き直しは要らない
+        self._cancel = CancelHintItem(self._confirm)
         self._size_keys = SizeKeysHintItem(self._confirm)
         self._place_hints()
         # 行が増えると入力欄の下端が下がる。札も目印も付いていく
