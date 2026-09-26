@@ -101,8 +101,14 @@ class HintBanner(QLabel):
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
-        # 窓の大きさが変わったら置き直す（出ている5秒のあいだに限る）
-        view.installEventFilter(self)
+        # 窓の大きさが変わったら置き直す（出ている5秒のあいだに限る）。
+        #
+        # **見張るのは枠ではなく描画面。** 枠の大きさが変わった知らせは、
+        # 枠が描画面を並べ直す前に届くので、その時点で描画面の幅を読むと
+        # 1つ前の大きさが返る。出したまま窓を狭めると、帯が前の幅のまま
+        # 右へはみ出した（2026-09-27、実物の窓で確認）
+        self._viewport = view.viewport()
+        self._viewport.installEventFilter(self)
 
     def show_text(self, text: str, duration_ms: int = HINT_DURATION_MS) -> None:
         self.setText(text)
@@ -118,7 +124,11 @@ class HintBanner(QLabel):
         event.accept()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
-        if watched is self._view and event.type() == QEvent.Type.Resize and self.isVisible():
+        if (
+            watched is self._viewport
+            and event.type() == QEvent.Type.Resize
+            and self.isVisible()
+        ):
             self._place()
         return False
 

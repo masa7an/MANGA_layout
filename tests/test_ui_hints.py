@@ -691,3 +691,23 @@ class Test帯の位置:
         banner._fit(10_000)
 
         assert not banner.wordWrap()
+
+    def test_出したまま窓を狭めても収め直す(self, window):
+        """描画面の大きさが変わった知らせで置き直す（→ `HintBanner.__init__`）。
+
+        枠の知らせで置き直すと、描画面を並べ直す前の幅を読んで、1つ前の
+        大きさのまま右へはみ出す（2026-09-27、実物の窓で確認）。
+        """
+        from manga_layout.ui.hints import HINT_SIDE_MARGIN
+
+        window.resize(1200, 900)
+        window.show()
+        QApplication.processEvents()
+        window.hint_banner.show_text(HINT_TEXTS[HINT_RASTER])
+        for width in (760, 560):
+            window.resize(width, 900)
+            QApplication.processEvents()
+            area = window.view.viewport().geometry()
+            banner = window.hint_banner.geometry()
+            assert banner.width() <= area.width() - HINT_SIDE_MARGIN * 2, width
+            assert banner.left() >= area.left() + HINT_SIDE_MARGIN, width
