@@ -135,7 +135,7 @@ def test_画像だけを写すと同じコマの中に増える(project):
 def test_フキダシは上のセリフごと写る(project):
     page = project.pages[0]
     balloon = project.add_balloon(page, BALLOON)
-    text = project.add_text(page, "セリフ", TEXT)
+    text = project.add_text(page, "テキスト", TEXT)
     text.attached_balloon_id = balloon.id
 
     copy = project.duplicate(page, balloon.id, GUTTER, GUTTER)
@@ -150,7 +150,7 @@ def test_写したセリフは写したフキダシに紐づく(project):
     """元を指したままだと、元を動かしたときに写しだけが飛んでいく（→ 6.5）。"""
     page = project.pages[0]
     balloon = project.add_balloon(page, BALLOON)
-    text = project.add_text(page, "セリフ", TEXT)
+    text = project.add_text(page, "テキスト", TEXT)
     text.attached_balloon_id = balloon.id
 
     copy = project.duplicate(page, balloon.id, GUTTER, GUTTER)
@@ -194,12 +194,12 @@ def test_コマへの紐づけは元のまま引き継ぐ(project):
 
 def test_セリフだけを写してもフキダシは増えない(project):
     page = project.pages[0]
-    text = project.add_text(page, "セリフ", TEXT)
+    text = project.add_text(page, "テキスト", TEXT)
 
     copy = project.duplicate(page, text.id, GUTTER, GUTTER)
 
     assert isinstance(copy, TextObject)
-    assert copy.content == "セリフ"
+    assert copy.content == "テキスト"
     assert [f for f in page.floating if isinstance(f, BalloonObject)] == []
 
 
@@ -303,7 +303,7 @@ def test_フキダシの複製もUndoは1手(window_with_panel):
     """セリフも一緒に写るが、戻すのは1回（→ 6.15）。"""
     state = window_with_panel.state
     balloon = state.add_balloon(BALLOON)
-    text = state.add_text(TEXT, "セリフ")
+    text = state.add_text(TEXT, "テキスト")
     assert text.attached_balloon_id == balloon.id
 
     state.select(balloon.id)
@@ -405,11 +405,11 @@ def test_名前に対象を出す(window_with_panel):
 def test_名前と実際に写るものが揃っている(window_with_panel):
     """`object_label` が両方の出所。別々に持つと食い違わせられる。"""
     state = window_with_panel.state
-    state.add_text(TEXT, "セリフ")
+    state.add_text(TEXT, "テキスト")
     window_with_panel._refresh()
 
-    assert window_with_panel.edit_menu.duplicate_action.text() == "セリフを複製"
+    assert window_with_panel.edit_menu.duplicate_action.text() == "テキストを複製"
     copy = state.duplicate_selected()
 
     assert isinstance(copy, TextObject)
-    assert state.history.undo_label == "セリフの複製"
+    assert state.history.undo_label == "テキストの複製"

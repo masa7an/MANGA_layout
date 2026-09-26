@@ -178,7 +178,7 @@ class TextMixin:
         balloon = balloon_at(page, *rect.center)
         panel_id = None if balloon is not None else attach_target(page, rect)
 
-        with self.edit("セリフの追加") as project:
+        with self.edit("テキストの追加") as project:
             text = project.add_text(
                 project.pages[self._page_index], content, rect, panel_id
             )
@@ -226,7 +226,7 @@ class TextMixin:
         # 実体は1つにまとまる
         ref, _ = self.import_bytes(data)
 
-        with self.edit("セリフを画像にする") as project:
+        with self.edit("テキストを画像にする") as project:
             page = project.pages[self._page_index]
             page.remove_floating(text_id)
             # 紐づけ先は焼いたあとの位置で決め直す。**元のセリフが吹き出しに
@@ -247,14 +247,14 @@ class TextMixin:
         self, text_id: str, label: str
     ) -> contextlib.AbstractContextManager[TextObject]:
         """セリフを引き直して触る（→ `_edit_found`）。"""
-        return self._edit_found(text_id, label, TextObject, "セリフ")
+        return self._edit_found(text_id, label, TextObject, "テキスト")
 
     def set_text_content(self, text_id: str, content: str) -> None:
-        with self._edit_text(text_id, "セリフの入力") as text:
+        with self._edit_text(text_id, "テキストの入力") as text:
             text.content = content
 
     def set_text_align(self, text_id: str, align: str) -> None:
-        with self._edit_text(text_id, "セリフの整列") as text:
+        with self._edit_text(text_id, "テキストの整列") as text:
             text.align = align
 
     def set_text_direction(self, text_id: str, direction: str) -> None:
@@ -268,7 +268,7 @@ class TextMixin:
         既定の縦書きへ戻ると、横書きの箇条書きを作っている最中は1つ置く
         たびに直すことになる。
         """
-        with self._edit_text(text_id, "セリフの向き") as text:
+        with self._edit_text(text_id, "テキストの向き") as text:
             text.direction = direction
         self.set_next_text_direction(direction)
 
@@ -294,7 +294,7 @@ class TextMixin:
         3か所のうち1つを直し忘れたときに「この操作だけ引き継がれない」
         という説明の付かない差ができる（→ `next_text_font`）。
         """
-        with self._edit_text(text_id, "セリフの書式") as text:
+        with self._edit_text(text_id, "テキストの書式") as text:
             text.font = dataclasses.replace(
                 text.font, **_font_changes(family, size_px, bold)
             )
@@ -310,7 +310,7 @@ class TextMixin:
         引いて決めた大きさが引き継がれないと、作品の中でセリフの大きさを
         揃えるのに、置くたびにキーで合わせ直すことになる。
         """
-        with self._edit_text(text_id, "セリフの拡大縮小") as text:
+        with self._edit_text(text_id, "テキストの拡大縮小") as text:
             text.rect = rect
             text.font = dataclasses.replace(text.font, size_px=size_px)
         self.set_next_text_font(size_px=size_px)

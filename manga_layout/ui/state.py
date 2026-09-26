@@ -186,7 +186,7 @@ TOOL_LABELS = {
         tool: f"{STICKER_KIND_LABELS[kind]}を追加"
         for tool, kind in STICKER_TOOLS.items()
     },
-    TOOL_TEXT: "セリフを追加",
+    TOOL_TEXT: "テキストを追加",
     TOOL_ROUGH: "ラフを調整",
     TOOL_TONE_AREA: "トーン範囲を調整",
     # **短く置く。** 何が起きるかは、持っている間ずっと状態表示の右側に出る
@@ -227,7 +227,7 @@ TOOL_SHORT_LABELS = {
         tool: STICKER_KIND_LABELS[kind].removesuffix("マーク")
         for tool, kind in STICKER_TOOLS.items()
     },
-    TOOL_TEXT: "セリフ",
+    TOOL_TEXT: "テキスト",
     TOOL_ROUGH: "ラフ",
     TOOL_TONE_AREA: "トーン",
     # 元から短いので、そのまま（→ `TOOL_LABELS` の注記）
@@ -262,7 +262,7 @@ def object_label(obj: SceneObject | None) -> str:
     if isinstance(obj, ImageObject):
         return "画像"
     if isinstance(obj, TextObject):
-        return "セリフ"
+        return "テキスト"
     if isinstance(obj, StickerObject):
         return STICKER_KIND_LABELS.get(obj.kind, "マーク")
     if isinstance(obj, BalloonObject):

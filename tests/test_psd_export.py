@@ -86,7 +86,7 @@ def state(qapp, tmp_path, png_bytes):
         # 「フキダシのレイヤーが用紙の隅まで広がる」ことになって、
         # 切り詰めの検証にならない
         balloon.tail = Tail(enabled=True, tip=(90.0, 160.0), width=8.0)
-        project.add_text(page, "テスト\nセリフ", Rect(45.0, 210.0, 110.0, 50.0))
+        project.add_text(page, "テスト\nテキスト", Rect(45.0, 210.0, 110.0, 50.0))
     return editor
 
 
@@ -280,7 +280,7 @@ class Test並びと名前:
     def test_コマはフォルダにまとまる(self, with_focus):
         """上から読んだ形。中身は奥から手前（絵 → 集中線 → 枠）の逆順。"""
         assert names_of(page_layers(with_focus, with_focus.project.pages[0], 1.0)) == [
-            "セリフ",
+            "テキスト",
             "フキダシ",
             {"name": "コマ1", "children": ["コマ枠", "集中線・流線", "絵"]},
             "用紙",
@@ -703,7 +703,7 @@ class Testファイルに書く:
 
         assert (parsed["width"], parsed["height"]) == (300, 400)
         assert layer_tree(parsed) == [
-            "セリフ",
+            "テキスト",
             "フキダシ",
             {"name": "コマ1", "children": ["コマ枠", "集中線・流線", "絵"]},
             "用紙",

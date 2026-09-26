@@ -335,7 +335,7 @@ class SettingsEditor(QDialog):
                 f"よく使う書体{index + 1}",
                 self._field(
                     slot.row,
-                    "セリフのメニューと道具箱に並び、`F3` で順に切り替わります"
+                    "テキストのメニューと道具箱に並び、`F3` で順に切り替わります"
                     if index == 0
                     else "",
                 ),

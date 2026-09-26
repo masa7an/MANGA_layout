@@ -111,7 +111,7 @@ EFFECTS = ("集中線・流線", "effects")
 FRAMES = ("コマ枠", "frames")
 BALLOONS = ("フキダシ", "balloons")
 MARKS = ("マーク", "marks")
-TEXTS = ("セリフ", "text")
+TEXTS = ("テキスト", "text")
 
 PSD_FORMAT = "PSD"
 

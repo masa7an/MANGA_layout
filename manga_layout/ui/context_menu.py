@@ -319,7 +319,7 @@ class ContextMenu:
                 )
                 for kind in STICKER_KINDS
             ),
-            ("text", "セリフ", lambda: view.add_text_at(x, y)),
+            ("text", "テキスト", lambda: view.add_text_at(x, y)),
         )
         shown = 0
         for kind, name, slot in items:

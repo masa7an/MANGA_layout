@@ -49,8 +49,8 @@ KIND_LABELS = {
     # 数えないのもこのため——あちらの問いは「白く抜けるか」だけ
     KIND_MISSING_MASK: "切り抜きの外れた画像",
     KIND_BLANK_PAGE: "何も置いていないページ",
-    KIND_TEXT_OVERFLOW: "フキダシからはみ出したセリフ",
-    KIND_EMPTY_TEXT: "空のままのセリフ",
+    KIND_TEXT_OVERFLOW: "フキダシからはみ出したテキスト",
+    KIND_EMPTY_TEXT: "空のままのテキスト",
     KIND_EMPTY_PANEL: "絵の入っていないコマ",
     KIND_NOTE_LEFT: "付箋の残っているページ",
 }

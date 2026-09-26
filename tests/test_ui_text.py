@@ -62,7 +62,7 @@ def window_with_balloon(window):
 @pytest.fixture
 def window_with_text(window_with_balloon):
     """吹き出しの上にセリフを1つ置いた状態。セリフが選ばれている。"""
-    window_with_balloon.state.add_text(Rect(300.0, 300.0, 240.0, 120.0), "セリフ")
+    window_with_balloon.state.add_text(Rect(300.0, 300.0, 240.0, 120.0), "テキスト")
     return window_with_balloon
 
 
@@ -85,7 +85,7 @@ def paper(window, preview):
 def only_text(page) -> TextObject:
     """ページにある唯一のセリフ。並び順に頼らずに取る。"""
     texts = [f for f in page.floating if isinstance(f, TextObject)]
-    assert len(texts) == 1, f"セリフが {len(texts)} 個ある"
+    assert len(texts) == 1, f"テキストが {len(texts)} 個ある"
     return texts[0]
 
 
@@ -113,6 +113,20 @@ class TestTキーでその場に置く:
     キーの押下は `Shortcut` の出来事を項目へ直に送って作る。offscreen では
     窓が活性にならず、本物のキーはショートカットへ届かないため。
     """
+
+    @pytest.fixture(autouse=True)
+    def 重なりの判定を外す(self, monkeypatch):
+        """**他のテストが開いたまま残した窓に左右されないようにする。**
+
+        `page_point_under_cursor` は、上に別の窓が重なっていたら置かない。
+        並列で走らせると、同じ作業者で先に走ったテストの窓（右クリックの
+        メニュー等）が同じ画面座標に残っていることがあり、ときどき落ちた
+        （2026-09-27、数回に1回）。重なりの判定は offscreen では
+        確かめられないので、ここでは外す。
+        """
+        from manga_layout.ui import canvas
+
+        monkeypatch.setattr(canvas.QApplication, "widgetAt", lambda *_: None)
 
     def カーソルを置く(self, window, x: float, y: float) -> None:
         from PySide6.QtCore import QPointF
@@ -193,7 +207,7 @@ class TestAdd:
         assert window_with_balloon.view.is_editing_text
 
     def test_履歴に積まれる(self, window_with_text):
-        assert window_with_text.state.history.undo_label == "セリフの追加"
+        assert window_with_text.state.history.undo_label == "テキストの追加"
         window_with_text.state.undo()
         assert window_with_text.state.selected_text is None
 
@@ -336,10 +350,10 @@ class TestSelectAndEdit:
         text_id = window_with_text.state.selected_text.id
 
         view.begin_text_edit(text_id)
-        view._text_editor.setPlainText("あたらしい\nセリフ")
+        view._text_editor.setPlainText("あたらしい\nテキスト")
         view.finish_text_edit(commit=True)
 
-        assert window_with_text.state.page.find(text_id).content == "あたらしい\nセリフ"
+        assert window_with_text.state.page.find(text_id).content == "あたらしい\nテキスト"
 
     def test_取り消せば元のまま(self, window_with_text):
         view = window_with_text.view
@@ -349,7 +363,7 @@ class TestSelectAndEdit:
         view._text_editor.setPlainText("捨てる")
         view.finish_text_edit(commit=False)
 
-        assert window_with_text.state.page.find(text_id).content == "セリフ"
+        assert window_with_text.state.page.find(text_id).content == "テキスト"
 
     def test_入力は履歴に1手だけ積む(self, window_with_text):
         view = window_with_text.view
@@ -392,7 +406,7 @@ class TestSelectAndEdit:
         view.finish_text_edit(commit=True)
         window_with_text.state.undo()
 
-        assert window_with_text.state.page.find(text_id).content == "セリフ"
+        assert window_with_text.state.page.find(text_id).content == "テキスト"
 
 
 class TestSelectionFrame:
@@ -408,7 +422,7 @@ class TestSelectionFrame:
     def window_with_wide_text(self, window_with_balloon):
         """既定の大きさ（230×422）の枠に3文字だけ。実際の使い方に近い形。"""
         window_with_balloon.state.add_text(
-            Rect(300.0, 300.0, 230.0, 422.0), "セリフ"
+            Rect(300.0, 300.0, 230.0, 422.0), "テキスト"
         )
         return window_with_balloon
 
@@ -514,7 +528,7 @@ class TestCornerScalesFont:
     @pytest.fixture
     def window_with_wide_text(self, window_with_balloon):
         """既定の大きさ（230×422）の枠に3文字だけ。`TestSelectionFrame` と同じ形。"""
-        window_with_balloon.state.add_text(Rect(300.0, 300.0, 230.0, 422.0), "セリフ")
+        window_with_balloon.state.add_text(Rect(300.0, 300.0, 230.0, 422.0), "テキスト")
         return window_with_balloon
 
     # 引いた倍率と、出てきた大きさを見比べるときの許容差。
@@ -762,7 +776,7 @@ class Testよく使う書体:
         with window.state.edit("コマの追加") as project:
             project.add_panel(project.pages[0], PANEL)
         window.state.select(None)
-        window.state.add_text(Rect(300.0, 300.0, 240.0, 120.0), "セリフ")
+        window.state.add_text(Rect(300.0, 300.0, 240.0, 120.0), "テキスト")
         return window
 
     def test_F3で次の書体へ回る(self, window3):
@@ -961,7 +975,7 @@ class TestFormat:
         assert text.align == "left"
         assert text.font.bold
         assert text.direction == "horizontal"
-        assert text.content == "セリフ"
+        assert text.content == "テキスト"
         assert text.attached_balloon_id is not None
         assert restored.load_warnings == []
 
@@ -1183,12 +1197,12 @@ class Test次のセリフの書式:
     def test_道具を持つと状態表示に出る(self, window):
         """置く前に何の書式で置かれるかが分かる。置いてから直すのは手数が同じ。"""
         window.state.set_tool(TOOL_TEXT)
-        assert window._hint().startswith("セリフを追加: ")
+        assert window._hint().startswith("テキストを追加: ")
         assert window.state.next_text_font.family in window._hint()
 
     def test_何も選んでいなくても出る(self, window):
         window.state.select(None)
-        assert "次のセリフ: " in window._hint()
+        assert "次のテキスト: " in window._hint()
 
     def test_太字は表示にも出る(self, window_with_text):
         window_with_text.toggle_bold()
@@ -1305,7 +1319,7 @@ def _text_menu(window):
     for menu in window._menus:
         if isinstance(menu, TextMenu):
             return menu
-    raise AssertionError("セリフのメニューが見つからない")
+    raise AssertionError("テキストのメニューが見つからない")
 
 
 class Test空のまま閉じたセリフ:
@@ -1368,7 +1382,7 @@ class Test空のまま閉じたセリフ:
         window_with_balloon.view.finish_text_edit(commit=True)
 
         assert [t.content for t in self.texts(window_with_balloon)] == ["あ"]
-        assert window_with_balloon.state.history.undo_label == "セリフの入力"
+        assert window_with_balloon.state.history.undo_label == "テキストの入力"
 
     def test_既にあるセリフは空にしても消さない(self, window_with_text):
         """一度消して打ち直す操作を塞がない。取り消しの対象は置いた直後だけ。"""
@@ -1428,7 +1442,7 @@ class Test空のまま閉じたセリフ:
         view._text_editor.setPlainText("打ち直した文")
         view.finish_text_edit(commit=False)
 
-        assert window_with_text.state.page.find(text_id).content == "セリフ"
+        assert window_with_text.state.page.find(text_id).content == "テキスト"
 
 
 class TestConfirmHint:
@@ -1805,7 +1819,7 @@ class Test文字の大きさの看板:
         for action in window.text_menu.actions:
             if action.text() == 名前:
                 return action.shortcut().toString()
-        raise AssertionError(f"セリフメニューに「{名前}」が無い")
+        raise AssertionError(f"テキストメニューに「{名前}」が無い")
 
     def test_確定の目印の下に積む(self, window_with_text):
         window_with_text.view.begin_text_edit(window_with_text.state.selected_text.id)
@@ -2096,7 +2110,7 @@ class Test入力中に項目が押されたとき:
         整列の項目は `lambda _=False, a=align:` の形で、包み方を間違えると
         既定値のほうが使われて別の値が入る
         """
-        self.item(window_with_text, "セリフ", "左寄せ").trigger()
+        self.item(window_with_text, "テキスト", "左寄せ").trigger()
 
         assert window_with_text.state.selected_text.align == "left"
 
@@ -2251,13 +2265,13 @@ class Testキーを持つ項目の作られ方:
 class TestTextMenu:
     def items(self, window):
         for action in window.menuBar().actions():
-            if action.text().startswith("セリフ"):
+            if action.text().startswith("テキスト"):
                 return [a for a in action.menu().actions() if not a.isSeparator()]
-        raise AssertionError("セリフメニューが見つかりません")
+        raise AssertionError("テキストメニューが見つかりません")
 
     def test_何も選んでいなくても作れる項目がある(self, window):
         usable = [a for a in self.items(window) if a.isEnabled()]
-        assert usable, "セリフメニューが全部グレーになっている"
+        assert usable, "テキストメニューが全部グレーになっている"
 
     def test_追加の項目が先頭にある(self, window):
         first = self.items(window)[0]

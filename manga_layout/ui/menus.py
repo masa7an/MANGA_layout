@@ -1194,7 +1194,7 @@ class TextMenu:
     def __init__(self, window: MainWindow) -> None:
         self._state = window.state
         # アクセスキー（括弧の文字）は付けない（本人の指示 2026-09-25 → 要件定義 7章）
-        menu = window.menuBar().addMenu("セリフ")
+        menu = window.menuBar().addMenu("テキスト")
         menu.addAction(window._tool_actions[TOOL_TEXT])
         menu.addSeparator()
 
@@ -1270,7 +1270,7 @@ class TextMenu:
         self.font_action = add(
             "フォントを選ぶ...",
             window.choose_font,
-            tip="セリフを選んでいなければ、次に作るセリフの書式を決めます",
+            tip="テキストを選んでいなければ、次に作るテキストの書式を決めます",
             always=True,
         )
         menu.addSeparator()
@@ -1286,7 +1286,7 @@ class TextMenu:
         self.rasterize_action = add(
             "画像にする",
             window.rasterize_text,
-            tip="セリフを1枚の画像に焼きます。文字の打ち直しはできなくなります",
+            tip="テキストを1枚の画像に焼きます。文字の打ち直しはできなくなります",
             always=True,
         )
 

@@ -572,7 +572,7 @@ class MainWindow(QMainWindow):
             action = self._act(
                 _font_button_label(family),
                 partial(self.apply_font_family, family),
-                tip=f"セリフの書体を「{family}」にします（F3 で順に切り替え）",
+                tip=f"テキストの書体を「{family}」にします（F3 で順に切り替え）",
             )
             action.setCheckable(True)
             action.setFont(QFont(family))
@@ -747,7 +747,7 @@ class MainWindow(QMainWindow):
         # 何で置かれるのかは置いてみるまで分からない。置いてから直すのは
         # 選び直しと同じ手数になる（本人の指摘 2026-08-07）
         if self.state.tool == TOOL_TEXT:
-            return f"セリフを追加: {self._next_font_label()}"
+            return f"テキストを追加: {self._next_font_label()}"
 
         return None
 
@@ -772,7 +772,7 @@ class MainWindow(QMainWindow):
             body = f"{lines} 行" if lines else "（未入力）"
             lay = "縦書き" if text.direction == "vertical" else "横書き"
             return (
-                f"セリフを選択中: {body} / {font.family} {self._size_label(font.size_px)}{weight}"
+                f"テキストを選択中: {body} / {font.family} {self._size_label(font.size_px)}{weight}"
                 f" / {lay} / {align_label(text.align, text.direction)} / {tied}"
             )
 
@@ -812,7 +812,7 @@ class MainWindow(QMainWindow):
             locked = " / ロック中" if self.state.is_locked_selection else ""
             return f"コマを選択中: {b.w:.0f} × {b.h:.0f} px{inside}{lines}{locked}"
 
-        return f"コマ未選択 / 次のセリフ: {self._next_font_label()}"
+        return f"コマ未選択 / 次のテキスト: {self._next_font_label()}"
 
     def _next_font_label(self) -> str:
         """次に作るセリフの書式と向き（→ `EditorState.next_text_font`）。
@@ -862,7 +862,7 @@ class MainWindow(QMainWindow):
         if self.state.selected_image is not None:
             return "画像", self.delete_image
         if self.state.selected_text is not None:
-            return "セリフ", self.delete_text
+            return "テキスト", self.delete_text
         if self.state.selected_sticker is not None:
             return object_label(self.state.selected_sticker), self.delete_sticker
         if self.state.selected_balloon is not None:
@@ -1304,7 +1304,7 @@ class MainWindow(QMainWindow):
     def edit_text(self) -> None:
         text = self.state.selected_text
         if text is None:
-            self.state.message.emit("先にセリフを選んでください")
+            self.state.message.emit("先にテキストを選んでください")
             return
         self.view.begin_text_edit(text.id)
 
@@ -1323,7 +1323,7 @@ class MainWindow(QMainWindow):
         """
         text = self.state.selected_text
         if text is None:
-            self.state.message.emit("先にセリフを選んでください")
+            self.state.message.emit("先にテキストを選んでください")
             return
         to_vertical = text.direction != "vertical"
         self.state.set_text_direction(
@@ -1386,7 +1386,7 @@ class MainWindow(QMainWindow):
             self.state.set_next_text_font(family=family)
             # 作品は変わらないので `changed` は飛ばない。自分で出し直す
             self._refresh_hint()
-            self.state.message.emit(f"次に作るセリフの書体: {family}")
+            self.state.message.emit(f"次に作るテキストの書体: {family}")
         else:
             self.state.set_text_font(text.id, family=family)
             self.state.message.emit(f"書体: {family}")
@@ -1456,7 +1456,7 @@ class MainWindow(QMainWindow):
             )
             # 作品は変わらないので `changed` は飛ばない。状態表示だけ出し直す
             self._refresh_hint()
-            self.state.message.emit(f"次に作るセリフの書式: {label}")
+            self.state.message.emit(f"次に作るテキストの書式: {label}")
             return
 
         self.state.set_text_font(
@@ -1539,10 +1539,10 @@ class MainWindow(QMainWindow):
         if text is None:
             return
         text_id = text.id
-        with self.state.edit_page("セリフの削除") as page:
+        with self.state.edit_page("テキストの削除") as page:
             page.remove_floating(text_id)
         self.state.select(None)
-        self.state.message.emit("セリフを削除しました")
+        self.state.message.emit("テキストを削除しました")
 
     # -- ラフ（下敷き → 要件定義 6.23） ------------------------------------
 
@@ -1771,7 +1771,7 @@ class MainWindow(QMainWindow):
 
         page = self.state.page
         count = len(page.panels) + len(page.floating)
-        placed = f"コマ・フキダシ・セリフが {count} 個置かれています。\n" if count else ""
+        placed = f"コマ・フキダシ・テキストが {count} 個置かれています。\n" if count else ""
         answer = QMessageBox.question(
             self,
             "ページを削除しますか",

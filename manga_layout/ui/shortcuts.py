@@ -93,12 +93,12 @@ EXTRA_GROUPS = (
             ShortcutRow("+ / -", "拡大 / 縮小（画面の中心が軸）"),
             ShortcutRow("Shift+] / Shift+[", "トーンで拾う黒を増やす / 減らす"),
             ShortcutRow("Shift+. / Shift+,", "トーンを濃く / 薄くする"),
-            ShortcutRow("Enter", "選んでいるセリフを打ち始める"),
+            ShortcutRow("Enter", "選んでいるテキストを打ち始める"),
             ShortcutRow("Esc", "画像からコマへ戻る / 選択を解除する"),
         ),
     ),
     ShortcutGroup(
-        "セリフを打っている間",
+        "テキストを打っている間",
         (
             ShortcutRow("Enter", "改行する"),
             ShortcutRow("Ctrl+Enter", "確定する"),
@@ -112,11 +112,11 @@ EXTRA_GROUPS = (
             ShortcutRow("スペース+ドラッグ", "画面を動かす（中ボタンのドラッグでも同じ）"),
             ShortcutRow(
                 "ダブルクリック",
-                "押した場所のものを順に選び直す（選んでいるセリフなら打ち始める）",
+                "押した場所のものを順に選び直す（選んでいるテキストなら打ち始める）",
             ),
             ShortcutRow("右クリック", "押した場所のものを選び、その場のメニューを出す"),
             ShortcutRow(
-                "セリフの四隅をドラッグ",
+                "テキストの四隅をドラッグ",
                 "文字を大きく / 小さくする（Shift を押している間は枠だけ）",
             ),
             ShortcutRow("Shift+ドラッグ", "縦横の比を保って大きさを変える / 15度ずつ回す"),
@@ -218,7 +218,7 @@ class ShortcutsDialog(QDialog):
         self._tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
         note = QLabel(
-            "セリフを打っている間は、文字の入力が優先されます"
+            "テキストを打っている間は、文字の入力が優先されます"
             "（打ち込んだキーが操作に化けません）。"
         )
         note.setWordWrap(True)

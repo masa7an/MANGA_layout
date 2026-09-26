@@ -403,7 +403,7 @@ def move_amount_text(dx: float, dy: float) -> str:
 
 _MOVE_TARGETS = (
     (lambda s: s.selected_image, ImageObject, "画像"),
-    (lambda s: s.selected_text, TextObject, "セリフ"),
+    (lambda s: s.selected_text, TextObject, "テキスト"),
     (lambda s: s.selected_sticker, StickerObject, "マーク"),
 )
 # 大きさ変更は、フキダシも矩形を差し替えるだけで済む
@@ -2999,11 +2999,11 @@ class PageView(QGraphicsView):
             # 何もしない（間に別の編集が挟まった場合の保険）。そのときは
             # 下へ抜けるが、`commit=False` なら書き戻しも起きないので
             # 空のセリフがそのまま残る——**消せないより、消し間違えない**
-            if self.state.discard_last_edit("セリフの追加"):
+            if self.state.discard_last_edit("テキストの追加"):
                 self.state.message.emit(
-                    "取り消したので、セリフは作りませんでした"
+                    "取り消したので、テキストは作りませんでした"
                     if content.strip()
-                    else "空のままだったので、セリフは作りませんでした"
+                    else "空のままだったので、テキストは作りませんでした"
                 )
                 self.viewport().update()
                 return
@@ -3021,7 +3021,7 @@ class PageView(QGraphicsView):
                 # ないが、**通れたときに何も言わずに消えるのが元の壊れ方**
                 # だった。打った内容が消えたことに気づけるようにしておく
                 self.state.message.emit(
-                    "書き戻す先のセリフが見つからず、打った内容を残せませんでした"
+                    "書き戻す先のテキストが見つからず、打った内容を残せませんでした"
                 )
         self.viewport().update()
 
@@ -3202,7 +3202,7 @@ class PageView(QGraphicsView):
         # ダブルクリックが続いた場合への備えで、下の巡回と同じ扱い
         self._selected_before_press = text_id
         self.state.message.emit(
-            "セリフを選びました。もう一度ダブルクリック、または Enter で入力できます"
+            "テキストを選びました。もう一度ダブルクリック、または Enter で入力できます"
         )
 
     def _announce_pick(self, object_id: str, stack: list[str]) -> None:

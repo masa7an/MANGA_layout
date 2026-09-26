@@ -62,7 +62,7 @@ EMPTY = (1000.0, 1400.0)
 
 # セリフ1つぶん。中身は改行なしの3文字なので、既定の縦書きでは1列になる
 TEXT_RECT = Rect(250.0, 250.0, 200.0, 150.0)
-TEXT_CONTENT = "セリフ"
+TEXT_CONTENT = "テキスト"
 # その列の上の点。**枠の中ならどこでもよいわけではない。**
 # セリフは字の並んでいる帯だけを拾うので（→ `layout.text_ink_bands`）、
 # 枠の左寄り（x=300）では字から外れ、下のフキダシやコマが選ばれる。
@@ -265,7 +265,7 @@ class TestContents:
         assert f"{JAGGED}にする" in folded_labels(menu, BALLOON_STYLE_MENU_LABEL)
         assert "しっぽを消す" in found
         # フキダシを選ぶとマークが1つめになるので、セリフは前置きが落ちる
-        assert place_rest("セリフ") in found
+        assert place_rest("テキスト") in found
         assert "フキダシを削除" in found
 
     def test_セリフの品書き(self, window_with_panel):
@@ -277,7 +277,7 @@ class TestContents:
         assert "文字を入力..." in found
         assert "縦書き" in found
         assert "フォントを選ぶ..." in found
-        assert "セリフを削除" in found
+        assert "テキストを削除" in found
 
     def test_道具に持ち替える項目は出さない(self, window_with_panel):
         """「ここに〜」と役割が重なるため外している（→ `_copy_actions`）。"""
@@ -361,10 +361,10 @@ class TestStatusTips:
     def test_省略した前置きが説明に出る(self, window_with_panel):
         menu = right_click(window_with_panel, *EMPTY)
 
-        message = self.hover(window_with_panel, menu, place_rest("セリフ"))
+        message = self.hover(window_with_panel, menu, place_rest("テキスト"))
 
         # 名前は短いまま、説明のほうが完全な文になる
-        assert message == place_first("セリフ")
+        assert message == place_first("テキスト")
         menu.hide()
 
     def test_1つめも同じ説明を持つ(self, window_with_panel):
@@ -378,7 +378,7 @@ class TestStatusTips:
 
     def test_閉じると説明は消える(self, window_with_panel):
         menu = right_click(window_with_panel, *EMPTY)
-        self.hover(window_with_panel, menu, place_rest("セリフ"))
+        self.hover(window_with_panel, menu, place_rest("テキスト"))
 
         menu.hide()
 
@@ -470,7 +470,7 @@ class TestActions:
 
     def test_ここにセリフを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
-        find(menu, place_rest("セリフ")).trigger()
+        find(menu, place_rest("テキスト")).trigger()
 
         text = only(window_with_panel.state.page, TextObject)
         assert text.rect.contains(400.0, 300.0)
@@ -534,7 +534,7 @@ class TestDeleteTarget:
         state.add_text(TEXT_RECT, TEXT_CONTENT)
         state.select(None)
         right_click(window_with_panel, *ON_TEXT)
-        assert action.text() == "セリフを削除"
+        assert action.text() == "テキストを削除"
 
     def test_何も選んでいなければ無効(self, window_with_panel):
         right_click(window_with_panel, *EMPTY)
