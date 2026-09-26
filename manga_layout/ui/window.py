@@ -33,13 +33,14 @@ from ..model import (
     Panel,
     StickerObject,
 )
+from ..recent_project import load_recent_project
 from ..settings import ensure_settings_file, load_settings, settings_path
-from ..storage import prune_unused_assets
+from ..storage import is_project_dir, prune_unused_assets
 from .canvas import IMAGE_FILE_FILTER, PageView, font_size_label
 from .check_view import CheckResultDialog
 from .context_menu import ContextMenu
 from .font_dialog import FONT_DIALOG_SIZE, FontChooser
-from .hints import HINT_NUDGE, HINT_TEXTS, HintBanner
+from .hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS, HintBanner
 from .menu_search import (
     HIGHLIGHT_SECONDS,
     MENU_SEARCH_HINT,
@@ -284,6 +285,8 @@ class MainWindow(QMainWindow):
 
         # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
         self.file_menu.sync_recent_project()
+        # 起動時のヒントは窓が出てから（→ `_show_startup_hint`）
+        QTimer.singleShot(0, self._show_startup_hint)
 
         self._refresh()
 
@@ -579,7 +582,7 @@ class MainWindow(QMainWindow):
             self._act(
                 "ヒントをもう一度見る",
                 self.show_hints_again,
-                tip="最初に一度だけ出す操作のヒント（Alt+矢印キーで微調整）をもう一度出します",
+                tip="最初に一度だけ出す操作のヒント（Alt+矢印キーで微調整・前回のファイルを開く）をもう一度出します",
             )
         )
 
@@ -1782,8 +1785,13 @@ class MainWindow(QMainWindow):
         出ていれば、伝わったものとしてすぐ消す。出す前に自分で見つけた
         人には、この先も出さない。
         """
-        self._mark_hint_seen(HINT_NUDGE)
-        self.hint_banner.hide()
+        self.hint_used(HINT_NUDGE)
+
+    def hint_used(self, hint_id: str) -> None:
+        """案内した操作が使われた。記録し、その案内が出ていれば消す。"""
+        self._mark_hint_seen(hint_id)
+        if HINT_TEXTS[hint_id] in self.hint_banner.text():
+            self.hint_banner.hide()
 
     def _mark_hint_seen(self, hint_id: str) -> None:
         if hint_id in self._hints_seen:
@@ -1791,13 +1799,36 @@ class MainWindow(QMainWindow):
         self._hints_seen.add(hint_id)
         mark_hint_seen(hint_id)
 
+    def _can_offer_recent(self) -> bool:
+        """『前回のファイルを開く』で続きから作業できる状態か。
+
+        **記録の行き先に作品が実在するときだけ。** 移したり消したりした
+        作品を案内すると、押した先で「開けません」になる。作品を開いて
+        起動した（`main.py` の引数）ときは、続きはもう画面にある。
+        """
+        if self.state.project_dir is not None:
+            return False
+        path = load_recent_project()
+        return path is not None and is_project_dir(path)
+
+    def _show_startup_hint(self) -> None:
+        """起動時、前回の作品があれば『前回のファイルを開く』を案内する（→ 6.35）。"""
+        if HINT_RECENT in self._hints_seen or not self._can_offer_recent():
+            return
+        self._mark_hint_seen(HINT_RECENT)
+        self.hint_banner.show_text(HINT_TEXTS[HINT_RECENT])
+
     def show_hints_again(self) -> None:
         """ヘルプ → ヒントをもう一度見る。**選んでいるものに関わらず、今すぐ出す。**
 
         記録を消して「次に選んだとき」に回す作りにすると、押しても
         その場では何も起きず、効いたのか分からない。
+        前回の作品の案内は、続きから開ける状態のときだけ足す。
         """
-        self.hint_banner.show_text(HINT_TEXTS[HINT_NUDGE])
+        texts = [HINT_TEXTS[HINT_NUDGE]]
+        if self._can_offer_recent():
+            texts.insert(0, HINT_TEXTS[HINT_RECENT])
+        self.hint_banner.show_text("\n".join(texts))
 
     def highlight_menu(self, name: str) -> None:
         """メニューバーの見出し1つを四角く囲む（→ 要件定義 6.30）。

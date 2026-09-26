@@ -2,6 +2,7 @@
 
 見るのは、出る条件（セリフ・フキダシ・画像を選んだとき。入力中は出さない）、
 2回目から出ないこと、`Alt+矢印` を使ったら消えること、ヘルプから出し直せること。
+起動時の『前回のファイルを開く』の案内（前回の作品が実在するときだけ）も見る。
 """
 
 from __future__ import annotations
@@ -19,8 +20,9 @@ from test_ui_size_keys import (  # noqa: F401  （fixture を借りる）
 from manga_layout import Rect
 from manga_layout import hints_seen
 from manga_layout.hints_seen import HINTS_SEEN_FILENAME, load_hints_seen, mark_hint_seen
+from manga_layout.recent_project import save_recent_project
 from manga_layout.ui import EditorState, MainWindow
-from manga_layout.ui.hints import HINT_NUDGE, HINT_TEXTS
+from manga_layout.ui.hints import HINT_NUDGE, HINT_RECENT, HINT_TEXTS
 
 
 def settle() -> None:
@@ -136,3 +138,94 @@ class Testヘルプから出し直す:
         window.show_hints_again()
         QTest.mouseClick(window.hint_banner, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
         assert not banner_up(window)
+
+
+class Test前回のファイルの案内:
+    """起動時、前回の作品が実在すれば『前回のファイルを開く』を案内する。"""
+
+    @pytest.fixture
+    def saved_project(self, qapp, tmp_path):
+        """前回の作品を1つ実在させ、記録に載せておく。"""
+        win = MainWindow(EditorState())
+        path = tmp_path / "前回の作品"
+        win.state.save(path)
+        win.close()
+        save_recent_project(path)
+        return path
+
+    def launch(self, state=None):
+        win = MainWindow(state or EditorState())
+        settle()
+        return win
+
+    def test_前回の作品があれば出る(self, saved_project):
+        win = self.launch()
+        try:
+            assert banner_up(win)
+            assert win.hint_banner.text() == HINT_TEXTS[HINT_RECENT]
+            assert HINT_RECENT in load_hints_seen(recorded_path())
+        finally:
+            win.close()
+
+    def test_記録が無ければ出ない(self, qapp):
+        win = self.launch()
+        try:
+            assert not banner_up(win)
+        finally:
+            win.close()
+
+    def test_作品が消えていれば出ない(self, qapp, tmp_path):
+        save_recent_project(tmp_path / "消えた作品")
+        win = self.launch()
+        try:
+            assert not banner_up(win)
+        finally:
+            win.close()
+
+    def test_二度目の起動では出ない(self, saved_project):
+        self.launch().close()
+        win = self.launch()
+        try:
+            assert not banner_up(win)
+        finally:
+            win.close()
+
+    def test_作品を開いて起動したら出ない(self, saved_project):
+        state = EditorState()
+        state.load(saved_project)
+        win = self.launch(state)
+        try:
+            assert not banner_up(win)
+            assert HINT_RECENT not in load_hints_seen(recorded_path())
+        finally:
+            win.close()
+
+    def test_開けば消えて以後出ない(self, saved_project):
+        win = self.launch()
+        try:
+            win.files.open_recent_project()
+            assert not banner_up(win)
+            assert win.state.project_dir == saved_project
+        finally:
+            win.close()
+
+    def test_出る前に開いた人には出ない(self, saved_project):
+        # 起動時の案内は窓が出てから。その前に開けば、案内は要らない
+        win = MainWindow(EditorState())
+        try:
+            win.files.open_recent_project()
+            settle()
+            assert not banner_up(win)
+            assert HINT_RECENT in load_hints_seen(recorded_path())
+        finally:
+            win.close()
+
+    def test_ヘルプから出すと両方が並ぶ(self, saved_project):
+        win = self.launch()
+        try:
+            win.show_hints_again()
+            assert win.hint_banner.text() == "\n".join(
+                [HINT_TEXTS[HINT_RECENT], HINT_TEXTS[HINT_NUDGE]]
+            )
+        finally:
+            win.close()

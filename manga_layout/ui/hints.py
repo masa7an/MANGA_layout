@@ -16,8 +16,11 @@ from PySide6.QtWidgets import QAbstractScrollArea, QLabel
 # ヒントの名前（記録に残る文字列）と、出す文。
 # **名前は変えない。** 変えると、既に出した人にもう一度出る
 HINT_NUDGE = "nudge"
+HINT_RECENT = "recent_project"
 HINT_TEXTS = {
     HINT_NUDGE: "Alt+矢印キーで微調整ができます",
+    # 文言は本人の指定（2026-09-27）。区切りの空白は全角
+    HINT_RECENT: "[ファイル]　→　[前回のファイルを開く]　で続きから作業できます",
 }
 
 # 出してから消えるまで（本人の指定 2026-09-27）

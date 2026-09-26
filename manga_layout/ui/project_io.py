@@ -45,6 +45,7 @@ from .export import (
     planned_paths,
     scale_label,
 )
+from .hints import HINT_RECENT
 from .psd_export import export_psd_pages
 from .restore import RestoreDialog
 from .saving import SaveAsDialog
@@ -199,6 +200,8 @@ class ProjectIO:
         path = load_recent_project()
         if path is None:
             return
+        # 使えた人には、もう案内しない（→ 6.35）
+        self._window.hint_used(HINT_RECENT)
         if not self.confirm_discard():
             return
         self._open_project_dir(path)
