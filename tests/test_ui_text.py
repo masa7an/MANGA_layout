@@ -102,6 +102,76 @@ def click_pair(view, x: float, y: float) -> None:
     release(view, x, y)
 
 
+class TestTキーでその場に置く:
+    """`T` キーを押したとき、カーソルが用紙の上ならその場に置いて入力に入る。
+
+    以前は道具を持つだけで、置くにはもう1回クリックが要った（本人の指摘
+    2026-09-27）。**キーで押したときだけ**置く。同じ項目はメニュー・右クリック
+    からも押せ、右クリックのメニューは用紙の上に開くので、そちらまで置くと
+    項目を押した位置にセリフができる。
+
+    キーの押下は `Shortcut` の出来事を項目へ直に送って作る。offscreen では
+    窓が活性にならず、本物のキーはショートカットへ届かないため。
+    """
+
+    def カーソルを置く(self, window, x: float, y: float) -> None:
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QCursor
+
+        view = window.view
+        QCursor.setPos(view.viewport().mapToGlobal(view.mapFromScene(QPointF(x, y))))
+
+    def Tキーを押す(self, window) -> None:
+        from PySide6.QtGui import QKeySequence, QShortcutEvent
+
+        action = window._tool_actions[TOOL_TEXT]
+        QApplication.sendEvent(action, QShortcutEvent(QKeySequence("T"), None))
+
+    def texts(self, window) -> list[TextObject]:
+        return [f for f in window.state.page.floating if isinstance(f, TextObject)]
+
+    def test_用紙の上ならその場に置いて入力に入る(self, window_with_balloon):
+        window = window_with_balloon
+        window.view.centerOn(*BALLOON.center)
+        self.カーソルを置く(window, *BALLOON.center)
+        self.Tキーを押す(window)
+
+        assert only_text(window.state.page).rect.center == pytest.approx(
+            BALLOON.center, abs=1.0
+        )
+        assert window.view.is_editing_text
+        assert window.state.tool == TOOL_SELECT
+
+    def test_用紙の外なら道具を持つだけ(self, window_with_balloon):
+        """周りの灰色の上。置く場所を指していないので、今までどおり。"""
+        window = window_with_balloon
+        window.view.fit_page()
+        size = window.state.page.size
+        self.カーソルを置く(window, -10.0, size.h / 2.0)
+        assert window.view.page_point_under_cursor() is None, "灰色の上に置けていない"
+        self.Tキーを押す(window)
+
+        assert self.texts(window) == []
+        assert window.state.tool == TOOL_TEXT
+
+    def test_画面の外なら道具を持つだけ(self, window_with_balloon):
+        window = window_with_balloon
+        self.カーソルを置く(window, -5000.0, -5000.0)
+        self.Tキーを押す(window)
+
+        assert self.texts(window) == []
+        assert window.state.tool == TOOL_TEXT
+
+    def test_メニューから押したら用紙の上でも道具を持つだけ(self, window_with_balloon):
+        window = window_with_balloon
+        window.view.centerOn(*BALLOON.center)
+        self.カーソルを置く(window, *BALLOON.center)
+        window._tool_actions[TOOL_TEXT].trigger()
+
+        assert self.texts(window) == []
+        assert window.state.tool == TOOL_TEXT
+
+
 class TestAdd:
     def test_道具で置ける(self, window_with_balloon):
         window_with_balloon.state.set_tool(TOOL_TEXT)

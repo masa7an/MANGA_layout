@@ -36,6 +36,7 @@ from PySide6.QtGui import (
     QTextOption,
 )
 from PySide6.QtWidgets import (
+    QApplication,
     QGraphicsItem,
     QGraphicsScene,
     QGraphicsTextItem,
@@ -3456,6 +3457,32 @@ class PageView(QGraphicsView):
     def add_text_at(self, x: float, y: float) -> None:
         """その位置にセリフを1つ置き、そのまま入力を始める。"""
         self._apply_create_text(Rect(x, y, 0.0, 0.0), (x, y))
+
+    def page_point_under_cursor(self) -> tuple[float, float] | None:
+        """マウスカーソルが用紙の上にあれば、その位置（ページの px）。
+
+        `T` キーでその場にセリフを置くのに使う（→ 要件定義 6.5）。
+        **用紙の外（周りの灰色）・画面の外なら None。** そこで押したキーは
+        置く場所を指していないので、道具の持ち替えに回す。
+        """
+        global_pos = QCursor.pos()
+        local = self.viewport().mapFromGlobal(global_pos)
+        if not self.viewport().rect().contains(local):
+            return None
+        # 別の窓（浮かせたドック等）が上に重なっていたら、見えているのは
+        # 用紙ではない。offscreen では常に None が返るので、そのときは見ない
+        under = QApplication.widgetAt(global_pos)
+        viewport = self.viewport()
+        if under is not None and not (
+            under is viewport or viewport.isAncestorOf(under)
+        ):
+            return None
+        point = self.mapToScene(local)
+        x, y = point.x(), point.y()
+        size = self.state.page.size
+        if not (0.0 <= x <= size.w and 0.0 <= y <= size.h):
+            return None
+        return x, y
 
     def split_at(self, x: float, y: float, tool: str) -> None:
         """その位置でコマを割る。道具は持ち替えない。"""
