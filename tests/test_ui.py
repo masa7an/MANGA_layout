@@ -289,6 +289,25 @@ class TestAddPanelMode:
         assert isinstance(window.view._drag, MoveDrag)
         assert len(window.state.page.panels) == 1
 
+    def test_押して手ぶれしただけでは動かない(self, window):
+        """動き出しの遊び（OS のドラッグ開始の距離）はダブルクリックと同じ。
+
+        遊びが無いと、選ぶだけのつもりの揺れで吸着が掛かり、数 px 跳ぶ。
+        """
+        from PySide6.QtWidgets import QApplication
+
+        window.add_full_page_panel()
+        origin = window.state.selected_panel.shape.bounds()
+        label = window.state.history.undo_label
+        jitter = (QApplication.startDragDistance() - 1) / window.view.transform().m11()
+
+        press(window.view, 105.0, 150.0)
+        move_to(window.view, 105.0 + jitter, 150.0)
+        release(window.view, 105.0 + jitter, 150.0)
+
+        assert window.state.selected_panel.shape.bounds() == origin
+        assert window.state.history.undo_label == label
+
     def test_つまみを押すと大きさ変更になる(self, window):
         from manga_layout.ui.canvas import ResizeDrag
 

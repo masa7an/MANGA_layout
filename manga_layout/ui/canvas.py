@@ -576,12 +576,19 @@ class MoveDrag(Drag):
         self.slop_px = slop_px
 
     @classmethod
-    def begin(
-        cls, view: PageView, x: float, y: float, *, slop_px: float = 0.0
-    ) -> MoveDrag:
+    def begin(cls, view: PageView, x: float, y: float) -> MoveDrag:
         # 掴む矩形は `selected_bounds` に任せる。斜めの組なら組の外側が
-        # 返るので、片方だけ動く見た目にならない
-        return cls(view.state.selected_id, view.state.selected_bounds, (x, y), slop_px)
+        # 返るので、片方だけ動く見た目にならない。
+        #
+        # **動き出しに遊びを持たせる**（OS のドラッグ開始の距離）。選ぶだけの
+        # つもりの手ぶれで動くと、吸着（`SNAP_PX`）が掛かって数 px 跳ぶ。
+        # 押下・ダブルクリックのどちらで掴んでも同じ（2026-09-27 に揃えた）
+        return cls(
+            view.state.selected_id,
+            view.state.selected_bounds,
+            (x, y),
+            QApplication.startDragDistance(),
+        )
 
     def update(self, view: PageView, x: float, y: float, event) -> None:
         gx, gy = self.grab
@@ -3265,14 +3272,10 @@ class PageView(QGraphicsView):
         self.double_click_picked.emit(before in stack[1:])
         # **選んだものをそのまま掴む。** 押したまま引けば、離さずに動かせる
         # （2026-09-25 追加）。以前は選び直すだけで、動かすには一度離して
-        # 押し直す必要があった。ロックしたコマは押下と同じく掴まない（→ 6.17）
-        #
-        # **動き出しに遊びを持たせる**（OS のドラッグ開始の距離）。選ぶだけの
-        # つもりの手ぶれで動くと、吸着（`SNAP_PX`）が掛かって数 px 跳ぶ
+        # 押し直す必要があった。ロックしたコマは押下と同じく掴まない（→ 6.17）。
+        # 動き出しの遊びも押下と同じ（→ `MoveDrag.begin`）
         if not self.state.is_locked_selection:
-            self._drag = MoveDrag.begin(
-                self, x, y, slop_px=QApplication.startDragDistance()
-            )
+            self._drag = MoveDrag.begin(self, x, y)
         event.accept()
 
     def _double_click_text(self, text_id: str) -> None:
