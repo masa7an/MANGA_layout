@@ -197,6 +197,64 @@ class TestBalloonMenu:
         assert found == {f"{name}にする" for name in BALLOON_STYLE_LABELS.values()}
 
 
+class TestBキーでその場に置く:
+    """`B` キーを押したとき、カーソルが用紙の上ならその場に置く。
+
+    テキストの `T` キーと同じ扱い（→ tests/test_ui_text.py）。**キーで押した
+    ときだけ**置き、メニュー・右クリックからは道具を持つだけ。
+    キーの押下は `Shortcut` の出来事を項目へ直に送って作る。
+    """
+
+    WHERE = (400.0, 320.0)
+
+    def カーソルを置く(self, window, x: float, y: float) -> None:
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QCursor
+
+        view = window.view
+        QCursor.setPos(view.viewport().mapToGlobal(view.mapFromScene(QPointF(x, y))))
+
+    def Bキーを押す(self, window) -> None:
+        from PySide6.QtGui import QKeySequence, QShortcutEvent
+        from PySide6.QtWidgets import QApplication
+
+        action = window._tool_actions[TOOL_BALLOON]
+        QApplication.sendEvent(action, QShortcutEvent(QKeySequence("B"), None))
+
+    def test_用紙の上ならその場に置く(self, window_with_panel):
+        window = window_with_panel
+        window.view.centerOn(*self.WHERE)
+        self.カーソルを置く(window, *self.WHERE)
+        self.Bキーを押す(window)
+
+        floating = window.state.page.floating
+        assert len(floating) == 1
+        assert isinstance(floating[0], BalloonObject)
+        assert floating[0].style == BALLOON_TOOLS[TOOL_BALLOON]
+        assert floating[0].rect.center == pytest.approx(self.WHERE, abs=1.0)
+        assert window.state.tool == TOOL_SELECT
+
+    def test_用紙の外なら道具を持つだけ(self, window_with_panel):
+        window = window_with_panel
+        window.view.fit_page()
+        size = window.state.page.size
+        self.カーソルを置く(window, -10.0, size.h / 2.0)
+        assert window.view.page_point_under_cursor() is None, "灰色の上に置けていない"
+        self.Bキーを押す(window)
+
+        assert window.state.page.floating == []
+        assert window.state.tool == TOOL_BALLOON
+
+    def test_メニューから押したら用紙の上でも道具を持つだけ(self, window_with_panel):
+        window = window_with_panel
+        window.view.centerOn(*self.WHERE)
+        self.カーソルを置く(window, *self.WHERE)
+        window._tool_actions[TOOL_BALLOON].trigger()
+
+        assert window.state.page.floating == []
+        assert window.state.tool == TOOL_BALLOON
+
+
 class TestAdd:
     def test_クリックで置ける(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_BALLOON)

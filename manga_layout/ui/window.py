@@ -63,6 +63,7 @@ from .shortcuts import SHORTCUTS_HINT, ShortcutsDialog, collect_groups
 from .state import (
     ADJUST_TOOLS,
     BALLOON_STYLE_LABELS,
+    BALLOON_TOOLS,
     TOOL_BALLOON,
     TOOL_BALLOON_CLOUD,
     TOOL_BALLOON_JAGGED,
@@ -450,12 +451,19 @@ class MainWindow(QMainWindow):
             self.addAction(action)
             self._tool_actions[tool] = action
         self._tool_actions[TOOL_SELECT].setChecked(True)
-        # **`T` キーだけは、カーソルが用紙の上ならその場に置く**（→ 6.5）。
-        # 同じ項目はメニュー・道具箱・右クリックからも押せるので、`triggered`
-        # では分けられない。右クリックのメニューは用紙の上に開くため、
-        # 分けないと「押した項目の位置」にセリフができる。キーで押したときに
-        # だけ届く `Shortcut` の出来事を、項目に届く前に拾う
-        self._tool_actions[TOOL_TEXT].installEventFilter(self)
+        # **`T` と `B` のキーは、カーソルが用紙の上ならその場に置く**
+        # （→ 6.5・6.9）。同じ項目はメニュー・道具箱・右クリックからも
+        # 押せるので、`triggered` では分けられない。右クリックのメニューは
+        # 用紙の上に開くため、分けないと「押した項目の位置」に置かれる。
+        # キーで押したときにだけ届く `Shortcut` の出来事を、項目に届く前に拾う
+        self._place_on_key = {
+            TOOL_TEXT: self.view.add_text_at,
+            TOOL_BALLOON: lambda x, y: self.view.add_balloon_at(
+                x, y, BALLOON_TOOLS[TOOL_BALLOON]
+            ),
+        }
+        for tool in self._place_on_key:
+            self._tool_actions[tool].installEventFilter(self)
         # **選択にだけ説明を添える。** 他の道具は「〜を追加」「〜を調整」と
         # 名前で何が起きるか分かるが、選択は**戻る先**であることが名前に
         # 出ない。編集メニューでは取り消しの隣に並ぶので、なおさら
@@ -465,25 +473,24 @@ class MainWindow(QMainWindow):
         )
 
     def eventFilter(self, watched, event) -> bool:
-        if (
-            event.type() == QEvent.Type.Shortcut
-            and watched is self._tool_actions.get(TOOL_TEXT)
-        ):
-            return self._place_text_under_cursor()
+        if event.type() == QEvent.Type.Shortcut:
+            for tool, place in getattr(self, "_place_on_key", {}).items():
+                if watched is self._tool_actions.get(tool):
+                    return self._place_under_cursor(place)
         return super().eventFilter(watched, event)
 
-    def _place_text_under_cursor(self) -> bool:
-        """`T` キーが押された。カーソルが用紙の上なら、そこにセリフを置く。
+    def _place_under_cursor(self, place) -> bool:
+        """`T` / `B` キーが押された。カーソルが用紙の上なら、そこに置く。
 
         置いたら True（項目には届けない）。用紙の外なら False を返して、
         いつもどおり道具の持ち替えに回す。**道具を持ってからクリックする
         2手は、押した瞬間に置き場所が決まっているのに、もう1手を求める**
-        （本人の指摘 2026-09-27。直感的でなく戸惑う）。
+        （本人の指摘 2026-09-27。直感的でなく戸惑う。`B` は同日に追加）。
         """
         point = self.view.page_point_under_cursor()
         if point is None:
             return False
-        self.run_action(lambda: self.view.add_text_at(*point))
+        self.run_action(lambda: place(*point))
         return True
 
     def _pick_tool(self, tool: str) -> None:
