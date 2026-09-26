@@ -244,6 +244,10 @@ class ContextMenu:
         # 分岐の外に置いて、種類を足したときに片方だけ抜けないようにする
         menu.addAction(window.edit_menu.duplicate_action)
         menu.addAction(window.edit_menu.delete_action)
+        # 大きさはコマには効かない。グレーの2行を並べるより出さない
+        if window.can_step_selected_size():
+            for action in window.edit_menu.size_actions:
+                menu.addAction(action)
         return menu
 
     def _show_tips_in_status_bar(self, menu: QMenu) -> None:

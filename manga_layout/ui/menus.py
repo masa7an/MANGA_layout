@@ -379,6 +379,23 @@ class EditMenu:
         menu.addAction(self.duplicate_action)
         self.delete_action = window._act("削除", window.delete_selected, "Delete")
         menu.addAction(self.delete_action)
+        # **キーは名前に書くだけで、ショートカットにはしない。** 割り当てると
+        # セリフの入力中にも効くので、画面側で拾う（→ `canvas.SIZE_UP_KEYS`、
+        # トーンの濃さと同じ形 → `ToneMenu`）
+        self.size_actions = [
+            window._act(
+                f"{name}（{key}）",
+                functools.partial(window.step_selected_size, direction),
+                None,
+                tip,
+            )
+            for name, key, direction, tip in (
+                ("大きくする", "Alt+.", 1, "中心を動かさずに1割大きくする（セリフは文字を大きく）"),
+                ("小さくする", "Alt+,", -1, "中心を動かさずに1割小さくする（セリフは文字を小さく）"),
+            )
+        ]
+        for action in self.size_actions:
+            menu.addAction(action)
         self.full_page_action = window._act(
             "ページ全面にコマを作る", window.add_full_page_panel, "Ctrl+Shift+A"
         )
@@ -405,6 +422,10 @@ class EditMenu:
         name = object_label(self._state.selected_object)
         self.duplicate_action.setEnabled(bool(name))
         self.duplicate_action.setText(f"{name}を複製" if name else "複製")
+        # コマ・何も選んでいないときはグレー（→ `canvas._SCALE_TARGETS`）
+        sizable = self._window.can_step_selected_size()
+        for action in self.size_actions:
+            action.setEnabled(sizable)
 
 
 class PanelMenu:

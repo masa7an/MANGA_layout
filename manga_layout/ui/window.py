@@ -270,6 +270,7 @@ class MainWindow(QMainWindow):
         self.state.tool_changed.connect(self._refresh)
         self.state.message.connect(lambda text: self.statusBar().showMessage(text, 6000))
         self.view.context_menu_requested.connect(self.context_menu.show)
+        self.view.size_step_requested.connect(self.step_selected_size)
 
         # 前回のセッションで開いていた作品名を「前回のファイルを開く」に出す
         self.file_menu.sync_recent_project()
@@ -1359,6 +1360,23 @@ class MainWindow(QMainWindow):
             return
         self.state.set_text_font(text.id, size_px=size)
         self.state.message.emit(f"文字の大きさ: {self._size_label(size)}")
+
+    def can_step_selected_size(self) -> bool:
+        """「大きくする／小さくする」が効くものを選んでいるか。"""
+        return self.state.selected_text is not None or self.view.can_scale_selected()
+
+    def step_selected_size(self, direction: int) -> None:
+        """選んでいるものを1段だけ大きく／小さくする（`Alt+.` / `Alt+,`）。
+
+        **セリフは文字の大きさを変える**（`Ctrl+.` / `Ctrl+,` と同じ。
+        本人の指示 2026-09-27）。セリフの枠だけ膨らませても字は変わらず、
+        効いたように見えない。フキダシ・画像・マークは枠ごと拡大縮小し、
+        コマは何もしない（→ `canvas._SCALE_TARGETS`）。
+        """
+        if self.state.selected_text is not None:
+            self.step_text_size(direction)
+            return
+        self.view.scale_selected(direction)
 
     def toggle_bold(self) -> None:
         text = self.state.selected_text

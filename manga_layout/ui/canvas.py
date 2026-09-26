@@ -271,6 +271,18 @@ TONE_THRESHOLD_DOWN_KEYS = (Qt.Key.Key_BraceLeft, Qt.Key.Key_BracketLeft)
 TONE_DENSITY_UP_KEYS = (Qt.Key.Key_Greater, Qt.Key.Key_Period)
 TONE_DENSITY_DOWN_KEYS = (Qt.Key.Key_Less, Qt.Key.Key_Comma)
 
+# 選んでいるものを大きく／小さくするキー（本人の指示 2026-09-27）。
+# **`Alt+.` / `Alt+,`。** 右が増える側という向きは上の2組と同じ。
+#
+# **メニューのショートカットにしない。** 拾う黒・濃さと同じく、セリフの
+# 入力中に横取りしないため画面側で拾う（→ 要件定義 7章）。
+# 濃さのキーより先に見るので、トーンの入った画像でも大きさのほうが効く
+SIZE_UP_KEYS = (Qt.Key.Key_Period, Qt.Key.Key_Greater)
+SIZE_DOWN_KEYS = (Qt.Key.Key_Comma, Qt.Key.Key_Less)
+
+# 1回押したときの倍率。縮めるときはこの逆数を掛けるので、大きく→小さくで元に戻る
+SIZE_STEP_FACTOR = 1.1
+
 # ファイル選択ダイアログとドロップ受け入れで共通の対象。
 # assets.sniff_format が見分けられる形式に合わせてある
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -413,6 +425,12 @@ _MOVE_TARGETS = (
 _RESIZE_TARGETS = (
     *_MOVE_TARGETS,
     (lambda s: s.selected_balloon, BalloonObject, "フキダシ"),
+)
+# キーでの拡大縮小（→ `PageView.scale_selected`）。**セリフは入れない。**
+# セリフは枠ではなく文字の大きさを変える（→ `MainWindow.step_selected_size`）。
+# コマも入れない——ページを分け合っているので、1つだけ大きくすると隣に重なる
+_SCALE_TARGETS = tuple(
+    target for target in _RESIZE_TARGETS if target[1] is not TextObject
 )
 
 
@@ -2297,6 +2315,10 @@ class PageView(QGraphicsView):
     # メニューの中身は `MainWindow` が組む。項目の実体（QAction）は
     # メニューバーのものを使い回すので、持ち主のところで組むほうが早い
     context_menu_requested = Signal(float, float, QPoint)
+    # `Alt+.` / `Alt+,` が押された（+1 で大きく、-1 で小さく）。
+    # セリフは文字の大きさを変えるので、`window.py` の受け持ち
+    # （こちらからは読めない → `font_size_label`）
+    size_step_requested = Signal(int)
 
     def __init__(self, state: EditorState):
         # Qt の初期化より先に属性を持たせない（基底の __init__ が済むまで代入できない）
@@ -2486,6 +2508,14 @@ class PageView(QGraphicsView):
             text = self.state.selected_text
             if text is not None:
                 self.begin_text_edit(text.id)
+                event.accept()
+                return
+        # 大きさ（→ `SIZE_UP_KEYS`）。**Alt 付きは下の濃さへ流さない。**
+        # 濃さのキーは修飾キーを見ないので、流すとトーンの入った画像で
+        # 大きさではなく濃さが変わる
+        if event.modifiers() & Qt.KeyboardModifier.AltModifier:
+            if key in SIZE_UP_KEYS or key in SIZE_DOWN_KEYS:
+                self.size_step_requested.emit(1 if key in SIZE_UP_KEYS else -1)
                 event.accept()
                 return
         # どこまでを黒と見るかを連打で合わせる（→ 要件定義 6.27）。
@@ -3845,6 +3875,50 @@ class PageView(QGraphicsView):
         with self.state.edit_page("コマの大きさ変更") as page:
             set_panel_rect(page.panel(panel_id), rect)
         self.state.message.emit(f"{rect.w:.0f} × {rect.h:.0f} px")
+
+    def can_scale_selected(self) -> bool:
+        """キーで拡大縮小できるものを選んでいるか（セリフは別 → `_SCALE_TARGETS`）。"""
+        return any(getter(self.state) is not None for getter, _, _ in _SCALE_TARGETS)
+
+    def scale_selected(self, direction: int) -> bool:
+        """選んでいるものを、中心を動かさずに1段だけ拡大縮小する。変えたら True。
+
+        縦横の比は保つ（両方に同じ倍率を掛ける）。傾きは中心が軸なので、
+        中心を動かさなければ傾いたものも見た目どおりに膨らむ。
+        フキダシのしっぽの先端は動かさない（つまみで引いたときと同じ）。
+
+        **連打は履歴の1手にまとめる。** 1割ずつなので、合わせるまでに
+        何度も押す。1回ずつ積むと、戻すときも同じ回数だけ押すことになる。
+        """
+        for getter, cls, name in _SCALE_TARGETS:
+            obj = getter(self.state)
+            if obj is None:
+                continue
+            rect = obj.rect
+            factor = SIZE_STEP_FACTOR if direction > 0 else 1.0 / SIZE_STEP_FACTOR
+            # 縮めるときは最小の大きさで止める。1割に満たない残りも詰め切る
+            minimum = self.state.settings.min_panel_size
+            shortest = min(rect.w, rect.h)
+            if direction < 0 and shortest * factor < minimum:
+                factor = minimum / shortest if shortest > 0.0 else 1.0
+                if factor >= 1.0:
+                    self.state.message.emit("これ以上は小さくできません")
+                    return False
+            scaled = scaled_about(rect, rect.center, factor)
+            if isinstance(obj, ImageObject) and self._orphan_rejected(
+                obj, scaled, "その大きさにはできません"
+            ):
+                return False
+            object_id = obj.id
+            with self.state.edit_page(
+                f"{name}の拡大縮小", merge_key=f"scale:{object_id}"
+            ) as page:
+                target = page.find(object_id)
+                if isinstance(target, cls):
+                    target.rect = scaled
+            self.state.message.emit(f"{scaled.w:.0f} × {scaled.h:.0f} px")
+            return True
+        return False
 
     def _apply_text_scale(self, text_id: str, rect: Rect, size_px: float) -> None:
         """セリフを枠ごと拡大縮小して確定する（→ `TextScaleDrag`）。
