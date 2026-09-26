@@ -30,7 +30,7 @@ HINT_BOTTOM_MARGIN = 32
 
 HINT_STYLE = (
     "QLabel {"
-    " background-color: rgba(30, 30, 30, 210);"
+    " background-color: rgba(30, 30, 30, 170);"
     " color: white;"
     " border-radius: 10px;"
     " padding: 14px 28px;"
