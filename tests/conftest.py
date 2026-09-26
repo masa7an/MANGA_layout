@@ -112,6 +112,24 @@ def 出したヒントの記録を逃がす(tmp_path_factory, monkeypatch):
         "manga_layout.hints_seen.last_hint_path",
         lambda: directory / "last_hint.txt",
     )
+    yield
+    # **後回しにした判定を、このテストの中で済ませる。** 主窓は起動時と
+    # 選び直したときの判定を `QTimer.singleShot(0, ...)` で後へ回す
+    # （→ `MainWindow._show_startup_hint`・`_queue_once_hints`）。
+    # 出来事を回さずに終わったテストの窓は、閉じても判定を抱えたまま残り、
+    # **次のテストの `processEvents` で走って、次のテストの記録に書く。**
+    # 並列で流したときだけ、順番しだいで「出ないはずのヒントが記録された」
+    # と落ちていた（2026-09-27）。
+    #
+    # **置き場所の差し替えが生きているうちに回す。** `monkeypatch` の
+    # 戻しはこの fixture の片付けより後なので、ここならこのテストの
+    # 一時フォルダへ書かれ、本物の `data/` には届かない
+    if "PySide6.QtWidgets" not in sys.modules:
+        return
+    from PySide6.QtWidgets import QApplication
+
+    if QApplication.instance() is not None:
+        QApplication.processEvents()
 
 
 @pytest.fixture
