@@ -105,6 +105,10 @@ class Test_Mキーでその場に置く:
         assert stickers(window) == []
         assert window.state.tool == TOOL_STICKER_EXCLAIM
 
+    def test_押しっぱなしでも1つしか置かない(self, window_with_panel):
+        # キーの繰り返しは項目の `autoRepeat` で止まる（→ test_ui_balloon の同名）
+        assert window_with_panel._tool_actions[TOOL_STICKER_EXCLAIM].autoRepeat() is False
+
     def test_メニューから押したら用紙の上でも道具を持つだけ(self, window_with_panel):
         window = window_with_panel
         window.view.centerOn(*CENTER)

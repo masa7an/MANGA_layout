@@ -255,6 +255,12 @@ class Testキーでその場に置く:
         assert window.state.page.floating == []
         assert window.state.tool == tool
 
+    def test_押しっぱなしでも1つしか置かない(self, window_with_panel, tool, key):
+        """キーの繰り返しは項目の `autoRepeat` で止まる（Qt のショートカットの
+        仕組みが見る）。繰り返しの出来事はテストから作れないので、設定を見る。
+        """
+        assert window_with_panel._tool_actions[tool].autoRepeat() is False
+
     def test_メニューから押したら用紙の上でも道具を持つだけ(
         self, window_with_panel, tool, key
     ):

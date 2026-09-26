@@ -176,6 +176,10 @@ class TestTキーでその場に置く:
         assert self.texts(window) == []
         assert window.state.tool == TOOL_TEXT
 
+    def test_押しっぱなしでも1つしか置かない(self, window_with_balloon):
+        # キーの繰り返しは項目の `autoRepeat` で止まる（→ test_ui_balloon の同名）
+        assert window_with_balloon._tool_actions[TOOL_TEXT].autoRepeat() is False
+
     def test_メニューから押したら用紙の上でも道具を持つだけ(self, window_with_balloon):
         window = window_with_balloon
         window.view.centerOn(*BALLOON.center)

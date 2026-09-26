@@ -523,7 +523,12 @@ class MainWindow(QMainWindow):
             self.view.add_sticker_at, kind=STICKER_TOOLS[TOOL_STICKER_EXCLAIM]
         )
         for tool in self._place_on_key:
-            self._tool_actions[tool].installEventFilter(self)
+            action = self._tool_actions[tool]
+            action.installEventFilter(self)
+            # **押しっぱなしの繰り返しを届けない。** 項目は既定で繰り返しを
+            # 受け取るので、長押しすると同じ場所に何個も置かれる。道具の
+            # 持ち替えは1回で足りるので、切っても困らない
+            action.setAutoRepeat(False)
         # **選択にだけ説明を添える。** 他の道具は「〜を追加」「〜を調整」と
         # 名前で何が起きるか分かるが、選択は**戻る先**であることが名前に
         # 出ない。編集メニューでは取り消しの隣に並ぶので、なおさら
