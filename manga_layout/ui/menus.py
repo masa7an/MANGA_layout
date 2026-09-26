@@ -1215,7 +1215,9 @@ class TextMenu:
                 self.actions.append(action)
             return action
 
-        add("文字を入力...", window.edit_text, "F2")
+        # 「文字を入力...」から改めた（本人の指示 2026-09-27）。`T` も置いてから
+        # 文字を打つので、名前だけでは区別が付かなかった。こちらは今あるテキストを直す
+        add("入力欄を開き直す...", window.edit_text, "F2")
         menu.addSeparator()
 
         self.vertical_action = add("縦書き", window.toggle_vertical, "F7")

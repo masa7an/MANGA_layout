@@ -274,7 +274,7 @@ class TestContents:
 
         menu = right_click(window_with_panel, *ON_TEXT)
         found = labels(menu)
-        assert "文字を入力..." in found
+        assert "入力欄を開き直す..." in found
         assert "縦書き" in found
         assert "フォントを選ぶ..." in found
         assert "テキストを削除" in found

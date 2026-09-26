@@ -93,7 +93,7 @@ EXTRA_GROUPS = (
             ShortcutRow("+ / -", "拡大 / 縮小（画面の中心が軸）"),
             ShortcutRow("Shift+] / Shift+[", "トーンで拾う黒を増やす / 減らす"),
             ShortcutRow("Shift+. / Shift+,", "トーンを濃く / 薄くする"),
-            ShortcutRow("Enter", "選んでいるテキストを打ち始める"),
+            ShortcutRow("Enter", "入力欄を開き直す（F2 と同じ）"),
             ShortcutRow("Esc", "画像からコマへ戻る / 選択を解除する"),
         ),
     ),
