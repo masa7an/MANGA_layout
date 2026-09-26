@@ -59,6 +59,62 @@ def stickers(window) -> list[StickerObject]:
     return [f for f in window.state.page.floating if isinstance(f, StickerObject)]
 
 
+class Test_Mキーでその場に置く:
+    """`M` キーを押したとき、カーソルが用紙の上ならその場に置く。
+
+    テキストの `T`・フキダシの `B` と同じ扱い（→ tests/test_ui_text.py・
+    tests/test_ui_balloon.py）。**キーで押したときだけ**置く。
+    キーの押下は `Shortcut` の出来事を項目へ直に送って作る。
+    """
+
+    def カーソルを置く(self, window, x: float, y: float) -> None:
+        from PySide6.QtCore import QPointF
+        from PySide6.QtGui import QCursor
+
+        view = window.view
+        QCursor.setPos(view.viewport().mapToGlobal(view.mapFromScene(QPointF(x, y))))
+
+    def Mキーを押す(self, window) -> None:
+        from PySide6.QtGui import QKeySequence, QShortcutEvent
+        from PySide6.QtWidgets import QApplication
+
+        action = window._tool_actions[TOOL_STICKER_EXCLAIM]
+        assert action.shortcut() == QKeySequence("M"), "キーの割り当てが変わった"
+        QApplication.sendEvent(action, QShortcutEvent(QKeySequence("M"), None))
+
+    def test_用紙の上ならその場に置く(self, window_with_panel):
+        window = window_with_panel
+        window.view.centerOn(*CENTER)
+        self.カーソルを置く(window, *CENTER)
+        self.Mキーを押す(window)
+
+        placed = stickers(window)
+        assert len(placed) == 1
+        assert placed[0].kind == STICKER_EXCLAIM
+        assert placed[0].rect.center == pytest.approx(CENTER, abs=1.0)
+        assert window.state.tool == TOOL_SELECT
+
+    def test_用紙の外なら道具を持つだけ(self, window_with_panel):
+        window = window_with_panel
+        window.view.fit_page()
+        size = window.state.page.size
+        self.カーソルを置く(window, -10.0, size.h / 2.0)
+        assert window.view.page_point_under_cursor() is None, "灰色の上に置けていない"
+        self.Mキーを押す(window)
+
+        assert stickers(window) == []
+        assert window.state.tool == TOOL_STICKER_EXCLAIM
+
+    def test_メニューから押したら用紙の上でも道具を持つだけ(self, window_with_panel):
+        window = window_with_panel
+        window.view.centerOn(*CENTER)
+        self.カーソルを置く(window, *CENTER)
+        window._tool_actions[TOOL_STICKER_EXCLAIM].trigger()
+
+        assert stickers(window) == []
+        assert window.state.tool == TOOL_STICKER_EXCLAIM
+
+
 class Test置く:
     def test_道具を選んでクリックすると置ける(self, window_with_panel):
         window_with_panel.state.set_tool(TOOL_STICKER_EXCLAIM)
