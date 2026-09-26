@@ -8,10 +8,9 @@
 from __future__ import annotations
 
 import pathlib
-import time
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEventLoop, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -71,9 +70,9 @@ AUTOSAVE_FAILED = "自動バックアップできません"
 # 30 ページの作品でも確認欄が画面を埋めないようにする
 OVERWRITE_LIST_LIMIT = 5
 
-# 進捗窓が画面に出るのを待つ上限（秒）。出ないまま書き出しを
+# 進捗窓が画面に出るのを待つ上限（ミリ秒）。出ないまま書き出しを
 # 始めないための待ちで、ふつうは数十ミリ秒で済む
-PAINT_WAIT_LIMIT = 0.5
+PAINT_WAIT_LIMIT_MS = 500
 
 
 def _paint_now(dialog: QProgressDialog) -> None:
@@ -83,15 +82,20 @@ def _paint_now(dialog: QProgressDialog) -> None:
     出た知らせ（expose）がまだ届いておらず、中身の描画が後回しになる。
     そのまま書き出しに入ると GUI スレッドが塞がり、1ページ目を書き終える
     まで枠の中が真っ白のままだった（実測 2026-09-27。本人の指摘）。
-    知らせが届くまで待ってから、`repaint` で描画を強制する
+    知らせが届くまで待ってから、`repaint` で描画を強制する。
+
+    **待つ間は眠る**（`WaitForMoreEvents`）。`processEvents` を空回しすると、
+    待つ間ずっと CPU を1つ使い切る（2026-09-27 のレビュー）。眠ったまま
+    知らせが来なくても、上限の時計が鳴って起こすので、待ちすぎはしない
     """
     handle = dialog.windowHandle()
-    deadline = time.monotonic() + PAINT_WAIT_LIMIT
+    guard = QTimer()
+    guard.setSingleShot(True)
+    guard.start(PAINT_WAIT_LIMIT_MS)
     QApplication.processEvents()
-    while (
-        handle is not None and not handle.isExposed() and time.monotonic() < deadline
-    ):
-        QApplication.processEvents()
+    while handle is not None and not handle.isExposed() and guard.isActive():
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.WaitForMoreEvents)
+    guard.stop()
     dialog.repaint()
     QApplication.processEvents()
 

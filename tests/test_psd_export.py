@@ -785,3 +785,39 @@ class Test途中で止める:
         path = export_psd_pages(state, [0], tmp_path)[0]
         parsed = parse_psd(path.read_bytes())
         assert parsed["width"] == round(SMALL_PAGE.w * DEFAULT_SCALE)
+
+
+class Test進捗窓の描き切り:
+    """PSD の書き出し前に、進捗窓が画面に出るのを待つ（→ `project_io._paint_now`）。"""
+
+    def test_待つ間は空回しせずに眠る(self, qapp, monkeypatch):
+        """画面に出ない窓を渡して、上限まで待たせる。
+
+        空回しすると、待つ間に `processEvents` を数千回呼んで CPU を1つ
+        使い切る（2026-09-27 のレビュー）。眠っていれば数回で済む。
+        """
+        import time
+
+        from PySide6.QtWidgets import QProgressDialog
+
+        from manga_layout.ui import project_io
+
+        monkeypatch.setattr(project_io, "PAINT_WAIT_LIMIT_MS", 100)
+        original = project_io.QApplication.processEvents
+        calls = []
+
+        def counted(*args):
+            calls.append(args)
+            return original(*args)
+
+        monkeypatch.setattr(project_io.QApplication, "processEvents", counted)
+        dialog = QProgressDialog()
+        dialog.winId()  # 窓の実体だけ作る。表には出さないので、出た知らせは来ない
+        assert not dialog.windowHandle().isExposed()
+
+        started = time.monotonic()
+        project_io._paint_now(dialog)
+        elapsed = time.monotonic() - started
+
+        assert 0.09 <= elapsed < 1.0  # 上限まで待ち、上限で抜ける
+        assert len(calls) < 20
