@@ -31,6 +31,29 @@ def qapp():
     yield app
 
 
+@pytest.fixture(autouse=True)
+def 残った窓を閉じる():
+    """テストが終わったら、表示されたまま残った窓を閉じる。
+
+    **主窓を閉じても、そこから開いた小窓（ショートカットキーの一覧・点検の
+    結果）は閉じない。** 独立した窓として画面に残り、同じプロセスで後に
+    走るテストの**カーソルの下に重なる**。`T` / `B` / `M` キーでその場に
+    置く処理（→ `PageView.page_point_under_cursor`）は、重なった窓を
+    「用紙が見えていない」と読んで置かずに終わる。並列で流したときだけ、
+    順番しだいで落ちていた（2026-09-27、7回中4回）。
+    """
+    yield
+    if "PySide6.QtWidgets" not in sys.modules:
+        return
+    from PySide6.QtWidgets import QApplication
+
+    if QApplication.instance() is None:
+        return
+    for widget in QApplication.topLevelWidgets():
+        if widget.isVisible():
+            widget.close()
+
+
 @pytest.fixture
 def fixture_dir() -> pathlib.Path:
     return FIXTURE_DIR
