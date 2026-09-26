@@ -208,6 +208,26 @@ class Test押したまま引く:
         assert window.state.page.find(image).rect == before
         assert window.state.history.undo_label == label
 
+    def test_手ぶれでは動かない(self, buried):
+        """動き出しの遊び（OS のドラッグ開始の距離）に届かない揺れは無視する。
+
+        遊びが無いと、選ぶだけのつもりの揺れで吸着が掛かり、数 px 跳ぶ。
+        """
+        from PySide6.QtWidgets import QApplication
+
+        window, _small, _big, image = buried
+        before = window.state.page.find(image).rect
+        label = window.state.history.undo_label
+        # 遊びより1画素だけ少ない揺れを、ページの px に直す
+        jitter = (QApplication.startDragDistance() - 1) / window.view.transform().m11()
+
+        click_pair(window.view, *POINT)
+        move_to(window.view, POINT[0] + jitter, POINT[1])
+        release(window.view, POINT[0] + jitter, POINT[1])
+
+        assert window.state.page.find(image).rect == before
+        assert window.state.history.undo_label == label
+
     def test_ロックしたコマは掴まない(self, buried):
         """押下と同じ扱い（→ 6.17）。巡回で選ぶことはできる。
 

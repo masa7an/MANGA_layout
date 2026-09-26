@@ -561,20 +561,37 @@ class MoveDrag(Drag):
     （画像・セリフ・マークは矩形をそのまま、フキダシ・コマは専用の処理）。
     """
 
-    def __init__(self, object_id: str, origin_rect: Rect, grab: tuple[float, float]):
+    def __init__(
+        self,
+        object_id: str,
+        origin_rect: Rect,
+        grab: tuple[float, float],
+        slop_px: float = 0.0,
+    ):
         self.object_id = object_id
         self.origin_rect = origin_rect
         self.grab = grab
         self.preview_rect = origin_rect
+        # 動き出すまでの遊び（画面の画素）。超えるまでは動かさない
+        self.slop_px = slop_px
 
     @classmethod
-    def begin(cls, view: PageView, x: float, y: float) -> MoveDrag:
+    def begin(
+        cls, view: PageView, x: float, y: float, *, slop_px: float = 0.0
+    ) -> MoveDrag:
         # 掴む矩形は `selected_bounds` に任せる。斜めの組なら組の外側が
         # 返るので、片方だけ動く見た目にならない
-        return cls(view.state.selected_id, view.state.selected_bounds, (x, y))
+        return cls(view.state.selected_id, view.state.selected_bounds, (x, y), slop_px)
 
     def update(self, view: PageView, x: float, y: float, event) -> None:
         gx, gy = self.grab
+        if self.slop_px > 0.0:
+            # **画面の画素で測る。** 手ぶれの大きさは倍率に関わらず同じ
+            shift = view.mapFromScene(QPointF(x, y)) - view.mapFromScene(QPointF(gx, gy))
+            if shift.manhattanLength() < self.slop_px:
+                return
+            # 一度超えたら遊びは無くす。掴んだ位置へ戻しても、ふつうに付いてくる
+            self.slop_px = 0.0
         moved = self.origin_rect.translated(x - gx, y - gy)
         xs, ys = view._candidates(view.state.selected_id)
         self.preview_rect = snap_moved_rect(
@@ -3249,8 +3266,13 @@ class PageView(QGraphicsView):
         # **選んだものをそのまま掴む。** 押したまま引けば、離さずに動かせる
         # （2026-09-25 追加）。以前は選び直すだけで、動かすには一度離して
         # 押し直す必要があった。ロックしたコマは押下と同じく掴まない（→ 6.17）
+        #
+        # **動き出しに遊びを持たせる**（OS のドラッグ開始の距離）。選ぶだけの
+        # つもりの手ぶれで動くと、吸着（`SNAP_PX`）が掛かって数 px 跳ぶ
         if not self.state.is_locked_selection:
-            self._drag = MoveDrag.begin(self, x, y)
+            self._drag = MoveDrag.begin(
+                self, x, y, slop_px=QApplication.startDragDistance()
+            )
         event.accept()
 
     def _double_click_text(self, text_id: str) -> None:
