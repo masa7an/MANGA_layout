@@ -283,6 +283,20 @@ SIZE_DOWN_KEYS = (Qt.Key.Key_Comma, Qt.Key.Key_Less)
 # 1回押したときの倍率。縮めるときはこの逆数を掛けるので、大きく→小さくで元に戻る
 SIZE_STEP_FACTOR = 1.1
 
+# 選んでいるものを1px ずつ動かすキー（本人の指示 2026-09-27）。**`Alt+矢印`。**
+# 位置の追い込み用で、ドラッグでは手が震えて1px が合わない。
+#
+# **素の矢印は取らない。** 画面部品が元から持っているスクロールに使われて
+# いる。Alt 付きは取った時点で受け取り済みにするので、スクロールは起きない
+# （取らないと、動かすたびに画面も約45px 流れる。2026-09-27 実測）
+NUDGE_STEP_PX = 1.0
+NUDGE_KEYS = {
+    Qt.Key.Key_Left: (-NUDGE_STEP_PX, 0.0),
+    Qt.Key.Key_Right: (NUDGE_STEP_PX, 0.0),
+    Qt.Key.Key_Up: (0.0, -NUDGE_STEP_PX),
+    Qt.Key.Key_Down: (0.0, NUDGE_STEP_PX),
+}
+
 # ファイル選択ダイアログとドロップ受け入れで共通の対象。
 # assets.sniff_format が見分けられる形式に合わせてある
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
@@ -2518,6 +2532,10 @@ class PageView(QGraphicsView):
                 self.size_step_requested.emit(1 if key in SIZE_UP_KEYS else -1)
                 event.accept()
                 return
+            if key in NUDGE_KEYS:
+                self.nudge_selected(*NUDGE_KEYS[key])
+                event.accept()
+                return
         # どこまでを黒と見るかを連打で合わせる（→ 要件定義 6.27）。
         #
         # **`+` / `-` には割り当てない。** あちらは拡大縮小で、拾い具合を
@@ -3764,41 +3782,85 @@ class PageView(QGraphicsView):
         self.state.message.emit(f"コマの外まで出ると選べなくなるので、{reason}")
         return True
 
-    def _apply_move(self, origin: Rect, final: Rect) -> None:
+    def nudge_selected(self, dx: float, dy: float) -> None:
+        """選んでいるものを少しだけ動かす（`Alt+矢印` → `NUDGE_KEYS`）。
+
+        ドラッグと同じ `_apply_move` を通すので、しっぽの先端・上に乗った
+        セリフ・画像がコマの外へ出る断りは、引いたときと同じに扱われる。
+
+        **連打は履歴の1手にまとめる。** 1px ずつなので、合わせるまでに
+        何度も押す。動いた量は履歴に添えない——まとめた1手には最初の
+        1回ぶんしか残らず、実際の量と食い違うため。代わりに押すたびに
+        今の位置を状態表示に出す。
+        """
+        bounds = self.state.selected_bounds
+        if bounds is None:
+            return
+        # ロックしたコマは動かさない（引いたときと同じ → 6.17）
+        if self.state.is_locked_selection:
+            self.state.message.emit(
+                "ロックされたコマです。動かすにはロックを解除してください"
+            )
+            return
+        if not self._apply_move(
+            bounds,
+            bounds.translated(dx, dy),
+            merge_key=f"nudge:{self.state.selected_id}",
+        ):
+            return
+        moved = self.state.selected_bounds
+        if moved is not None:
+            self.state.message.emit(f"位置: {moved.x:.0f}, {moved.y:.0f} px")
+
+    def _apply_move(
+        self, origin: Rect, final: Rect, *, merge_key: str | None = None
+    ) -> bool:
+        """動かした結果を確定する。動かしたら True。
+
+        `merge_key` を渡すと連打ぶんが履歴の1手にまとまる（→ `nudge_selected`）。
+        そのときは動いた量を履歴に添えない。
+        """
         dx, dy = final.x - origin.x, final.y - origin.y
         if dx == 0.0 and dy == 0.0:
-            return
+            return False
         object_id = self.state.selected_id
         if object_id is None:
-            return
+            return False
 
-        amount = move_amount_text(dx, dy)
+        amount = "" if merge_key else move_amount_text(dx, dy)
         image = self.state.selected_image
         if image is not None and image.id == object_id:
             moved = image.rect.translated(dx, dy)
             if self._orphan_rejected(image, moved, "そこまでは動かせません"):
-                return
+                return False
 
         for getter, cls, name in _MOVE_TARGETS:
             if getter(self.state) is None:
                 continue
-            with self.state.edit_page(f"{name}の移動", detail=amount) as page:
+            with self.state.edit_page(
+                f"{name}の移動", merge_key=merge_key, detail=amount
+            ) as page:
                 obj = page.find(object_id)
                 if isinstance(obj, cls):
                     obj.rect = obj.rect.translated(dx, dy)
-            return
+            return True
 
         if self.state.selected_balloon is not None:
             # **しっぽの先端は動かさない。** 先端はしゃべっている人物を
             # 指すページ座標なので、吹き出しの置き場所を変えても
             # 指す相手は変わらない（要件定義 4章）。
             # 上に乗ったセリフは一緒に動く
-            with self.state.edit_page("フキダシの移動", detail=amount) as page:
+            with self.state.edit_page(
+                "フキダシの移動", merge_key=merge_key, detail=amount
+            ) as page:
                 page.move_balloon(object_id, dx, dy)
-            return
+            return True
 
-        with self.state.edit_page("コマの移動", detail=amount) as page:
+        with self.state.edit_page(
+            "コマの移動", merge_key=merge_key, detail=amount
+        ) as page:
             page.move_panel(object_id, dx, dy)
+        return True
 
     def _apply_rotate(self, object_id: str, angle: float) -> None:
         """回した結果を確定する。

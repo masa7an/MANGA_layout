@@ -97,6 +97,7 @@ EXTRA_GROUPS = (
                 "Alt+. / Alt+,",
                 "選んでいるものを大きく / 小さくする（セリフは文字の大きさ）",
             ),
+            ShortcutRow("Alt+矢印", "選んでいるものを1px ずつ動かす"),
             ShortcutRow("Enter", "入力欄を開き直す（F2 と同じ）"),
             ShortcutRow("Esc", "画像からコマへ戻る / 選択を解除する"),
         ),
