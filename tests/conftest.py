@@ -107,6 +107,11 @@ def 出したヒントの記録を逃がす(tmp_path_factory, monkeypatch):
         "manga_layout.hints_seen.hints_seen_path",
         lambda: directory / "hints_seen.txt",
     )
+    # 最後に出したヒントの記録も同じ場所へ（→ 「ヒントをもう一度見る」）
+    monkeypatch.setattr(
+        "manga_layout.hints_seen.last_hint_path",
+        lambda: directory / "last_hint.txt",
+    )
 
 
 @pytest.fixture

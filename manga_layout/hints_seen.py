@@ -45,3 +45,32 @@ def mark_hint_seen(hint_id: str, path: pathlib.Path | None = None) -> None:
     except OSError:
         # 記録は補助。書けなければ次の起動でもう一度出るだけ
         pass
+
+
+# 最後に出したヒントの名前（→ 「ヒントをもう一度見る」）。**出した順は
+# `hints_seen.txt` からは分からない**——あちらは並べ替えて書くうえ、出す前に
+# 使った人の分（出していないもの）も入る。なので別に1行だけ持つ
+LAST_HINT_FILENAME = "last_hint.txt"
+
+
+def last_hint_path() -> pathlib.Path:
+    return settings_dir() / LAST_HINT_FILENAME
+
+
+def load_last_hint(path: pathlib.Path | None = None) -> str | None:
+    path = path or last_hint_path()
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def save_last_hint(hint_id: str, path: pathlib.Path | None = None) -> None:
+    path = path or last_hint_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, f"{hint_id}\n")
+    except OSError:
+        # 記録は補助。書けなければ、もう一度見るで出るものが古くなるだけ
+        pass

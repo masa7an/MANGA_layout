@@ -220,12 +220,31 @@ class Test前回のファイルの案内:
         finally:
             win.close()
 
-    def test_ヘルプから出すと両方が並ぶ(self, saved_project):
+    def test_ヘルプからは最後に出したものだけ(self, saved_project):
         win = self.launch()
         try:
             win.show_hints_again()
-            assert win.hint_banner.text() == "\n".join(
-                [HINT_TEXTS[HINT_RECENT], HINT_TEXTS[HINT_NUDGE]]
-            )
+            assert win.hint_banner.text() == HINT_TEXTS[HINT_RECENT]
         finally:
+            win.close()
+
+    def test_最後に出したものは再起動しても覚えている(self, saved_project):
+        self.launch().close()
+        win = self.launch()
+        try:
+            win.show_hints_again()
+            assert win.hint_banner.text() == HINT_TEXTS[HINT_RECENT]
+        finally:
+            win.close()
+
+    def test_後から出た微調整の案内に切り替わる(self, saved_project):
+        win = self.launch()
+        try:
+            win.state.save(saved_project)
+            win.state.add_balloon(Rect(300.0, 250.0, 200.0, 120.0))
+            settle()
+            win.show_hints_again()
+            assert win.hint_banner.text() == HINT_TEXTS[HINT_NUDGE]
+        finally:
+            win.state.history.mark_saved()
             win.close()

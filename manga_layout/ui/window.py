@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from ..check import headline, inspect_project, marked_page_ids
 from ..errors import MangaLayoutError
-from ..hints_seen import load_hints_seen, mark_hint_seen
+from ..hints_seen import load_hints_seen, load_last_hint, mark_hint_seen, save_last_hint
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect
 from ..model import (
@@ -582,7 +582,7 @@ class MainWindow(QMainWindow):
             self._act(
                 "ヒントをもう一度見る",
                 self.show_hints_again,
-                tip="最初に一度だけ出す操作のヒント（Alt+矢印キーで微調整・前回のファイルを開く）をもう一度出します",
+                tip="最後に出た操作のヒントをもう一度出します",
             )
         )
 
@@ -1774,10 +1774,15 @@ class MainWindow(QMainWindow):
             and state.selected_image is None
         ):
             return
+        self._show_hint(HINT_NUDGE)
+
+    def _show_hint(self, hint_id: str) -> None:
+        """一度きりのヒントを出す。"""
         # **出した時点で記録する。** 5秒のあいだにアプリが落ちても、
         # 次の起動で同じ案内が出直すことはない
-        self._mark_hint_seen(HINT_NUDGE)
-        self.hint_banner.show_text(HINT_TEXTS[HINT_NUDGE])
+        self._mark_hint_seen(hint_id)
+        save_last_hint(hint_id)
+        self.hint_banner.show_text(HINT_TEXTS[hint_id])
 
     def _on_nudged(self) -> None:
         """`Alt+矢印` が押された。**使えた人には、もう案内しない。**
@@ -1815,20 +1820,22 @@ class MainWindow(QMainWindow):
         """起動時、前回の作品があれば『前回のファイルを開く』を案内する（→ 6.35）。"""
         if HINT_RECENT in self._hints_seen or not self._can_offer_recent():
             return
-        self._mark_hint_seen(HINT_RECENT)
-        self.hint_banner.show_text(HINT_TEXTS[HINT_RECENT])
+        self._show_hint(HINT_RECENT)
 
     def show_hints_again(self) -> None:
         """ヘルプ → ヒントをもう一度見る。**選んでいるものに関わらず、今すぐ出す。**
 
         記録を消して「次に選んだとき」に回す作りにすると、押しても
         その場では何も起きず、効いたのか分からない。
-        前回の作品の案内は、続きから開ける状態のときだけ足す。
+
+        **出すのは最後に出したヒント1つだけ**（本人の指定 2026-09-27）。
+        全部並べると、見たいもの以外まで読まされる。まだ1つも出して
+        いなければ、Alt+矢印 の案内を出す。
         """
-        texts = [HINT_TEXTS[HINT_NUDGE]]
-        if self._can_offer_recent():
-            texts.insert(0, HINT_TEXTS[HINT_RECENT])
-        self.hint_banner.show_text("\n".join(texts))
+        hint_id = load_last_hint()
+        if hint_id not in HINT_TEXTS:
+            hint_id = HINT_NUDGE
+        self.hint_banner.show_text(HINT_TEXTS[hint_id])
 
     def highlight_menu(self, name: str) -> None:
         """メニューバーの見出し1つを四角く囲む（→ 要件定義 6.30）。
