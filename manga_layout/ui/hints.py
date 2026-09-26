@@ -64,8 +64,9 @@ HINT_DURATION_MS = 5000
 # 文字の大きさ。アプリの文字に対する倍率で、**ここだけで決める**。
 # 一度きりの案内なので、見落とされないことを優先して大きめにする
 HINT_FONT_SCALE = 1.5
-# 画面の下端からの距離（画面 px）
-HINT_BOTTOM_MARGIN = 32
+# 画面の上端からの距離（画面 px）。**上端ぎりぎりに出す**（本人の指定 2026-09-27）。
+# 下寄りに出していたときは、開く窓（エクスプローラー）が帯を隠した
+HINT_TOP_MARGIN = 4
 
 HINT_STYLE = (
     "QLabel {"
@@ -78,7 +79,7 @@ HINT_STYLE = (
 
 
 class HintBanner(QLabel):
-    """ページの上、下寄り中央に重ねる帯。押すか、時間が来ると消える。
+    """ページの上、上端ぎりぎりの中央に重ねる帯。押すか、時間が来ると消える。
 
     **画面の枠（`QGraphicsView`）の子にする。** 描画面（viewport）の子に
     すると、スクロールのたびに帯まで一緒に流れる。
@@ -121,8 +122,7 @@ class HintBanner(QLabel):
     def _place(self) -> None:
         area = self._view.viewport().geometry()
         x = area.x() + (area.width() - self.width()) // 2
-        y = area.y() + area.height() - self.height() - HINT_BOTTOM_MARGIN
-        self.move(max(area.x(), x), max(area.y(), y))
+        self.move(max(area.x(), x), area.y() + HINT_TOP_MARGIN)
 
 
 def _scaled_font(base: QFont, scale: float) -> QFont:

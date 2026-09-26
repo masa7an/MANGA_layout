@@ -608,3 +608,15 @@ class TestC分かりにくい機能:
             assert shown(win, HINT_OPEN)
         finally:
             win.close()
+
+
+class Test帯の位置:
+    def test_上端ぎりぎりの中央に出る(self, window):
+        from manga_layout.ui.hints import HINT_TOP_MARGIN
+
+        window.resize(1200, 900)
+        window.show_hints_again()
+        area = window.view.viewport().geometry()
+        banner = window.hint_banner.geometry()
+        assert banner.y() == area.y() + HINT_TOP_MARGIN
+        assert abs(banner.center().x() - area.center().x()) <= 1
