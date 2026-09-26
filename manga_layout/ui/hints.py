@@ -35,6 +35,7 @@ HINT_THIN = "tone_thin"
 HINT_SLANT = "slant"
 HINT_ORPHAN = "image_orphan"
 HINT_OPEN = "open_project"
+HINT_EXPORT = "export"
 HINT_TEXTS = {
     HINT_NUDGE: "Alt+矢印キーで微調整ができます",
     # 文言は本人の指定（2026-09-27）。区切りの空白は全角
@@ -57,6 +58,12 @@ HINT_TEXTS = {
     HINT_SLANT: "斜めに割った2枚は一緒に動きます（もう一度割ることはできません）",
     HINT_ORPHAN: "絵はコマから完全には出せません（一部がかかっていれば置けます）",
     HINT_OPEN: "作品フォルダの中の　project.json　を選んでください",
+    # 文言は本人の指定（2026-09-27）。項目名だけ実物の「画像で書き出し...」に揃えた
+    # （指定では「ファイルを書き出し」）
+    HINT_EXPORT: (
+        "[ファイル]　→　下から2番目あたり[画像で書き出し]　→　PNG　PSD"
+        "　で完成品を書き出せます"
+    ),
 }
 
 # 出してから消えるまで（本人の指定 2026-09-27）

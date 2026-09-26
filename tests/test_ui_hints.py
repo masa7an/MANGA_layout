@@ -30,6 +30,7 @@ from manga_layout.ui.hints import (
     HINT_CHECK,
     HINT_CYCLE,
     HINT_DOUBLE_CLICK,
+    HINT_EXPORT,
     HINT_NOTE,
     HINT_NUDGE,
     HINT_OPEN,
@@ -596,6 +597,26 @@ class TestB気づきにくい機能:
     def test_B9_2ページ目で出る(self, window):
         window.add_page()
         assert shown(window, HINT_NOTE)
+
+    def test_書き出しは付箋の次のページで出る(self, window):
+        window.add_page()
+        window.insert_page()
+        assert shown(window, HINT_EXPORT)
+
+    def test_書き出しは付箋を見終えていれば2ページ目で出る(self, window):
+        window.hint_used(HINT_NOTE)
+        window.add_page()
+        assert shown(window, HINT_EXPORT)
+
+    def test_書き出しは1枚のうちは出ない(self, window):
+        window.hint_used(HINT_NOTE)
+        window._on_page_added()
+        assert not banner_up(window)
+
+    def test_書き出しを使った人には出ない(self, window, monkeypatch):
+        monkeypatch.setattr(window.files, "_export_dest", lambda: None)
+        window.files.export_image()
+        assert HINT_EXPORT in load_hints_seen(recorded_path())
 
 
 class TestC分かりにくい機能:

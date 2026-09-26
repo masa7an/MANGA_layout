@@ -52,6 +52,7 @@ from .hints import (
     HINT_CHECK,
     HINT_CYCLE,
     HINT_DOUBLE_CLICK,
+    HINT_EXPORT,
     HINT_NOTE,
     HINT_NUDGE,
     HINT_ORPHAN,
@@ -2086,13 +2087,21 @@ class MainWindow(QMainWindow):
         self._on_page_added()
 
     def _on_page_added(self) -> None:
-        """ページが2枚以上になったら、付箋を案内する（→ 6.18、6.35）。
+        """ページが2枚以上になったら、付箋を、その次に書き出しを案内する（→ 6.18、6.35）。
 
         付箋はページ一覧の右クリックにしか入口が無い。1枚のうちは
         どこまで進んだかを印す必要がないので、2枚目からにする。
+
+        書き出しは、2ページ目で付箋を出していれば3ページ目で出す
+        （本人の指定 2026-09-27「2ページ目または3ページ目」）。
+        1回の操作で出すのは1つだけ——続けて出すと付箋の案内が上書きされる。
         """
-        if len(self.state.project.pages) >= 2:
+        if len(self.state.project.pages) < 2:
+            return
+        if HINT_NOTE not in self._hints_seen:
             self.show_once_hint(HINT_NOTE)
+            return
+        self.show_once_hint(HINT_EXPORT)
 
     def delete_page(self) -> None:
         """ページを消す。**必ず確認する**（要件定義 6.1）。

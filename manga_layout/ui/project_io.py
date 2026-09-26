@@ -44,7 +44,7 @@ from .export import (
     planned_paths,
     scale_label,
 )
-from .hints import HINT_CHECK, HINT_OPEN, HINT_RECENT
+from .hints import HINT_CHECK, HINT_EXPORT, HINT_OPEN, HINT_RECENT
 from .psd_export import export_psd_pages
 from .restore import RestoreDialog
 from .saving import SaveAsDialog
@@ -416,6 +416,8 @@ class ProjectIO:
         2. 実体が見つからない画像がある（その場所が白く抜ける）
         3. 同じ名前のファイルがすでにある（上書きになる）
         """
+        # 入口を見つけた人には、ページを足したときの案内はもう要らない（→ 6.35）
+        self._window.hint_used(HINT_EXPORT)
         dest = self._export_dest()
         if dest is None:
             return False
