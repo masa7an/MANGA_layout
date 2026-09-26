@@ -516,6 +516,39 @@ class TestA挙動の違い:
         window.view.finish_text_edit(commit=False)
         assert HINT_TEXT_KEY in load_hints_seen(recorded_path())
 
+    @pytest.mark.parametrize("tool_name, key", [
+        ("TOOL_BALLOON", "B"),
+        ("TOOL_BALLOON_CLOUD", "W"),
+        ("TOOL_BALLOON_JAGGED", "G"),
+    ])
+    def test_A4_フキダシのキーで置いた人には出ない(self, window, monkeypatch, tool_name, key):
+        from PySide6.QtGui import QKeySequence, QShortcutEvent
+
+        from manga_layout.ui import state
+
+        monkeypatch.setattr(window.view, "page_point_under_cursor", lambda: (300.0, 300.0))
+        QApplication.sendEvent(
+            window._tool_actions[getattr(state, tool_name)],
+            QShortcutEvent(QKeySequence(key), None),
+        )
+        assert HINT_BALLOON_KEY in load_hints_seen(recorded_path())
+        assert HINT_TEXT_KEY not in load_hints_seen(recorded_path())
+
+    def test_A4_マークのキーはどちらの案内も片付けない(self, window, monkeypatch):
+        """マークのキーを案内するヒントは無い。T・B の案内を巻き添えで消さない。"""
+        from PySide6.QtGui import QKeySequence, QShortcutEvent
+
+        from manga_layout.ui.state import TOOL_STICKER_EXCLAIM
+
+        monkeypatch.setattr(window.view, "page_point_under_cursor", lambda: (300.0, 300.0))
+        QApplication.sendEvent(
+            window._tool_actions[TOOL_STICKER_EXCLAIM], QShortcutEvent(QKeySequence("M"), None)
+        )
+        assert len(window.state.page.floating) == 1  # 置けてはいる
+        seen = load_hints_seen(recorded_path())
+        assert HINT_TEXT_KEY not in seen
+        assert HINT_BALLOON_KEY not in seen
+
     def test_A5_巡回の2段目で出る(self, buried_image):
         click_pair(buried_image.view, 300.0, 250.0)
         settle()

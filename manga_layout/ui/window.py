@@ -511,19 +511,29 @@ class MainWindow(QMainWindow):
         # 用紙の上ならその場に置く**（→ 6.5・6.4・6.14）。同じ項目はメニュー・道具箱・
         # 右クリックからも押せるので、`triggered` では分けられない。右クリックのメニューは
         # 用紙の上に開くため、分けないと「押した項目の位置」に置かれる。
-        # キーで押したときにだけ届く `Shortcut` の出来事を、項目に届く前に拾う
-        self._place_on_key = {
-            TOOL_TEXT: self.view.add_text_at,
+        # キーで押したときにだけ届く `Shortcut` の出来事を、項目に届く前に拾う。
+        #
+        # 道具ごとに（置く処理, キーで置けたら出番の終わるヒント）。マークの
+        # キーを案内するヒントは無い
+        places = {
+            TOOL_TEXT: (self.view.add_text_at, HINT_TEXT_KEY),
+            **{
+                tool: (
+                    partial(self.view.add_balloon_at, style=BALLOON_TOOLS[tool]),
+                    HINT_BALLOON_KEY,
+                )
+                for tool in (TOOL_BALLOON, TOOL_BALLOON_CLOUD, TOOL_BALLOON_JAGGED)
+            },
+            TOOL_STICKER_EXCLAIM: (
+                partial(self.view.add_sticker_at, kind=STICKER_TOOLS[TOOL_STICKER_EXCLAIM]),
+                None,
+            ),
         }
-        for tool in (TOOL_BALLOON, TOOL_BALLOON_CLOUD, TOOL_BALLOON_JAGGED):
-            self._place_on_key[tool] = partial(
-                self.view.add_balloon_at, style=BALLOON_TOOLS[tool]
-            )
-        self._place_on_key[TOOL_STICKER_EXCLAIM] = partial(
-            self.view.add_sticker_at, kind=STICKER_TOOLS[TOOL_STICKER_EXCLAIM]
-        )
-        for tool in self._place_on_key:
+        # 引く側（`eventFilter`）は届いた項目から直接引く
+        self._place_on_key = {}
+        for tool, entry in places.items():
             action = self._tool_actions[tool]
+            self._place_on_key[action] = entry
             action.installEventFilter(self)
             # **押しっぱなしの繰り返しを届けない。** 項目は既定で繰り返しを
             # 受け取るので、長押しすると同じ場所に何個も置かれる。道具の
@@ -538,16 +548,13 @@ class MainWindow(QMainWindow):
         )
 
     def eventFilter(self, watched, event) -> bool:
-        if event.type() == QEvent.Type.Shortcut:
-            for tool, place in getattr(self, "_place_on_key", {}).items():
-                if watched is self._tool_actions.get(tool):
-                    placed = self._place_under_cursor(place)
-                    # キーで置けた人には、もう案内しない（→ 6.35）
-                    if placed and tool == TOOL_TEXT:
-                        self.hint_used(HINT_TEXT_KEY)
-                    elif placed and tool in BALLOON_TOOLS:
-                        self.hint_used(HINT_BALLOON_KEY)
-                    return placed
+        if event.type() == QEvent.Type.Shortcut and watched in self._place_on_key:
+            place, hint_id = self._place_on_key[watched]
+            placed = self._place_under_cursor(place)
+            # キーで置けた人には、もう案内しない（→ 6.35）
+            if placed and hint_id is not None:
+                self.hint_used(hint_id)
+            return placed
         return super().eventFilter(watched, event)
 
     def _place_under_cursor(self, place) -> bool:
