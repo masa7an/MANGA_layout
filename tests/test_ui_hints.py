@@ -613,6 +613,17 @@ class TestB気づきにくい機能:
         window._on_page_added()
         assert not banner_up(window)
 
+    def test_書き出しの案内が指す位置は実物どおり(self, window):
+        # 案内は「下から3番目」と書いている。並びを変えたら文言も直す。
+        # **`QAction.menu()` で取り出さない。** アプリの持つメニューが壊れる
+        # （→ PySide6の落とし穴.md の 1）。子の部品から題名で探す
+        menu = next(
+            m for m in window.menuBar().findChildren(QMenu) if m.title() == "ファイル"
+        )
+        items = [a.text() for a in menu.actions() if not a.isSeparator()]
+        assert items[-3] == "画像で書き出し..."
+        assert "下から3番目[画像で書き出し]" in HINT_TEXTS[HINT_EXPORT]
+
     def test_書き出しを使った人には出ない(self, window, monkeypatch):
         monkeypatch.setattr(window.files, "_export_dest", lambda: None)
         window.files.export_image()
