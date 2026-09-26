@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import pathlib
+import time
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
@@ -68,6 +69,30 @@ AUTOSAVE_FAILED = "自動バックアップできません"
 # 上書きの確認に名前を並べる件数の上限。
 # 30 ページの作品でも確認欄が画面を埋めないようにする
 OVERWRITE_LIST_LIMIT = 5
+
+# 進捗窓が画面に出るのを待つ上限（秒）。出ないまま書き出しを
+# 始めないための待ちで、ふつうは数十ミリ秒で済む
+PAINT_WAIT_LIMIT = 0.5
+
+
+def _paint_now(dialog: QProgressDialog) -> None:
+    """出したばかりの窓を、この場で中身まで描き切る。
+
+    **`processEvents` を1回呼ぶだけでは、枠しか描かれない。** 窓が画面に
+    出た知らせ（expose）がまだ届いておらず、中身の描画が後回しになる。
+    そのまま書き出しに入ると GUI スレッドが塞がり、1ページ目を書き終える
+    まで枠の中が真っ白のままだった（実測 2026-09-27。本人の指摘）。
+    知らせが届くまで待ってから、`repaint` で描画を強制する
+    """
+    handle = dialog.windowHandle()
+    deadline = time.monotonic() + PAINT_WAIT_LIMIT
+    QApplication.processEvents()
+    while (
+        handle is not None and not handle.isExposed() and time.monotonic() < deadline
+    ):
+        QApplication.processEvents()
+    dialog.repaint()
+    QApplication.processEvents()
 
 
 class ProjectIO:
@@ -525,7 +550,7 @@ class ProjectIO:
         if self.export_format in LAYERED_FORMATS:
             dialog.setLabelText(f"書き出しの準備をしています…（全 {len(indexes)} ページ）")
             dialog.forceShow()
-            QApplication.processEvents()
+            _paint_now(dialog)
 
         def on_page(done: int, total: int) -> bool:
             dialog.setLabelText(f"書き出しています…（{done}/{total} ページ）")
