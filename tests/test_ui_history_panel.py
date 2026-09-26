@@ -32,6 +32,16 @@ def window(qapp):
     win.close()
 
 
+def open_panel(window) -> None:
+    """窓を出して、履歴パネルを開く（表示 → 履歴 と同じ）。
+
+    **閉じている間は一覧を作り直さない**（→ `HistoryPanel.sync`）ので、
+    中身を読むテストは先に開く。開いた時点で最新の手が並ぶ。
+    """
+    window.show()
+    window.history_dock.show()
+
+
 @pytest.fixture
 def with_image(window, fixture_dir):
     """コマ1枚に絵を1枚。**絵が選ばれている**ので、そのまま引けば絵が動く。"""
@@ -66,16 +76,19 @@ class Testパネル:
         assert window.history_dock.isVisible()
 
     def test_何もしていなければその旨を出す(self, window):
+        open_panel(window)
         assert window.history_panel.rows() == [EMPTY_TEXT]
 
     def test_動かした量が先頭に出る(self, with_image):
         window = with_image
+        open_panel(window)
         drag(window.view, *CENTER, CENTER[0] + 30.0, CENTER[1] + 20.0)
 
         assert window.history_panel.rows()[0] == "画像の移動　+30, +20 px"
 
     def test_新しい手が上に来る(self, with_image):
         window = with_image
+        open_panel(window)
         drag(window.view, *CENTER, CENTER[0] + 30.0, CENTER[1] + 20.0)
 
         rows = window.history_panel.rows()
@@ -90,6 +103,7 @@ class Testパネル:
 
     def test_戻した手はやり直せる手として上に残る(self, with_image):
         window = with_image
+        open_panel(window)
         drag(window.view, *CENTER, CENTER[0] + 30.0, CENTER[1] + 20.0)
 
         window.state.undo()
@@ -103,10 +117,35 @@ class Testパネル:
 
     def test_作品を開き直したら空になる(self, with_image):
         window = with_image
+        open_panel(window)
         window.state.history.mark_saved()
         window.state.reset(new_project(), None)
 
         assert window.history_panel.rows() == [EMPTY_TEXT]
+
+    def test_閉じている間は作り直さない(self, with_image):
+        """パネルを開かない人に、編集のたびに一覧を作り直す手間を払わせない。"""
+        window = with_image
+        window.show()
+        panel = window.history_panel
+        before = panel.rows()
+
+        drag(window.view, *CENTER, CENTER[0] + 30.0, CENTER[1] + 20.0)
+
+        assert panel.rows() == before
+
+    def test_開いたら閉じている間の手も並ぶ(self, with_image):
+        window = with_image
+        window.show()
+        drag(window.view, *CENTER, CENTER[0] + 30.0, CENTER[1] + 20.0)
+
+        window.history_dock.show()
+
+        assert window.history_panel.rows() == [
+            "画像の移動　+30, +20 px",
+            "画像の配置",
+            "準備",
+        ]
 
     def test_押しても焦点を取らない(self, window):
         """取ると、矢印キーやショートカットが一覧に吸われる。"""

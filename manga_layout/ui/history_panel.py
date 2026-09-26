@@ -55,6 +55,8 @@ class HistoryPanel(QListWidget):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.setFixedWidth(self._fitted_width())
+        # 閉じている間に積まれた手があるか（→ `sync`）
+        self._stale = False
         state.changed.connect(self.sync)
         self.sync()
 
@@ -74,7 +76,16 @@ class HistoryPanel(QListWidget):
     def sync(self) -> None:
         """履歴を読み直して並べ直す。**`state.history` は毎回引き直す**
         （作品を開くと `History` ごと差し替わる → `EditorState.reset`）。
+
+        **閉じている間は並べ直さず、印だけ立てる**（→ `showEvent`）。
+        パネルは最初は閉じていて、開かない人も多い。編集のたびに最大
+        50行を作り直すのは、見ていない一覧のためには無駄になる
+        （2026-09-27 のレビュー）。
         """
+        if not self.isVisibleTo(self.window()):
+            self._stale = True
+            return
+        self._stale = False
         history = self.state.history
         self.clear()
 
@@ -94,6 +105,12 @@ class HistoryPanel(QListWidget):
         if self.count() == 0:
             item = self._add(EMPTY_TEXT)
             item.setForeground(grey)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        # 閉じている間に積まれた手を、開いた時点で並べる
+        if self._stale:
+            self.sync()
+        super().showEvent(event)
 
     def _add(self, text: str) -> QListWidgetItem:
         item = QListWidgetItem(text)
