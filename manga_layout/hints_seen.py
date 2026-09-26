@@ -47,6 +47,16 @@ def mark_hint_seen(hint_id: str, path: pathlib.Path | None = None) -> None:
         pass
 
 
+def reset_hints_seen(path: pathlib.Path | None = None) -> None:
+    """記録を消し、どのヒントもまだ出していないことにする（ヘルプ → ヒント機能のリセット）。"""
+    path = path or hints_seen_path()
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        # 消せなければリセットが効かないだけ。作業は止めない
+        pass
+
+
 # 最後に出したヒントの名前（→ 「ヒントをもう一度見る」）。**出した順は
 # `hints_seen.txt` からは分からない**——あちらは並べ替えて書くうえ、出す前に
 # 使った人の分（出していないもの）も入る。なので別に1行だけ持つ

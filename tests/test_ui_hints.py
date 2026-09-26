@@ -248,3 +248,51 @@ class Test前回のファイルの案内:
         finally:
             win.state.history.mark_saved()
             win.close()
+
+
+class Testリセット:
+    def test_ヘルプに項目がある(self, window):
+        titles = [
+            a.text()
+            for m in window.menuBar().actions()
+            if m.text() == "ヘルプ(&H)"
+            for a in m.menu().actions()
+        ]
+        assert "ヒント機能のリセット" in titles
+
+    def test_記録が消えてまた出る(self, window):
+        window.state.add_balloon(Rect(300.0, 250.0, 200.0, 120.0))
+        balloon_id = window.state.selected_balloon.id
+        settle()
+        window.hint_banner.hide()
+        window.reset_hints()
+        assert load_hints_seen(recorded_path()) == set()
+        window.state.select(window.state.page.panels[0].id)
+        window.state.select(balloon_id)
+        settle()
+        assert banner_up(window)
+        assert window.hint_banner.text() == HINT_TEXTS[HINT_NUDGE]
+
+    def test_前回のファイルの案内も次の起動でまた出る(self, qapp, tmp_path):
+        win = MainWindow(EditorState())
+        path = tmp_path / "前回の作品"
+        win.state.save(path)
+        win.close()
+        save_recent_project(path)
+        mark_hint_seen(HINT_RECENT)
+        win = MainWindow(EditorState())
+        try:
+            win.reset_hints()
+        finally:
+            win.close()
+        win = MainWindow(EditorState())
+        settle()
+        try:
+            assert win.hint_banner.text() == HINT_TEXTS[HINT_RECENT]
+            assert banner_up(win)
+        finally:
+            win.close()
+
+    def test_記録が無くても落ちない(self, window):
+        window.reset_hints()
+        window.reset_hints()

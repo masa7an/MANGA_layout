@@ -20,7 +20,13 @@ from PySide6.QtWidgets import (
 
 from ..check import headline, inspect_project, marked_page_ids
 from ..errors import MangaLayoutError
-from ..hints_seen import load_hints_seen, load_last_hint, mark_hint_seen, save_last_hint
+from ..hints_seen import (
+    load_hints_seen,
+    load_last_hint,
+    mark_hint_seen,
+    reset_hints_seen,
+    save_last_hint,
+)
 from ..images import to_png_bytes
 from ..layout import attach_target, cover_rect_in, full_page_rect
 from ..model import (
@@ -583,6 +589,13 @@ class MainWindow(QMainWindow):
                 "ヒントをもう一度見る",
                 self.show_hints_again,
                 tip="最後に出た操作のヒントをもう一度出します",
+            )
+        )
+        menu.addAction(
+            self._act(
+                "ヒント機能のリセット",
+                self.reset_hints,
+                tip="出し終えたヒントを、まだ出していない状態に戻します（次の機会にまた1回ずつ出ます）",
             )
         )
 
@@ -1836,6 +1849,20 @@ class MainWindow(QMainWindow):
         if hint_id not in HINT_TEXTS:
             hint_id = HINT_NUDGE
         self.hint_banner.show_text(HINT_TEXTS[hint_id])
+
+    def reset_hints(self) -> None:
+        """ヘルプ → ヒント機能のリセット。出し終えたヒントを、まだ出していない状態に戻す。
+
+        **その場では何も出ない操作なので、状態表示で結果を伝える**
+        （黙っていると効いたのか分からない → `show_hints_again`）。
+        最後に出したヒントの記録（もう一度見る の行き先）は残す。
+        """
+        self._hints_seen.clear()
+        reset_hints_seen()
+        self.state.message.emit(
+            "ヒントをリセットしました。次の機会にまた1回ずつ出ます"
+            "（前回のファイルの案内は次の起動時）"
+        )
 
     def highlight_menu(self, name: str) -> None:
         """メニューバーの見出し1つを四角く囲む（→ 要件定義 6.30）。
