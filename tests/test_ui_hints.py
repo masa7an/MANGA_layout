@@ -622,7 +622,7 @@ class TestB気づきにくい機能:
         )
         items = [a.text() for a in menu.actions() if not a.isSeparator()]
         assert items[-3] == "画像で書き出し..."
-        assert "下から3番目[画像で書き出し]" in HINT_TEXTS[HINT_EXPORT]
+        assert "下から3番目 [画像で書き出し]" in HINT_TEXTS[HINT_EXPORT]
 
     def test_書き出しを使った人には出ない(self, window, monkeypatch):
         monkeypatch.setattr(window.files, "_export_dest", lambda: None)
