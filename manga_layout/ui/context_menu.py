@@ -233,6 +233,9 @@ class ContextMenu:
             # 代わりに、ここでしか呼べない「元に戻す」を添える
             self._add_place_here(menu, x, y, ("panel", "balloon", "sticker", "text"))
             menu.addAction(window.edit_menu.full_page_action)
+            # 提案もコマを「作る」仲間なので、ページ全面の隣に置く（→ 要件定義 10.5）。
+            # 押した場所は使わない（提案はページ全体の並びから決まる）
+            menu.addAction(window.panel_menu.suggest_action)
             # ラフ（→ 6.23）は敷いてあるときだけ。押した場所は関係ない操作
             # なので、コマの上ではなく「何も無いところ」に置く
             if self._state.page.rough is not None:

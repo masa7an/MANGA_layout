@@ -234,6 +234,7 @@ class TestContents:
         found = labels(menu)
         assert place_first("コマ") in found
         assert "ページ全面にコマを作る" in found
+        assert window_with_panel.panel_menu.suggest_action in menu.actions()
         # 選んでいるものが無いので、選択に効く項目は出さない
         assert not any(label.endswith("を削除") for label in found)
 
@@ -457,6 +458,27 @@ class TestActions:
         # 押した場所が中心。用紙からはみ出さない範囲で寄る
         assert rect.contains(*EMPTY)
         assert window.state.selected_id == panels[0].id
+
+    def test_次のコマを提案は押し直すと差し替わる(self, window):
+        """右クリックを開き直しても、直前の提案は確定扱いにならない。
+
+        開くたびに押した場所で選び直す（→ `right_click`）。そこで履歴の
+        まとめが打ち切られると、差し替えではなく足し算になる。
+        """
+        state = window.state
+        suggest = window.panel_menu.suggest_action
+
+        right_click(window, *EMPTY)
+        suggest.trigger()
+        first = [p.shape.as_rect() for p in state.page.panels]
+        assert len(first) == 1
+        # 空白ページの1案目（幅 1/3・右上）に重ならない場所で開き直す
+        assert not first[0].contains(*EMPTY)
+
+        right_click(window, *EMPTY)
+        suggest.trigger()
+        assert len(state.page.panels) == 1
+        assert state.page.panels[0].shape.as_rect() != first[0]
 
     def test_ここに吹き出しを追加(self, window_with_panel):
         menu = right_click(window_with_panel, 400.0, 300.0)
